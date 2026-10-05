@@ -16,7 +16,6 @@ import (
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
 	"github.com/open-e2ee/oe/internal/output"
-	"github.com/open-e2ee/oe/internal/projectlock"
 )
 
 // relayFields are the fields of a Relay policy, in the order of the file.
@@ -66,7 +65,7 @@ func (r *runner) configPull(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	project, err := r.api.GetProject(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, value.Project)
+	project, err := r.getProject(ctx, access, value.Project)
 	if err != nil {
 		return err
 	}
@@ -110,7 +109,7 @@ func (r *runner) configPull(ctx context.Context, args []string) error {
 			return &problem{code: "PULL_CANCELLED", message: "config pull cancelled", exit: exitFailure}
 		}
 	}
-	lock, err := projectlock.Acquire(ctx, filepath.Dir(path))
+	lock, err := lockProject(ctx, filepath.Dir(path))
 	if err != nil {
 		return err
 	}
@@ -157,7 +156,7 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 			plan.environments[name] = &pulledEnvironment{Status: "skipped", Reason: "inactive"}
 			continue
 		}
-		delivery, err := config.Retention(remote.DeliveryTtlSeconds)
+		delivery, err := config.Retention(remote.DeliveryRetentionSeconds)
 		if err != nil {
 			return pullPlan{}, fmt.Errorf("the %s delivery retention: %w", name, err)
 		}
@@ -316,7 +315,7 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	project, err := r.api.GetProject(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, value.Project)
+	project, err := r.getProject(ctx, access, value.Project)
 	if err != nil {
 		return err
 	}
@@ -327,7 +326,7 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 		}
 	}
 	if !*dryRun {
-		lock, err := projectlock.Acquire(ctx, directory)
+		lock, err := lockProject(ctx, directory)
 		if err != nil {
 			return err
 		}

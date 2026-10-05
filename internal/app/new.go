@@ -111,7 +111,20 @@ func (r *runner) new(ctx context.Context, args []string) error {
 		data["install"] = install
 	}
 
+	// The dry run reads the projects of the organization with the session of
+	// the real run, so it reports the plan that the real run follows.
+	access, err := r.access(ctx, "project:write", r.canPrompt())
+	if err != nil {
+		return err
+	}
 	if *dryRun {
+		projects, err := r.api.ListProjects(ctx, control.CredentialRequest{AccessToken: access.AccessToken})
+		if err != nil {
+			return err
+		}
+		if slices.ContainsFunc(projects, func(listed control.ProjectSummary) bool { return listed.Slug == project }) {
+			return projectExists(project)
+		}
 		data["dryRun"], data["changed"] = true, false
 		data["files"] = plannedChanges(directory, manifest)
 		rerun := []string{"new"}
@@ -128,10 +141,6 @@ func (r *runner) new(ctx context.Context, args []string) error {
 		return r.out.SuccessNext("new", fmt.Sprintf("oe new would create project %s with its Sandbox environment and write %s and .env.local. Nothing was changed.", project, config.Filename), commandLine(rerun), data)
 	}
 
-	access, err := r.access(ctx, "project:write", r.canPrompt())
-	if err != nil {
-		return err
-	}
 	claims := sessionClaimsOf(access.AccessToken)
 	if claims.Organization != "" {
 		data["organization"] = map[string]any{"id": claims.Organization}
@@ -171,12 +180,7 @@ func (r *runner) new(ctx context.Context, args []string) error {
 		return err
 	}
 	if !bootstrap.Created {
-		return &problem{
-			code: "PROJECT_EXISTS", exit: exitUsage, next: "oe new --project " + project + "-2",
-			message: fmt.Sprintf("Project %s already exists in your organization. To use the existing project, run oe link %s.",
-				project, project),
-			data: map[string]any{"project": project},
-		}
+		return projectExists(project)
 	}
 	if bootstrap.Writer != "config" || bootstrap.ProjectSlug != project || bootstrap.Environment != "sandbox" {
 		return errors.New("control API returned a bootstrap for a different project, writer, or environment")
@@ -337,6 +341,18 @@ func (r *runner) newProduct(named string) (string, error) {
 		}
 	}
 	return "", required
+}
+
+// projectExists is a run of oe new for a slug that the organization already
+// uses. oe new never connects a directory to an existing project, so next
+// creates a project with another slug, and the message names both steps.
+func projectExists(project string) *problem {
+	other := "oe new --project " + project + "-2"
+	return &problem{
+		code: "PROJECT_EXISTS", exit: exitUsage, next: other, data: map[string]any{"project": project},
+		message: fmt.Sprintf("Project %s already exists in your organization. Run %s to create a project with another slug, or run oe link %s to use the existing project.",
+			project, other, project),
+	}
 }
 
 // newProject gives the project slug from --project, else from the name of the

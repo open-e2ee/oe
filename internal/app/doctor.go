@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -59,7 +60,7 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("doctor found a problem: credential: %w", err)
 	}
-	project, err := r.api.GetProject(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, value.Project)
+	project, err := r.getProject(ctx, access, value.Project)
 	if err != nil {
 		return fmt.Errorf("doctor found a problem: project authority: %w", err)
 	}
@@ -68,17 +69,18 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 		expected = environment.RelayURL
 	}
 	if local == "" {
-		// oe link writes the env file of an active Production. oe config push
-		// activates Production and then writes the file.
+		// oe link writes the env file of an active Production. The step that
+		// activates Production depends on the config and the writer mode.
 		if expected == "" {
-			failure := connectionMissing(r.environment, environmentFile, "oe config push")
-			failure.message += "; " + productionOptIn
+			next, step := r.productionActivation(value.Project, project.Writer)
+			failure := connectionMissing(r.environment, environmentFile, next)
+			failure.message += "; " + step
 			return failure
 		}
 		return connectionMissing(r.environment, environmentFile, "oe link")
 	}
 	if expected == "" {
-		return environmentNotActive(value.Project, r.environment)
+		return r.environmentNotActive(value.Project, project.Writer, r.environment)
 	}
 	if expected != local {
 		return &problem{
@@ -126,28 +128,55 @@ func connectionMissing(environment, environmentFile, next string) *problem {
 }
 
 // waitForFirstMessage polls the Sandbox activation of project until a device
-// connected and a managed message was acknowledged. It refreshes a session
-// that expires during the wait.
+// connected and a managed message was acknowledged. Only an acknowledgment
+// that the wait sees happen counts: the control API reports whether the first
+// managed message was ever acknowledged, with no time, so the first read is
+// the baseline. A project whose first message was acknowledged before the wait
+// started can show no new acknowledgment, and the wait fails at once instead of
+// reporting old evidence. It refreshes a session that expires during the wait.
 func (r *runner) waitForFirstMessage(ctx context.Context, access credential.Credential, project string, timeout time.Duration) error {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	for {
+	for baseline := true; ; baseline = false {
 		if access.Source != "environment" && access.RefreshToken != "" && credentialNeedsRefresh(access, r.now()) {
 			refreshed, err := r.access(waitCtx, "", false)
 			if err != nil {
-				return err
+				return firstMessageTimeout(ctx, waitCtx, timeout, err)
 			}
 			access = refreshed
 		}
 		state, err := r.api.Activation(waitCtx, control.CredentialRequest{AccessToken: access.AccessToken}, project)
 		if err != nil {
-			return err
+			return firstMessageTimeout(ctx, waitCtx, timeout, err)
 		}
-		if state.FirstDevice && state.FirstAcknowledged {
+		switch {
+		case baseline && state.FirstAcknowledged:
+			return &problem{
+				code: "FIRST_MESSAGE_ALREADY_ACKNOWLEDGED", exit: exitFailure, next: "oe doctor",
+				data: map[string]any{"project": project, "firstDevice": state.FirstDevice, "firstAcknowledged": true},
+				message: fmt.Sprintf("the first managed message of project %s was acknowledged before this wait started, "+
+					"and the control API reports only that first acknowledgment, so oe doctor --wait cannot see a new message; "+
+					"run oe doctor to check the Relay connection", project),
+			}
+		case state.FirstDevice && state.FirstAcknowledged:
 			return nil
 		}
 		if err := r.sleep(waitCtx, 2*time.Second); err != nil {
-			return fmt.Errorf("wait for first acknowledged managed message: %w", err)
+			return firstMessageTimeout(ctx, waitCtx, timeout, err)
 		}
+	}
+}
+
+// firstMessageTimeout gives the end of the wait its own code. The wait ends
+// when waitCtx reaches its deadline while the run itself goes on. That
+// failure is temporary, so classify names the same command as next. Any other
+// failure stays as it is.
+func firstMessageTimeout(ctx, waitCtx context.Context, timeout time.Duration, err error) error {
+	if ctx.Err() != nil || !(errors.Is(err, context.DeadlineExceeded) || errors.Is(waitCtx.Err(), context.DeadlineExceeded)) {
+		return err
+	}
+	return &problem{
+		code: "FIRST_MESSAGE_TIMED_OUT", exit: exitTemporary, cause: err,
+		message: fmt.Sprintf("no managed message was acknowledged within %s; send a message from the app, then run the command again", timeout),
 	}
 }

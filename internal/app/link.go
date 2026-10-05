@@ -74,17 +74,19 @@ func (r *runner) link(ctx context.Context, args []string) error {
 		}
 	}
 	project, err := r.readProject(ctx, slug)
-	if refusal, ok := errors.AsType[*control.APIError](err); ok && refusal.Code == "PROJECT_NOT_FOUND" {
-		return &problem{
-			code: "PROJECT_NOT_FOUND", exit: exitFailure, next: "oe project list", cause: err,
-			message: fmt.Sprintf("project %s was not found, or this account has no access to it", slug),
-		}
-	}
 	if err != nil {
 		return err
 	}
 
 	attach := !found || slug != value.Project
+	// A link that creates the config adds the CLI to the devDependencies of
+	// the app, as oe new does, because the config imports its types.
+	var manifest manifestChange
+	if !found {
+		if manifest, err = manifestWithCLI(directory); err != nil {
+			return err
+		}
+	}
 	var changes []config.Change
 	if attach {
 		if !found {
@@ -151,7 +153,13 @@ func (r *runner) link(ctx context.Context, args []string) error {
 		if !found {
 			change = "created"
 		}
+		manifestPath := filepath.Join(directory, "package.json")
 		if !*dryRun {
+			if manifest.edited != nil {
+				if err := writePublicFile(manifestPath, manifest.edited); err != nil {
+					return err
+				}
+			}
 			if found {
 				err = config.Edit(path, changes...)
 			} else {
@@ -162,6 +170,9 @@ func (r *runner) link(ctx context.Context, args []string) error {
 			}
 		}
 		record(path, change)
+		if manifest.edited != nil {
+			record(manifestPath, "updated")
+		}
 	}
 	// The lock file and each env file that link writes stay out of version
 	// control.
@@ -208,6 +219,11 @@ func (r *runner) link(ctx context.Context, args []string) error {
 		"product": value.Product, "project": slug, "environments": linkEnvironments(project),
 		"files": files, "changed": !*dryRun && len(files) > 0,
 	}
+	install := ""
+	if manifest.exists {
+		install = installCommand(directory)
+		data["install"] = install
+	}
 	if *dryRun {
 		data["dryRun"] = true
 		return r.out.Success("link", fmt.Sprintf("Dry run: oe link would change %d file(s) and wrote nothing.", len(files)), data)
@@ -217,6 +233,9 @@ func (r *runner) link(ctx context.Context, args []string) error {
 		message = "Linked " + slug + "."
 		if len(connected) > 0 {
 			message += fmt.Sprintf(" The app reads %s from %s.", connection.Variable, strings.Join(connected, " and "))
+		}
+		if install != "" {
+			message += fmt.Sprintf(" Run %s to install %s.", install, cliPackage)
 		}
 	}
 	message += r.agentSetupHint(directory)
@@ -337,7 +356,7 @@ func (r *runner) projectList(ctx context.Context) error {
 		table.Flush()
 		message = strings.TrimSuffix(text.String(), "\n")
 	}
-	return r.out.Success("project", message, map[string]any{"projects": projects})
+	return r.out.Success("project list", message, map[string]any{"projects": projects})
 }
 
 func (r *runner) listProjects(ctx context.Context) ([]control.ProjectSummary, error) {

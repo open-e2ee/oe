@@ -22,6 +22,7 @@ import (
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
+	"github.com/open-e2ee/oe/internal/envfile"
 )
 
 // relayTerms is the terms document list of the console route tests.
@@ -677,6 +678,36 @@ func TestLoginInASetUpDirectoryOffersNothing(t *testing.T) {
 	}
 	if after := mustRead(t, filepath.Join(root, config.Filename)); !bytes.Equal(after, source) {
 		t.Fatalf("a login changed the config:\n%s", after)
+	}
+}
+
+// TestTermsInALinkedDirectoryNameDoctor proves that the terms step in a
+// directory whose setup is done names oe doctor, not oe link: the config sets
+// the directory up, and .env.local holds the Sandbox Relay connection.
+func TestTermsInALinkedDirectoryNameDoctor(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	directory := initializedProject(t, "linked-chat")
+	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxRelayURL); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"auth", "login", "--accept-terms"}, {"auth", "login"}} {
+		server := newConsole(t, "required", true)
+		store := credential.NewMemory()
+		server.storeSession(t, store)
+		dependencies := server.dependencies(store, environment(nil))
+		dependencies.WorkingDir, dependencies.In = directory, unreadable{t}
+		exit, stdout, _ := run(t, dependencies, append([]string{"--json", "--control-url", server.controlURL()}, args...)...)
+		result := decodeEvents(t, stdout)
+		if args[len(args)-1] == "login" {
+			// Without --accept-terms, the terms step comes first.
+			if exit != 0 || result[len(result)-1].Next != "oe auth login --accept-terms" {
+				t.Fatalf("%v: exit=%d %s", args, exit, stdout)
+			}
+			continue
+		}
+		if exit != 0 || result[len(result)-1].Next != "oe doctor" {
+			t.Fatalf("%v in a linked directory: exit=%d %s", args, exit, stdout)
+		}
 	}
 }
 

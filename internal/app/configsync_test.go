@@ -18,6 +18,7 @@ import (
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
+	"github.com/open-e2ee/oe/internal/projectlock"
 )
 
 // sandboxOnly is a config with no Production section. The shared policy is
@@ -46,7 +47,7 @@ export default defineConfig({
 // retention gives the policy of an active environment in seconds.
 func retention(delivery, attachment int) *control.ProjectEnvironment {
 	return &control.ProjectEnvironment{
-		DeliveryTtlSeconds: delivery, AttachmentRetentionSeconds: attachment,
+		DeliveryRetentionSeconds: delivery, AttachmentRetentionSeconds: attachment,
 		RelayURL: "https://relay.example/signal/v1/connection/pk_public", Revision: "4",
 	}
 }
@@ -410,7 +411,7 @@ type pushConsole struct {
 // whose Production can open on the Free plan now.
 func newPushConsole(t *testing.T, slug string) *pushConsole {
 	sandbox := projectEnvironment(sandboxRelayURL, "3")
-	sandbox.DeliveryTtlSeconds, sandbox.AttachmentRetentionSeconds = 2_592_000, 2_592_000
+	sandbox.DeliveryRetentionSeconds, sandbox.AttachmentRetentionSeconds = 2_592_000, 2_592_000
 	return &pushConsole{
 		t: t, fail: map[string]error{}, deployed: map[string]control.DeployRequest{},
 		terms: control.Terms{State: control.TermsRequired, CanAccept: true},
@@ -426,7 +427,7 @@ func newPushConsole(t *testing.T, slug string) *pushConsole {
 // activeProduction makes Production active with a policy of seconds.
 func (c *pushConsole) activeProduction(seconds int) {
 	production := projectEnvironment(productionRelayURL, "7")
-	production.DeliveryTtlSeconds, production.AttachmentRetentionSeconds = seconds, seconds
+	production.DeliveryRetentionSeconds, production.AttachmentRetentionSeconds = seconds, seconds
 	production.State, production.CardOnFile = control.ProductionActive, true
 	c.project.Production = production
 }
@@ -474,7 +475,7 @@ func (c *pushConsole) Plan(_ context.Context, request control.CredentialRequest,
 		path          string
 		before, after int
 	}{
-		{"relay.deliveryRetentionSeconds", current.DeliveryTtlSeconds, plan.Policy.DeliveryTtlSeconds},
+		{"relay.deliveryRetentionSeconds", current.DeliveryRetentionSeconds, plan.Policy.DeliveryRetentionSeconds},
 		{"relay.attachmentRetentionSeconds", current.AttachmentRetentionSeconds, plan.Policy.AttachmentRetentionSeconds},
 	} {
 		switch {
@@ -503,7 +504,7 @@ func (c *pushConsole) Deploy(_ context.Context, request control.CredentialReques
 	c.deployed[name] = deploy
 	revision, _ := strconv.Atoi(current.Revision)
 	current.Revision = strconv.Itoa(revision + 1)
-	current.DeliveryTtlSeconds = deploy.Policy.DeliveryTtlSeconds
+	current.DeliveryRetentionSeconds = deploy.Policy.DeliveryRetentionSeconds
 	current.AttachmentRetentionSeconds = deploy.Policy.AttachmentRetentionSeconds
 	if name == "production" {
 		current.RelayURL, current.State, current.BlockedBy, current.CanActivate = productionRelayURL, control.ProductionActive, "", false
@@ -565,10 +566,10 @@ func TestPushAppliesSandboxThenProduction(t *testing.T) {
 		t.Fatalf("push did not report the activation: %s", stdout)
 	}
 	sandbox, production := console.deployed["sandbox"], console.deployed["production"]
-	if sandbox.Environment != "sandbox" || sandbox.Policy.DeliveryTtlSeconds != 86_400 || sandbox.Policy.AttachmentRetentionSeconds != 86_400 {
+	if sandbox.Environment != "sandbox" || sandbox.Policy.DeliveryRetentionSeconds != 86_400 || sandbox.Policy.AttachmentRetentionSeconds != 86_400 {
 		t.Fatalf("the Sandbox deploy did not carry the Sandbox section: %#v", sandbox)
 	}
-	if production.Environment != "production" || production.Policy.DeliveryTtlSeconds != 2_592_000 || production.Policy.AttachmentRetentionSeconds != 2_592_000 {
+	if production.Environment != "production" || production.Policy.DeliveryRetentionSeconds != 2_592_000 || production.Policy.AttachmentRetentionSeconds != 2_592_000 {
 		t.Fatalf("the Production deploy did not carry the shared policy: %#v", production)
 	}
 	connection, _ := result.Data["connection"].(map[string]any)
@@ -781,7 +782,7 @@ func TestPushDryRunWritesNothing(t *testing.T) {
 func TestPushNoChangeReportsUnchanged(t *testing.T) {
 	directory := initializedProject(t, "steady-chat")
 	console := newPushConsole(t, "steady-chat")
-	console.project.Sandbox.DeliveryTtlSeconds, console.project.Sandbox.AttachmentRetentionSeconds = 86_400, 86_400
+	console.project.Sandbox.DeliveryRetentionSeconds, console.project.Sandbox.AttachmentRetentionSeconds = 86_400, 86_400
 	console.activeProduction(2_592_000)
 	exit, stdout, _ := run(t, pushDependencies(t, console, directory), "--json", "config", "push")
 	result := decodeEvent(t, []byte(stdout))
@@ -832,7 +833,7 @@ func TestPushAppliesAComputedValue(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("a computed value failed the push: exit=%d %s", exit, stdout)
 	}
-	if production := console.deployed["production"]; production.Policy.DeliveryTtlSeconds != 3*86_400 || production.Policy.AttachmentRetentionSeconds != 2_592_000 {
+	if production := console.deployed["production"]; production.Policy.DeliveryRetentionSeconds != 3*86_400 || production.Policy.AttachmentRetentionSeconds != 2_592_000 {
 		t.Fatalf("the push did not apply the computed value: %#v", production.Policy)
 	}
 	if after := string(mustRead(t, path)); after != computed {
@@ -848,4 +849,47 @@ func TestDeployAndPlanAreUsageErrorsNamingPushDryRun(t *testing.T) {
 			t.Fatalf("oe %v was not a usage error that names oe config push --dry-run: exit=%d %s", args, exit, stdout)
 		}
 	}
+}
+
+// TestConfigWritesIgnoreTheLockFile proves that oe config push and oe config
+// pull keep the lock file that they leave out of version control, in a
+// directory that oe new and oe link did not set up.
+func TestConfigWritesIgnoreTheLockFile(t *testing.T) {
+	ignored := func(t *testing.T, directory string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(directory, projectlock.Filename)); err != nil {
+			t.Fatalf("the command left no lock file: %v", err)
+		}
+		if contents := string(mustRead(t, filepath.Join(directory, ".gitignore"))); !strings.HasPrefix(contents, "node_modules\n"+projectlock.Filename+"\n") {
+			t.Fatalf(".gitignore is %q", contents)
+		}
+	}
+	gitignore := func(t *testing.T, directory string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(directory, ".gitignore"), []byte("node_modules"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("push", func(t *testing.T) {
+		directory := initializedProject(t, "push-chat")
+		gitignore(t, directory)
+		console := newPushConsole(t, "push-chat")
+		exit, stdout, _ := run(t, pushDependencies(t, console, directory), "--json", "config", "push", "--yes")
+		if exit != 0 {
+			t.Fatalf("push failed: exit=%d %s", exit, stdout)
+		}
+		ignored(t, directory)
+	})
+	t.Run("pull", func(t *testing.T) {
+		directory, _ := projectWith(t, sandboxOnly)
+		gitignore(t, directory)
+		dependencies, _ := pullServer(t, "pull-chat", retention(day, day), retention(7*day, 30*day))
+		dependencies.WorkingDir = directory
+		exit, stdout, _ := run(t, dependencies, "--json", "config", "pull")
+		if exit != 0 {
+			t.Fatalf("pull failed: exit=%d %s", exit, stdout)
+		}
+		ignored(t, directory)
+	})
 }

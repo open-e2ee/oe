@@ -121,7 +121,7 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 	if result.Data["project"] != "chat-demo" || result.Data["product"] != "signal-relay" || result.Data["changed"] != true {
 		t.Fatalf("oe link did not report the attachment: %s", stdout)
 	}
-	want := []string{".env.local created", ".env.production.local created", ".gitignore created", "open-e2ee.config.ts created"}
+	want := []string{".env.local created", ".env.production.local created", ".gitignore created", "open-e2ee.config.ts created", "package.json updated"}
 	if files := changedFiles(t, result.Data); !slices.Equal(files, want) {
 		t.Fatalf("oe link reported files %q, want %q", files, want)
 	}
@@ -190,6 +190,53 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, ".env.production.local")); !os.IsNotExist(err) {
 		t.Fatalf("oe link wrote .env.production.local for an inactive Production: %v", err)
+	}
+}
+
+func TestLinkThatCreatesTheConfigAddsTheDevDependency(t *testing.T) {
+	api, _ := linkConsole(t, map[string]string{"sandbox-chat": sandboxOnlyProject}, "[]")
+	store := readSession(t)
+	directory := t.TempDir()
+	manifest := "{\n  \"name\": \"sandbox-chat\",\n  \"devDependencies\": {\n    \"typescript\": \"5.9.0\"\n  }\n}\n"
+	for name, contents := range map[string]string{"package.json": manifest, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := strings.Replace(manifest, "{\n    \"typescript\"", "{\n    \"@open-e2ee/oe\": \""+Version+"\",\n    \"typescript\"", 1)
+
+	// The dry run plans the package.json change and writes nothing.
+	exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "link", "sandbox-chat", "--dry-run")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != 0 || !slices.Contains(changedFiles(t, result.Data), "package.json updated") || result.Data["install"] != "pnpm install" {
+		t.Fatalf("oe link --dry-run did not plan the devDependency: exit=%d %s", exit, stdout)
+	}
+	if after := string(mustRead(t, filepath.Join(directory, "package.json"))); after != manifest {
+		t.Fatalf("oe link --dry-run wrote package.json:\n%s", after)
+	}
+
+	exit, stdout, _ = run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "link", "sandbox-chat")
+	result = decodeEvent(t, []byte(stdout))
+	if exit != 0 || result.Data["install"] != "pnpm install" || !strings.Contains(result.Message, "Run pnpm install to install @open-e2ee/oe.") {
+		t.Fatalf("oe link did not name the install command: exit=%d %s", exit, stdout)
+	}
+	if after := string(mustRead(t, filepath.Join(directory, "package.json"))); after != want {
+		t.Fatalf("oe link wrote package.json:\n%s\nwant:\n%s", after, want)
+	}
+
+	// Without a package.json, oe link writes none, as oe new does. oe reads the
+	// config with its own copy of @open-e2ee/oe/config.
+	directory = t.TempDir()
+	exit, stdout, _ = run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "link", "sandbox-chat")
+	result = decodeEvent(t, []byte(stdout))
+	if exit != 0 || result.Data["install"] != nil || strings.Contains(result.Message, "install") {
+		t.Fatalf("oe link without package.json named an install: exit=%d %s", exit, stdout)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "package.json")); !os.IsNotExist(err) {
+		t.Fatalf("oe link created a package.json: %v", err)
+	}
+	if _, err := config.Load(filepath.Join(directory, config.Filename)); err != nil {
+		t.Fatalf("the config that oe link wrote without package.json does not load: %v", err)
 	}
 }
 

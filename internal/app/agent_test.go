@@ -162,6 +162,9 @@ func TestMissingSessionExitsFourAndNamesLogin(t *testing.T) {
 	}
 }
 
+// TestControlRefusalKeepsTheConsoleCode covers the refusals that the project
+// read passes through. TestProjectReadNamesTheProjectList covers the refusals
+// that it maps.
 func TestControlRefusalKeepsTheConsoleCode(t *testing.T) {
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
@@ -171,7 +174,6 @@ func TestControlRefusalKeepsTheConsoleCode(t *testing.T) {
 		next    string
 	}{
 		{&control.APIError{Status: 401, Code: "INVALID_SESSION", Message: "Run oe auth login again."}, exitAuthentication, "oe auth login"},
-		{&control.APIError{Status: 404, Code: "PROJECT_NOT_FOUND", Message: "Relay project not found."}, exitFailure, ""},
 		{&control.APIError{Status: 409, Code: "TERMS_REQUIRED", Message: "Accept the OpenE2EE terms first.", CanAccept: true}, exitPersonAction, "oe auth login --accept-terms"},
 		{&control.APIError{Status: 409, Code: "TERMS_REQUIRED", Message: "An administrator must accept the OpenE2EE terms."}, exitPersonAction, ""},
 		{&control.APIError{Status: 403, Code: "TERMS_PERMISSION_REQUIRED", Message: "An administrator of your Organization must accept them."}, exitPersonAction, ""},
@@ -236,6 +238,12 @@ func TestProjectShowNeedsNoConfigAndOmitsTheConnection(t *testing.T) {
 	production, _ := environments["production"].(map[string]any)
 	if exit != 0 || sandbox["active"] != true || sandbox["revision"] != "3" || production["active"] != false {
 		t.Fatalf("project show lost the environments: %s", stdout)
+	}
+	// The CLI names the retention as the config does, not with the wire name
+	// of the control API.
+	if sandbox["deliveryRetentionSeconds"] != float64(86_400) || sandbox["attachmentRetentionSeconds"] != float64(86_400) ||
+		strings.Contains(stdout, "deliveryTtlSeconds") {
+		t.Fatalf("project show named the retention fields wrong: %s", stdout)
 	}
 	if strings.Contains(stdout, "pk_sandbox_public") {
 		t.Fatalf("project show printed a Relay connection URL: %s", stdout)
@@ -434,5 +442,123 @@ func TestAgentDefaultsToJSON(t *testing.T) {
 	first, _, _ := strings.Cut(stdout, "\n")
 	if exit != 0 || decodeEvent(t, []byte(first)).Status != "pending" {
 		t.Fatalf("--json-stream under an agent wrote no pending event: exit=%d %q", exit, stdout)
+	}
+}
+
+// TestProjectReadNamesTheProjectList proves that every read of a project that
+// does not exist, or that the session cannot read, names oe project list. The
+// control API refuses a slug that it cannot read with CONTROL_CONFLICT, so the
+// project list decides between a project that is not found and a listed
+// project that the service cannot read. That inconsistent record keeps the
+// code of the server and names the page that reports it.
+func TestProjectReadNamesTheProjectList(t *testing.T) {
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	conflict := &control.APIError{Status: 409, Code: "CONTROL_CONFLICT", Message: "The managed Relay project does not exist."}
+	notFound := &control.APIError{Status: 404, Code: "PROJECT_NOT_FOUND", Message: "Relay project not found."}
+	for _, test := range []struct {
+		name, slug string
+		refusal    *control.APIError
+		listed     []string
+		code       string
+		exit       int
+		next       string
+	}{
+		{"refused", "gone-chat", notFound, nil, "PROJECT_NOT_FOUND", exitFailure, "oe project list"},
+		{"unknown", "gone-chat", conflict, []string{"other-chat"}, "PROJECT_NOT_FOUND", exitFailure, "oe project list"},
+		{"invalid", "Bad_Slug", nil, nil, "PROJECT_INVALID", exitUsage, "oe project list"},
+		{"too long", strings.Repeat("a", 64), nil, nil, "PROJECT_INVALID", exitUsage, "oe project list"},
+		{"listed but unreadable", "broken-chat", conflict, []string{"broken-chat"}, "CONTROL_CONFLICT", exitFailure, ""},
+	} {
+		reads := 0
+		api := &fakeAPI{
+			getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+				reads++
+				return control.Project{}, test.refusal
+			},
+			listProjects: func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error) {
+				var projects []control.ProjectSummary
+				for _, slug := range test.listed {
+					projects = append(projects, control.ProjectSummary{Slug: slug})
+				}
+				return projects, nil
+			},
+		}
+		for _, command := range []string{"show", "connection"} {
+			exit, stdout, _ := run(t, Dependencies{API: api, Store: store}, "--json", "project", command, test.slug)
+			failure := decodeEvent(t, []byte(stdout))
+			if exit != test.exit || failure.Code != test.code || failure.Next != test.next || failure.Data["project"] != test.slug {
+				t.Fatalf("%s project %s: exit=%d %s", test.name, command, exit, stdout)
+			}
+			if test.code == "CONTROL_CONFLICT" && (failure.Action.URL != reportURL || failure.Action.Reason != "report" ||
+				failure.Data["listed"] != true || !strings.Contains(failure.Error, "The managed Relay project does not exist") ||
+				!strings.Contains(failure.Error, "inconsistent record")) {
+				t.Fatalf("a listed project that the read refuses did not name the report page: %s", stdout)
+			}
+		}
+		if test.code == "PROJECT_INVALID" && reads != 0 {
+			t.Fatalf("%s: an invalid slug reached the control API", test.name)
+		}
+	}
+}
+
+// TestCommandFieldIsTheCommandPath proves that the command field of every
+// result is the command path of the surface, for a success and for a failure
+// of the same command, in every command group.
+func TestCommandFieldIsTheCommandPath(t *testing.T) {
+	var paths []string
+	for _, spec := range commandSurface {
+		for _, usage := range spec.Usage {
+			path := commandPath(usage)
+			words := strings.Fields(path)
+			if got := envelopeCommand(words[0], append(words[1:], "--json", "extra")); got != path {
+				t.Fatalf("a failure of %q names %q", usage, got)
+			}
+			paths = append(paths, path)
+		}
+	}
+	want := []string{
+		"new", "auth login", "auth status", "auth logout", "doctor", "link",
+		"project list", "project show", "project connection", "config push", "config pull",
+		"notifications status", "notifications setup ios", "notifications add-nse", "notifications verify ios",
+		"notifications apple-filtering-request", "agent setup", "version", "help",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("the command paths are %q, want %q", paths, want)
+	}
+
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	api := &fakeAPI{
+		getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
+			return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxRelayURL, "3")}, nil
+		},
+		listProjects: func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error) {
+			return []control.ProjectSummary{{Slug: "path-chat"}}, nil
+		},
+		notifications: func(_ context.Context, _ control.CredentialRequest, _, environment string) (control.NotificationConfiguration, error) {
+			return control.NotificationConfiguration{Environment: environment, ConfigurationVersion: 1}, nil
+		},
+	}
+	directory := initializedProject(t, "path-chat")
+	for _, test := range []struct {
+		path    string
+		success []string
+		failure []string
+	}{
+		{"project list", []string{"project", "list"}, []string{"project", "list", "extra"}},
+		{"project show", []string{"project", "show"}, []string{"project", "show", "Bad_Slug"}},
+		{"project connection", []string{"project", "connection"}, []string{"project", "connection", "Bad_Slug"}},
+		{"notifications status", []string{"notifications", "status"}, []string{"notifications", "status", "extra"}},
+		{"notifications apple-filtering-request", []string{"notifications", "apple-filtering-request"}, []string{"notifications", "apple-filtering-request", "extra"}},
+	} {
+		exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, append([]string{"--json"}, test.success...)...)
+		if result := decodeEvent(t, []byte(stdout)); exit != 0 || result.Command != test.path {
+			t.Fatalf("a success of %s: exit=%d %s", test.path, exit, stdout)
+		}
+		exit, stdout, _ = run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, append([]string{"--json"}, test.failure...)...)
+		if result := decodeEvent(t, []byte(stdout)); exit == 0 || result.Command != test.path {
+			t.Fatalf("a failure of %s: exit=%d %s", test.path, exit, stdout)
+		}
 	}
 }

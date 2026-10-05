@@ -452,7 +452,7 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 		project.Production.CardOnFile || project.Production.RelayURL != "" || project.Sandbox.Revision != "2" || project.Sandbox.State != "" {
 		t.Fatalf("project read lost the Production standing: %#v %v", project, err)
 	}
-	policy := RelayPolicyRequest{AttachmentRetentionSeconds: 86_400, DeliveryTtlSeconds: 86_400}
+	policy := RelayPolicyRequest{AttachmentRetentionSeconds: 86_400, DeliveryRetentionSeconds: 86_400}
 	for _, request := range []DeployRequest{
 		{Environment: "production", ExpectedRevision: "0", PlanID: "plan_production", Policy: policy, ProjectSlug: "chat", Writer: "config"},
 		{Environment: "sandbox", ExpectedRevision: "2", PlanID: "plan_sandbox", Policy: policy, ProjectSlug: "chat", Writer: "config"},

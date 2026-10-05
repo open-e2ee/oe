@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
@@ -163,8 +165,57 @@ func TestSandboxEnvironmentNotFoundNamesAuthStatus(t *testing.T) {
 		t.Fatalf("Sandbox ENVIRONMENT_NOT_FOUND did not name oe auth status: exit=%d %s", exit, stdout)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "notifications", "status", "--env", "production")
-	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "ENVIRONMENT_NOT_FOUND" || failure.Next != "oe config push" ||
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "ENVIRONMENT_NOT_FOUND" || failure.Next != "oe config push" {
+		t.Fatalf("Production ENVIRONMENT_NOT_FOUND did not name oe config push for a config with Production: exit=%d %s", exit, stdout)
+	}
+	// A push changes no Production that the config leaves out, so it is not
+	// the next command. The error names the section to add.
+	dependencies.WorkingDir = noProductionProject(t, "missing-chat")
+	exit, stdout, _ = run(t, dependencies, "--json", "notifications", "status", "--env", "production")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "ENVIRONMENT_NOT_FOUND" || failure.Next != "" ||
 		!strings.Contains(failure.Error, "add production: {} under environments") {
-		t.Fatalf("Production ENVIRONMENT_NOT_FOUND did not name the Production opt-in: exit=%d %s", exit, stdout)
+		t.Fatalf("Production ENVIRONMENT_NOT_FOUND did not name the Production section: exit=%d %s", exit, stdout)
+	}
+}
+
+// noProductionProject is a directory whose config has no Production section.
+func noProductionProject(t *testing.T, project string) string {
+	t.Helper()
+	directory := t.TempDir()
+	value := config.New(project)
+	value.Environments.Production = nil
+	if err := config.Create(filepath.Join(directory, config.Filename), value); err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
+// TestInactiveProductionNamesTheStepThatActivatesIt proves that oe config
+// push is the next command only when the push can activate Production: the
+// config of the directory is the config of the project, it has a Production
+// section, and the project takes its policy from the config. In every other
+// case no command alone activates Production, so next is empty, and the error
+// names the console and the config step.
+func TestInactiveProductionNamesTheStepThatActivatesIt(t *testing.T) {
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	for _, test := range []struct {
+		name, directory, writer, next, says string
+	}{
+		{"production section", initializedProject(t, "prod-chat"), "config", "oe config push", "run oe config push"},
+		{"no production section", noProductionProject(t, "prod-chat"), "config", "", "has no Production section; add production: {} under environments"},
+		{"console writer", initializedProject(t, "prod-chat"), "console", "", "the console writes the policy of this project"},
+		{"no config", t.TempDir(), "config", "", "activate Production on the plan page of project prod-chat in the console"},
+		{"config of another project", initializedProject(t, "other-chat"), "config", "", "of project prod-chat, then run oe config push in its directory"},
+	} {
+		api := &fakeAPI{getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
+			return control.Project{Slug: slug, Writer: test.writer, Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
+		}}
+		exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: test.directory},
+			"--json", "project", "connection", "prod-chat", "--env", "production")
+		failure := decodeEvent(t, []byte(stdout))
+		if exit != exitFailure || failure.Code != "ENVIRONMENT_NOT_ACTIVE" || failure.Next != test.next || !strings.Contains(failure.Error, test.says) {
+			t.Fatalf("%s: exit=%d %s", test.name, exit, stdout)
+		}
 	}
 }

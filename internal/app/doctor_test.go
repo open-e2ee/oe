@@ -170,3 +170,64 @@ func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 		}
 	}
 }
+
+// waitDoctor runs oe doctor --wait against a Sandbox project whose activation
+// reads come from activation, and returns the last JSON document.
+func waitDoctor(t *testing.T, activation func(int) control.Activation, sleep func(context.Context, time.Duration) error) (int, event, int) {
+	t.Helper()
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	directory := initializedProject(t, "wait-chat")
+	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxRelayURL); err != nil {
+		t.Fatal(err)
+	}
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	reads := 0
+	api := &fakeAPI{
+		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+			return control.Project{Slug: "wait-chat", Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
+		},
+		activation: func(context.Context, control.CredentialRequest, string) (control.Activation, error) {
+			reads++
+			return activation(reads), nil
+		},
+	}
+	relay := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{Body: http.NoBody, Header: make(http.Header), StatusCode: http.StatusOK}, nil
+	})}
+	exit, stdout, _ := run(t, Dependencies{API: api, HTTP: relay, Store: store, WorkingDir: directory, Sleep: sleep},
+		"--json", "doctor", "--wait", "--timeout", "1m")
+	return exit, decodeEvent(t, []byte(stdout)), reads
+}
+
+// TestDoctorWaitTimeoutIsTemporary proves that the end of the wait has its own
+// code, exits 6, and names the same command, as the exit-code contract says.
+func TestDoctorWaitTimeoutIsTemporary(t *testing.T) {
+	exit, failure, _ := waitDoctor(t, func(int) control.Activation { return control.Activation{FirstDevice: true} },
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded })
+	if exit != exitTemporary || failure.Code != "FIRST_MESSAGE_TIMED_OUT" || failure.Next != "oe --json doctor --wait --timeout 1m" ||
+		!strings.Contains(failure.Error, "within 1m0s") {
+		t.Fatalf("the wait timeout gave exit=%d %+v", exit, failure)
+	}
+}
+
+// TestDoctorWaitRefusesAnAcknowledgmentFromBeforeTheWait proves that an
+// acknowledgment that the first read already shows is not evidence of a new
+// message. The wait fails at once and never reports success.
+func TestDoctorWaitRefusesAnAcknowledgmentFromBeforeTheWait(t *testing.T) {
+	exit, failure, reads := waitDoctor(t, func(int) control.Activation {
+		return control.Activation{FirstDevice: true, FirstAcknowledged: true}
+	}, func(context.Context, time.Duration) error { return nil })
+	if exit != exitFailure || failure.Status != "error" || failure.Code != "FIRST_MESSAGE_ALREADY_ACKNOWLEDGED" ||
+		failure.Next != "oe doctor" || reads != 1 {
+		t.Fatalf("an acknowledgment from before the wait gave exit=%d reads=%d %+v", exit, reads, failure)
+	}
+	// A device that connected before the wait does not matter. Only the
+	// acknowledgment must happen during the wait.
+	exit, result, reads := waitDoctor(t, func(read int) control.Activation {
+		return control.Activation{FirstDevice: true, FirstAcknowledged: read > 2}
+	}, func(context.Context, time.Duration) error { return nil })
+	if exit != 0 || result.Status != "ok" || reads != 3 {
+		t.Fatalf("an acknowledgment during the wait gave exit=%d reads=%d %+v", exit, reads, result)
+	}
+}

@@ -1,6 +1,6 @@
 ---
 name: open-e2ee-relay-setup
-description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ACCESS_TOKEN_INVALID, LOGIN_TIMED_OUT, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_INVALID, PROJECT_REQUIRED, TERMS_REQUIRED, or TERMS_PERMISSION_REQUIRED.
+description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ACCESS_TOKEN_INVALID, LOGIN_TIMED_OUT, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_INVALID, PROJECT_NOT_FOUND, PROJECT_REQUIRED, CONTROL_CONFLICT, TERMS_REQUIRED, TERMS_PERMISSION_REQUIRED, FIRST_MESSAGE_TIMED_OUT, or FIRST_MESSAGE_ALREADY_ACKNOWLEDGED.
 ---
 
 # OpenE2EE Relay setup
@@ -53,7 +53,8 @@ Run `oe new` in the app directory. The app directory holds the
 `package.json` of the app.
 
 - `oe new --dry-run` shows the files that `oe new` writes, and changes
-  nothing.
+  nothing. It needs a session, and it fails with `PROJECT_EXISTS` when the
+  organization already uses the slug.
 - `oe new --project my-chat` sets the project slug. Without `--project`, the
   slug comes from the name of the directory.
 
@@ -78,7 +79,9 @@ person names a project, ask the person which project to link.
 
 `oe link my-chat` writes `open-e2ee.config.ts` from the server policy when
 the directory has no config. It writes the env file of each active
-environment. In a directory that `open-e2ee.config.ts` already sets up,
+environment. When it writes the config, it adds the `@open-e2ee/oe`
+devDependency to `package.json`, as `oe new` does. Run the command in
+`data.install`. In a directory that `open-e2ee.config.ts` already sets up,
 `oe link` rewrites only the env files.
 
 ## Check the setup
@@ -86,21 +89,25 @@ environment. In a directory that `open-e2ee.config.ts` already sets up,
 Start `oe doctor --wait` in the background. It checks the config, the
 session, the project, and the Relay connection. Then it waits for the first
 acknowledged Sandbox message. Tell the person to start the app and send a
-message.
+message. Only an acknowledgment that comes after the wait starts counts.
 
 ## Codes
 
-| `code`                      | What to do                                                                                                                                                                                                  |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTHENTICATION_REQUIRED`   | No session is stored. Follow [Log in](#log-in), then run the command again.                                                                                                                                 |
-| `ACCESS_TOKEN_INVALID`      | The control API refused the token in `OE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OE_ACCESS_TOKEN` to a new token, or to unset it and log in.                          |
-| `LOGIN_TIMED_OUT`           | No person approved the device in time. Run `next` again, and give the person the new URL and code.                                                                                                          |
-| `ALREADY_SET_UP`            | `open-e2ee.config.ts` already sets up this directory. Do not run `oe new` again. Run `oe link` to write the env files.                                                                                      |
-| `PROJECT_EXISTS`            | The organization already has a project with this slug. `next` creates a project with another slug. Never replace `next` with `oe link` unless the person asked for that project. Another person can own it. |
-| `PROJECT_INVALID`           | The `--project` value is not a slug. `next` uses a valid slug. Ask the person before you use a slug that the person did not give.                                                                           |
-| `PROJECT_REQUIRED`          | No slug comes from the directory name, or `oe link` has no project. Run `next`. If `next` is `oe project list`, ask the person which project to link.                                                       |
-| `TERMS_REQUIRED`            | The organization did not accept the terms. Follow [The terms](#the-terms). Then run the command in `data.retry`.                                                                                            |
-| `TERMS_PERMISSION_REQUIRED` | This account cannot accept the terms. Tell the person that an administrator of the organization must accept them.                                                                                           |
+| `code`                               | What to do                                                                                                                                                                                                  |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTHENTICATION_REQUIRED`            | No session is stored. Follow [Log in](#log-in), then run the command again.                                                                                                                                 |
+| `ACCESS_TOKEN_INVALID`               | The control API refused the token in `OE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OE_ACCESS_TOKEN` to a new token, or to unset it and log in.                          |
+| `LOGIN_TIMED_OUT`                    | No person approved the device in time. Run `next` again, and give the person the new URL and code.                                                                                                          |
+| `ALREADY_SET_UP`                     | `open-e2ee.config.ts` already sets up this directory. Do not run `oe new` again. Run `oe link` to write the env files.                                                                                      |
+| `PROJECT_EXISTS`                     | The organization already has a project with this slug. `next` creates a project with another slug. Never replace `next` with `oe link` unless the person asked for that project. Another person can own it. |
+| `PROJECT_INVALID`                    | The `--project` value or the `PROJECT` argument is not a slug. Run `next`. Ask the person before you use a slug that the person did not give.                                                               |
+| `PROJECT_NOT_FOUND`                  | No project that this account can read has this slug. `next` is `oe project list`. Ask the person which project to link.                                                                                     |
+| `PROJECT_REQUIRED`                   | No slug comes from the directory name, or `oe link` has no project. Run `next`. If `next` is `oe project list`, ask the person which project to link.                                                       |
+| `CONTROL_CONFLICT`                   | When `data.listed` is `true`, the project is in the list, but the service refused to read it. No `oe` command repairs it. Give `action.url` to the person to report the slug and the error.                 |
+| `TERMS_REQUIRED`                     | The organization did not accept the terms. Follow [The terms](#the-terms). Then run the command in `data.retry`.                                                                                            |
+| `TERMS_PERMISSION_REQUIRED`          | This account cannot accept the terms. Tell the person that an administrator of the organization must accept them.                                                                                           |
+| `FIRST_MESSAGE_TIMED_OUT`            | No message was acknowledged before `--timeout`. Tell the person to send a message from the app, then run `next`.                                                                                            |
+| `FIRST_MESSAGE_ALREADY_ACKNOWLEDGED` | The first message of the project was acknowledged before the wait started, so the wait cannot see a new one. Run `next`, which checks the Relay connection.                                                 |
 
 ## Agent skills
 
