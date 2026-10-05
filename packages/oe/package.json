@@ -2,6 +2,23 @@
   "name": "@open-e2ee/oe",
   "version": "1.0.0",
   "description": "OpenE2EE project command-line interface",
+  "keywords": [
+    "open-e2ee",
+    "opene2ee",
+    "e2ee",
+    "end-to-end-encryption",
+    "signal-protocol",
+    "cli",
+    "command-line",
+    "relay",
+    "developer-tools",
+    "typescript",
+    "nodejs"
+  ],
+  "homepage": "https://open-e2ee.dev",
+  "bugs": {
+    "url": "https://github.com/open-e2ee/oe/issues"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
