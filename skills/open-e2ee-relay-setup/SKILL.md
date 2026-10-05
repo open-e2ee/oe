@@ -1,6 +1,6 @@
 ---
 name: open-e2ee-relay-setup
-description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_REQUIRED, TERMS_REQUIRED, or TERMS_PERMISSION_REQUIRED.
+description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ACCESS_TOKEN_INVALID, LOGIN_TIMED_OUT, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_INVALID, PROJECT_REQUIRED, TERMS_REQUIRED, or TERMS_PERMISSION_REQUIRED.
 ---
 
 # OpenE2EE Relay setup
@@ -15,8 +15,9 @@ document to stdout. It never prompts and never opens a browser.
   it, unless a rule in this skill tells you not to.
 - When `action.url` is present, give the URL to the person. The person must
   open it.
-- Exit 4 means that a login is necessary. Exit 5 means that a person must act.
-  Exit 6 means that the failure is temporary. Run `next` again later.
+- Exit 4 means that a login is necessary. With `ACCESS_TOKEN_INVALID`, a
+  login does not help. Exit 5 means that a person must act. Exit 6 means that
+  the failure is temporary. Run `next` again later.
 - Run `oe help` for the usage of each command.
 
 ## Log in
@@ -92,9 +93,12 @@ message.
 | `code`                      | What to do                                                                                                                                                                                                  |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AUTHENTICATION_REQUIRED`   | No session is stored. Follow [Log in](#log-in), then run the command again.                                                                                                                                 |
+| `ACCESS_TOKEN_INVALID`      | The control API refused the token in `OE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OE_ACCESS_TOKEN` to a new token, or to unset it and log in.                          |
+| `LOGIN_TIMED_OUT`           | No person approved the device in time. Run `next` again, and give the person the new URL and code.                                                                                                          |
 | `ALREADY_SET_UP`            | `open-e2ee.config.ts` already sets up this directory. Do not run `oe new` again. Run `oe link` to write the env files.                                                                                      |
 | `PROJECT_EXISTS`            | The organization already has a project with this slug. `next` creates a project with another slug. Never replace `next` with `oe link` unless the person asked for that project. Another person can own it. |
-| `PROJECT_REQUIRED`          | The slug is not valid, or `oe link` has no project. Run `next`. If `next` is `oe project list`, ask the person which project to link.                                                                       |
+| `PROJECT_INVALID`           | The `--project` value is not a slug. `next` uses a valid slug. Ask the person before you use a slug that the person did not give.                                                                           |
+| `PROJECT_REQUIRED`          | No slug comes from the directory name, or `oe link` has no project. Run `next`. If `next` is `oe project list`, ask the person which project to link.                                                       |
 | `TERMS_REQUIRED`            | The organization did not accept the terms. Follow [The terms](#the-terms). Then run the command in `data.retry`.                                                                                            |
 | `TERMS_PERMISSION_REQUIRED` | This account cannot accept the terms. Tell the person that an administrator of the organization must accept them.                                                                                           |
 

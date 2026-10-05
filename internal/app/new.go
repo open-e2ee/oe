@@ -345,7 +345,7 @@ func newProject(flag, directory string) (string, error) {
 	if flag != "" {
 		if slug(flag) != flag {
 			return "", &problem{
-				code: "PROJECT_REQUIRED", exit: exitUsage, next: "oe new --project " + cmp.Or(slug(flag), "my-app"),
+				code: "PROJECT_INVALID", exit: exitUsage, next: "oe new --project " + cmp.Or(slug(flag), "my-app"),
 				message: fmt.Sprintf("--project %q is not a project slug; use lowercase letters, digits, and single hyphens", flag),
 			}
 		}

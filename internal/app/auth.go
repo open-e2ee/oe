@@ -69,6 +69,11 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 	if err := parseFlags(flags, "auth", args); err != nil {
 		return err
 	}
+	// A login that cannot wait never succeeds, so it is a usage error and not
+	// the temporary LOGIN_TIMED_OUT.
+	if *timeout <= 0 {
+		return usageError("auth", "--timeout must be positive")
+	}
 	session, loggedIn, err := r.loginSession(ctx, *timeout, *acceptTerms)
 	if err != nil {
 		return err

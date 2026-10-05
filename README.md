@@ -7,15 +7,33 @@ The OpenE2EE Signal Protocol Relay provides hosted encrypted delivery, built to
 work with the OpenE2EE Signal Protocol SDK. This public repository lets
 developers inspect the command, config, credential, and release contracts.
 
-## Start
+## Install
 
-Build the command from source, then run it in the application directory:
+Install the command from npm:
 
 ```bash
-go build -o ./bin/oe ./cmd/oe
-./bin/oe new --project my-chat
+npm install --global @open-e2ee/oe
+oe version
+```
+
+To run the command without a global install, give the full package name.
+`npx oe` does not name this package.
+
+```bash
+npx @open-e2ee/oe@latest version
+```
+
+To build the command from source instead, run
+`go build -o ./bin/oe ./cmd/oe`.
+
+## Start
+
+Run the command in the application directory:
+
+```bash
+oe new --project my-chat
 npm install
-./bin/oe doctor --wait
+oe doctor --wait
 ```
 
 `oe new` creates the project and its Sandbox environment. It needs a session
@@ -33,6 +51,7 @@ writes:
 command. Without `--project`, the project slug comes from the directory name.
 `--dry-run` shows the files that it would change, without a change. A
 directory that already has `open-e2ee.config.ts` fails with `ALREADY_SET_UP`,
+a `--project` value that is not a slug fails with `PROJECT_INVALID`, exit 2,
 and a slug that the organization already uses fails with `PROJECT_EXISTS`.
 `oe new` never connects a directory to an existing project.
 
@@ -51,12 +70,15 @@ oe project connection   print the Relay connection URL of one environment
 oe config push          apply the Sandbox section, then the Production section when the config has one; --dry-run changes nothing
 oe config pull          write the Relay policy of each active environment into open-e2ee.config.ts
 oe notifications        stage and verify best-effort notification profiles
+oe agent setup          install the OpenE2EE skills for coding agents; --check writes nothing
+oe version              print the CLI version
 oe help [COMMAND]       show every command, or the usage of one command
 ```
 
 `oe help` lists each command with its usage, the global flags, the exit codes,
 and the environment variables. `oe help --json` returns the same surface as
-data. `oe COMMAND --help` shows one command.
+data. `oe COMMAND --help` shows one command. `oe login`, `oe logout`, and
+`oe whoami` fail with exit 2, and `next` names the `oe auth` command.
 
 Global flags can come before or after the command. Global `--json` emits one
 final JSON document, and `oe auth login` emits one pending event before it. `--json-stream` emits newline-delimited progress and final
@@ -97,14 +119,14 @@ command that moves the task forward. When `action` is present, `action.url` is a
 page that a person must open, so give it to the person. In text mode, a failure
 goes to stderr as `error:`, `action:`, and `next:` lines, and stdout stays clean.
 
-| Exit code | Meaning                                                                                            |
-| --------- | -------------------------------------------------------------------------------------------------- |
-| 0         | The command succeeded.                                                                             |
-| 1         | The command failed. `code` tells why.                                                              |
-| 2         | The command line is invalid, or a required input is missing, for example `--yes`.                  |
-| 4         | Authentication is required. Run `oe auth login`.                                                   |
-| 5         | A person must act. `error` tells what to do. When `action.url` is present, it is the page to open. |
-| 6         | The failure is temporary. `next` is the same command. Run it again later.                          |
+| Exit code | Meaning                                                                                             |
+| --------- | --------------------------------------------------------------------------------------------------- |
+| 0         | The command succeeded.                                                                              |
+| 1         | The command failed. `code` tells why.                                                               |
+| 2         | The command line is invalid, or a required input is missing, for example `--yes`.                   |
+| 4         | Authentication is required. Run `next`, which is `oe auth login`. See `ACCESS_TOKEN_INVALID` below. |
+| 5         | A person must act. `error` tells what to do. When `action.url` is present, it is the page to open.  |
+| 6         | The failure is temporary. `next` is the same command. Run it again later.                           |
 
 Log in once. A person must approve the login in a browser. At a terminal, `oe`
 opens the browser and prints the page and the code:
@@ -125,9 +147,14 @@ confirms that the page shows the code. On another device, the person goes to
 `data.bareVerificationUrl` and enters the code:
 
 ```json
-{"status":"pending","command":"auth login","message":"A person must approve this device.","action":{"kind":"browser","url":"https://.../device?user_code=ABCD-EFGH","reason":"login"},"data":{"bareVerificationUrl":"https://.../device","expiresInSeconds":900,"userCode":"ABCD-EFGH"}}
+{"status":"pending","command":"auth login","message":"A person must approve this device.","action":{"kind":"browser","url":"https://.../device?user_code=ABCD-EFGH","reason":"login"},"data":{"bareVerificationUrl":"https://.../device","expiresInSeconds":300,"userCode":"ABCD-EFGH"}}
 {"status":"ok","command":"auth login","message":"Signed in as Jane Doe (jane@example.com) in Acme Inc. Acme Inc. has not accepted the OpenE2EE terms.","data":{"email":"jane@example.com","userName":"Jane Doe","organizationName":"Acme Inc.","terms":"required","canAccept":true,"documents":[]},"next":"oe auth login --accept-terms"}
 ```
+
+When no person approves the device in time, the login fails with
+`LOGIN_TIMED_OUT`, exit 6, and `next` is the same command. Run it again, and
+give the person the new URL and code. `--timeout` sets the wait. The wait ends
+earlier when the code expires.
 
 The organization accepts the terms once. When `data.terms` is `required`, show
 the person the URL of each document in `data.documents`, and run
@@ -160,6 +187,12 @@ IDs (`user`, `organization.id`, and `agent.registrationId` for an agent), `role`
 `source`, and `store` (`keychain`, `secret-service`, `wincred`, or
 `environment`). It never has a token. Protected CI uses a scoped
 `OE_ACCESS_TOKEN` instead of a login.
+
+`OE_ACCESS_TOKEN` takes precedence over the stored session, and
+`oe auth login` never replaces it. When the control API refuses the token,
+each command that sends it, `oe auth login` too, fails with
+`ACCESS_TOKEN_INVALID`, exit 4, and no `next`. Set `OE_ACCESS_TOKEN` to a new token, or unset it and run
+`oe auth login`.
 
 Read the Relay connection URL of a project. Text mode prints only the URL, so a
 shell can capture it:

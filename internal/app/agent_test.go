@@ -138,6 +138,12 @@ func TestHelpDescribesEachCommand(t *testing.T) {
 	if exit != 0 || !strings.Contains(stdout, "Exit codes:") || !strings.Contains(stdout, "oe help <command>") {
 		t.Fatalf("-h did not show the command surface: %s", stdout)
 	}
+	for _, flag := range []string{"--help", "-h"} {
+		exit, stdout, _ := run(t, Dependencies{}, "--json", "help", flag)
+		if spec := decodeEvent(t, []byte(stdout)); exit != 0 || spec.Command != "help" {
+			t.Fatalf("oe help %s did not describe help: exit=%d %s", flag, exit, stdout)
+		}
+	}
 	for _, args := range [][]string{{"--json", "help", "project"}, {"--json", "project", "--help"}} {
 		exit, stdout, _ := run(t, Dependencies{}, args...)
 		spec := decodeEvent(t, []byte(stdout))

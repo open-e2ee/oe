@@ -135,6 +135,31 @@ func TestRefreshClassifiesInvalidGrantAsExpiredSession(t *testing.T) {
 	}
 }
 
+func TestPollClassifiesExpiredTokenAsExpiredAuthorization(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v1/auth/configuration" {
+			json.NewEncoder(response).Encode(authConfiguration{
+				ClientID: "client_test", DeviceAuthorizationEndpoint: server.URL + "/user_management/authorize/device",
+				SchemaVersion: 1, TokenEndpoint: server.URL + "/user_management/authenticate",
+			})
+			return
+		}
+		response.WriteHeader(http.StatusBadRequest)
+		response.Write([]byte(`{"error":"expired_token"}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.PollAuthorization(context.Background(), Authorization{ClientID: "client_test", DeviceCode: "device", TokenEndpoint: server.URL + "/user_management/authenticate"})
+	if !errors.Is(err, ErrAuthorizationExpired) {
+		t.Fatalf("expired_token was not classified as an expired authorization: %v", err)
+	}
+}
+
 func TestMutationsCarryBearerAndIdempotencyHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if got := request.Header.Get("Authorization"); got != "Bearer secret-token" {

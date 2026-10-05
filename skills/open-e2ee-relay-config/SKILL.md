@@ -100,7 +100,7 @@ value that you do not understand, ask the person.
 | `code`                  | What to do                                                                                                                          |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `CONFIG_NOT_FOUND`      | The directory has no `open-e2ee.config.ts`. Use the `open-e2ee-relay-setup` skill.                                                  |
-| `CONFIG_INVALID`        | The file does not load, or the schema refuses it. Fix the field that `error` names.                                                 |
+| `CONFIG_INVALID`        | The file does not load, or the schema refuses it. There is no `next`. Fix the field that `error` names, then run the command again. |
 | `CONFIRMATION_REQUIRED` | The change needs consent. Show the changes to the person. Run `next` only after the person agrees.                                  |
 | `CONFIG_EDIT_REQUIRED`  | The file computes a value that `oe` must change. Follow [the manual edit](#make-the-edit-that-config_edit_required-asks-for).       |
 | `CONSOLE_WRITER`        | The console owns the policy of this project. Tell the person to change the policy in the console. `oe config push` changes nothing. |

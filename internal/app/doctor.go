@@ -46,11 +46,11 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("doctor found a problem: %w", err)
 	}
-	if local == "" {
-		failure := environmentNotActive(value.Project, r.environment)
-		failure.code = "RELAY_CONNECTION_MISSING"
-		failure.message = fmt.Sprintf("doctor found a problem: the %s Relay connection is not in %s", r.environment, environmentFile)
-		return failure
+	// The config sets up the directory, so oe new refuses it. oe link writes
+	// the env file of each active environment, and every project has an
+	// active Sandbox, so a missing Sandbox connection needs no read.
+	if local == "" && r.environment == "sandbox" {
+		return connectionMissing(r.environment, environmentFile, "oe link")
 	}
 	if err := r.api.Health(ctx); err != nil {
 		return fmt.Errorf("doctor found a problem: control API: %w", err)
@@ -66,6 +66,16 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	expected := ""
 	if environment := environmentOf(project, r.environment); environment != nil {
 		expected = environment.RelayURL
+	}
+	if local == "" {
+		// oe link writes the env file of an active Production. oe config push
+		// activates Production and then writes the file.
+		if expected == "" {
+			failure := connectionMissing(r.environment, environmentFile, "oe config push")
+			failure.message += "; " + productionOptIn
+			return failure
+		}
+		return connectionMissing(r.environment, environmentFile, "oe link")
 	}
 	if expected == "" {
 		return environmentNotActive(value.Project, r.environment)
@@ -104,6 +114,15 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	checks["firstDevice"] = true
 	checks["firstAcknowledged"] = true
 	return r.out.Success("doctor", "All checks passed, and the first managed message was acknowledged.", checks)
+}
+
+// connectionMissing is a doctor run whose env file has no Relay connection
+// for environment. next is the command that writes the connection.
+func connectionMissing(environment, environmentFile, next string) *problem {
+	return &problem{
+		code: "RELAY_CONNECTION_MISSING", exit: exitFailure, next: next,
+		message: fmt.Sprintf("doctor found a problem: the %s Relay connection is not in %s", environment, environmentFile),
+	}
 }
 
 // waitForFirstMessage polls the Sandbox activation of project until a device
