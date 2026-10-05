@@ -140,17 +140,33 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 }
 
 // TestDoctorNamesLinkForAMissingConnection proves that a configured clone
-// with no env file is sent to oe link, not to oe new, which refuses it.
+// with no env file is sent to the command that writes the connection, not to
+// oe new, which refuses it. A missing Sandbox connection needs no read. For
+// Production, oe link writes the file of an active Production, and only an
+// inactive Production needs oe config push.
 func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 	directory := initializedProject(t, "clone-chat")
-	for _, test := range []struct{ environment, next string }{
-		{"sandbox", "oe link"},
-		{"production", "oe config push"},
+	exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "--env", "sandbox", "doctor")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != "oe link" {
+		t.Fatalf("sandbox doctor in a clone gave exit=%d %s", exit, stdout)
+	}
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	sandbox := &control.ProjectEnvironment{RelayURL: "https://relay.example/signal/v1/connection/pk_sandbox"}
+	for _, test := range []struct {
+		production *control.ProjectEnvironment
+		next       string
+	}{
+		{&control.ProjectEnvironment{State: control.ProductionActive, RelayURL: "https://relay.example/signal/v1/connection/pk_production"}, "oe link"},
+		{&control.ProjectEnvironment{State: "available"}, "oe config push"},
 	} {
-		exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "--env", test.environment, "doctor")
-		failure := decodeEvent(t, []byte(stdout))
-		if exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != test.next {
-			t.Fatalf("%s doctor in a clone gave exit=%d %s", test.environment, exit, stdout)
+		api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+			return control.Project{Slug: "clone-chat", Writer: "config", Sandbox: sandbox, Production: test.production}, nil
+		}}
+		exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "--env", "production", "doctor")
+		if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != test.next {
+			t.Fatalf("production doctor in a clone with a %s Production gave exit=%d %s", test.production.State, exit, stdout)
 		}
 	}
 }

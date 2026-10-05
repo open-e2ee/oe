@@ -797,13 +797,30 @@ func TestLoginThatNoPersonApprovesTimesOut(t *testing.T) {
 	}
 }
 
-func TestCancelledLoginKeepsItsError(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	loginCtx, stop := context.WithTimeout(ctx, time.Minute)
-	defer stop()
+// TestEndedParentKeepsTheLoginError proves that only the login deadline
+// gives LOGIN_TIMED_OUT. A parent context that was cancelled, or whose own
+// deadline passed, keeps the error.
+func TestEndedParentKeepsTheLoginError(t *testing.T) {
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	cause := errors.New("login did not complete: context canceled")
-	if err := loginFailure(ctx, loginCtx, time.Minute, cause); err != cause {
-		t.Fatalf("a cancelled login became %v", err)
+	expired, stop := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer stop()
+	for name, ctx := range map[string]context.Context{"cancelled": cancelled, "expired": expired} {
+		loginCtx, stopLogin := context.WithTimeout(ctx, time.Minute)
+		cause := fmt.Errorf("login did not complete: %w", loginCtx.Err())
+		if err := loginFailure(ctx, loginCtx, time.Minute, cause); err != cause {
+			t.Errorf("a %s parent made the login error %v", name, err)
+		}
+		stopLogin()
+	}
+}
+
+func TestLoginNeedsAPositiveTimeout(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	for _, timeout := range []string{"0s", "-1s"} {
+		exit, stdout, _ := run(t, Dependencies{API: &fakeAPI{}, Getenv: environment(nil)}, "--json", "auth", "login", "--timeout="+timeout)
+		if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || failure.Next != "oe help auth" {
+			t.Fatalf("auth login --timeout=%s gave exit=%d %s", timeout, exit, stdout)
+		}
 	}
 }
