@@ -47,10 +47,17 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 		return fmt.Errorf("doctor found a problem: %w", err)
 	}
 	if local == "" {
-		failure := environmentNotActive(value.Project, r.environment)
-		failure.code = "RELAY_CONNECTION_MISSING"
-		failure.message = fmt.Sprintf("doctor found a problem: the %s Relay connection is not in %s", r.environment, environmentFile)
-		return failure
+		// The config sets up the directory, so oe new refuses it. oe link
+		// writes the env file of each active environment, and every project
+		// has an active Sandbox. oe config push activates Production.
+		next := "oe link"
+		if r.environment == "production" {
+			next = "oe config push"
+		}
+		return &problem{
+			code: "RELAY_CONNECTION_MISSING", exit: exitFailure, next: next,
+			message: fmt.Sprintf("doctor found a problem: the %s Relay connection is not in %s", r.environment, environmentFile),
+		}
 	}
 	if err := r.api.Health(ctx); err != nil {
 		return fmt.Errorf("doctor found a problem: control API: %w", err)

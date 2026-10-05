@@ -504,14 +504,15 @@ func TestNewNeedsAProductAndAProject(t *testing.T) {
 	for _, test := range []struct {
 		directory string
 		args      []string
+		code      string
 		next      string
 	}{
-		{emptyDirectory(t, "___"), []string{"--json", "new"}, "oe new --project my-app"},
-		{directory, []string{"--json", "new", "--project", "My App"}, "oe new --project my-app"},
-		{directory, []string{"--json", "new", "--project", "-"}, "oe new --project my-app"},
+		{emptyDirectory(t, "___"), []string{"--json", "new"}, "PROJECT_REQUIRED", "oe new --project my-app"},
+		{directory, []string{"--json", "new", "--project", "My App"}, "PROJECT_INVALID", "oe new --project my-app"},
+		{directory, []string{"--json", "new", "--project", "-"}, "PROJECT_INVALID", "oe new --project my-app"},
 	} {
 		exit, stdout, _ := run(t, Dependencies{WorkingDir: test.directory}, test.args...)
-		if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "PROJECT_REQUIRED" || failure.Next != test.next {
+		if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != test.code || failure.Next != test.next {
 			t.Fatalf("%v gave exit=%d %s", test.args, exit, stdout)
 		}
 	}

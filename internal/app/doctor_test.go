@@ -138,3 +138,19 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 		t.Fatalf("the wait did not refresh the session: exit=%d tokens=%v %s", exit, tokens, stdout)
 	}
 }
+
+// TestDoctorNamesLinkForAMissingConnection proves that a configured clone
+// with no env file is sent to oe link, not to oe new, which refuses it.
+func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
+	directory := initializedProject(t, "clone-chat")
+	for _, test := range []struct{ environment, next string }{
+		{"sandbox", "oe link"},
+		{"production", "oe config push"},
+	} {
+		exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "--env", test.environment, "doctor")
+		failure := decodeEvent(t, []byte(stdout))
+		if exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != test.next {
+			t.Fatalf("%s doctor in a clone gave exit=%d %s", test.environment, exit, stdout)
+		}
+	}
+}

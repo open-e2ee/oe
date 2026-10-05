@@ -93,13 +93,13 @@ var exitCodeSurface = []exitCodeSpec{
 	{0, "The command succeeded."},
 	{exitFailure, "The command failed. The error and its code tell why."},
 	{exitUsage, "The command line is invalid or a required input is missing."},
-	{exitAuthentication, "Authentication is required. Run oe auth login."},
+	{exitAuthentication, "Authentication is required. Run next, which is oe auth login. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."},
 	{exitPersonAction, "A person must act before the command can continue. The error tells what to do. When action.url is present, it is the page that the person opens."},
 	{exitTemporary, "The failure is temporary. It is safe to run the same command again later. next is that command."},
 }
 
 var variableSurface = []variableSpec{
-	{"OE_ACCESS_TOKEN", "A scoped CI credential. The CLI keeps it in memory and never stores it."},
+	{"OE_ACCESS_TOKEN", "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."},
 	{"OE_ACCESS_TOKEN_SCOPES", "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."},
 	{"OE_ENV", "The environment of doctor, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
 	{"OE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to retry one mutation."},

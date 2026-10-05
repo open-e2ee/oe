@@ -256,7 +256,7 @@ func TestConfigRefusalsKeepTheirCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "doctor")
-	if refusal := decodeEvent(t, []byte(stdout)); exit != exitFailure || refusal.Code != "CONFIG_INVALID" || refusal.Next != "oe --json doctor" || !strings.Contains(refusal.Error, "has no default export") {
+	if refusal := decodeEvent(t, []byte(stdout)); exit != exitFailure || refusal.Code != "CONFIG_INVALID" || refusal.Next != "" || !strings.Contains(refusal.Error, "has no default export") {
 		t.Fatalf("a config with no default export was not CONFIG_INVALID: exit=%d %s", exit, stdout)
 	}
 

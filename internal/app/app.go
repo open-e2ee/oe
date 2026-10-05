@@ -76,6 +76,9 @@ type runner struct {
 	// harness is the agent that the environment names. It is zero when no
 	// variable names one, or when --agent no overrides the detection.
 	harness agent.Harness
+	// credentialSource is the source of the credential that access resolved,
+	// such as environment for OE_ACCESS_TOKEN. It is empty before access.
+	credentialSource string
 }
 
 func Run(ctx context.Context, args []string, dependencies Dependencies) int {
@@ -159,6 +162,9 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 		underAgent: underAgent, harness: harness,
 	}
 	if err := r.execute(ctx, command, commandArgs); err != nil {
+		if r.credentialSource == "environment" {
+			err = environmentTokenFailure(err, commandLine(args), r.environment)
+		}
 		return fail(writer, envelopeCommand(command, commandArgs), args, r.environment, err)
 	}
 	return 0
@@ -174,7 +180,7 @@ func fail(writer *output.Writer, command string, args []string, environment stri
 }
 
 func (r *runner) execute(ctx context.Context, command string, args []string) error {
-	if command != "help" && containsHelp(args) {
+	if containsHelp(args) {
 		return r.commandHelp(command)
 	}
 	switch command {
@@ -252,7 +258,7 @@ func (r *runner) interactiveLogin(ctx context.Context, timeout time.Duration, an
 	for {
 		token, err := r.api.PollAuthorization(loginCtx, authorization)
 		if err != nil {
-			return credential.Credential{}, err
+			return credential.Credential{}, loginFailure(ctx, loginCtx, timeout, err)
 		}
 		if !token.Pending {
 			if token.AccessToken == "" {
@@ -272,8 +278,23 @@ func (r *runner) interactiveLogin(ctx context.Context, timeout time.Duration, an
 			interval = time.Duration(token.RetryAfterSeconds) * time.Second
 		}
 		if err := r.sleep(loginCtx, interval); err != nil {
-			return credential.Credential{}, fmt.Errorf("login did not complete: %w", err)
+			return credential.Credential{}, loginFailure(ctx, loginCtx, timeout, fmt.Errorf("login did not complete: %w", err))
 		}
+	}
+}
+
+// loginFailure gives a device flow that no person approved in time the code
+// LOGIN_TIMED_OUT. The login timeout or the end of the device code ends the
+// wait, so the failure is temporary: the same command starts a new login.
+// When ctx ended, or the poll failed for another reason, err stays as it is.
+func loginFailure(ctx, loginCtx context.Context, timeout time.Duration, err error) error {
+	expired := errors.Is(err, control.ErrAuthorizationExpired)
+	if !expired && (ctx.Err() != nil || !errors.Is(loginCtx.Err(), context.DeadlineExceeded)) {
+		return err
+	}
+	return &problem{
+		code: "LOGIN_TIMED_OUT", exit: exitTemporary, cause: err,
+		message: fmt.Sprintf("no person approved the device within %s; run the command again, then approve the new code in the browser", timeout),
 	}
 }
 
@@ -689,6 +710,7 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 	if err != nil {
 		return credential.Credential{}, err
 	}
+	r.credentialSource = value.Source
 	if value.Source != "environment" && value.RefreshToken != "" && credentialNeedsRefresh(value, r.now()) {
 		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken)
 		if refreshErr != nil {

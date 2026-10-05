@@ -480,11 +480,11 @@ func TestAuthStatusWithoutTheSessionRouteFails(t *testing.T) {
 }
 
 func TestTopLevelLoginIsAUsageError(t *testing.T) {
-	for _, verb := range []string{"login", "logout"} {
+	for verb, next := range map[string]string{"login": "oe auth login", "logout": "oe auth logout", "whoami": "oe auth status"} {
 		exit, stdout, _ := run(t, Dependencies{}, "--json", verb)
 		failure := decodeEvent(t, []byte(stdout))
-		if exit != exitUsage || failure.Code != "USAGE_ERROR" || failure.Next != "oe help" {
-			t.Fatalf("oe %s is still a command: exit=%d %s", verb, exit, stdout)
+		if exit != exitUsage || failure.Code != "USAGE_ERROR" || failure.Next != next || !strings.Contains(failure.Error, next) {
+			t.Fatalf("oe %s is still a command, or does not name %s: exit=%d %s", verb, next, exit, stdout)
 		}
 	}
 	exit, stdout, _ := run(t, Dependencies{}, "--json", "help")
@@ -716,5 +716,94 @@ func TestLoginUnderAnAgentNamesNewInNext(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, config.Filename)); !os.IsNotExist(err) {
 		t.Fatalf("a login under an agent wrote %s: %v", config.Filename, err)
+	}
+}
+
+func TestRefusedAccessTokenNamesTheVariableAndNoLogin(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "refused-ci-token")
+	refused := &control.APIError{Status: 401, Code: "INVALID_SESSION", Message: "Run oe auth login again."}
+	api := &fakeAPI{
+		session: func(context.Context, control.CredentialRequest) (control.Session, error) {
+			return control.Session{}, refused
+		},
+		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+			return control.Project{}, refused
+		},
+	}
+	for _, args := range [][]string{
+		{"--json", "auth", "login"},
+		{"--json", "auth", "login", "--accept-terms"},
+		{"--json", "project", "show", "any-chat"},
+	} {
+		exit, stdout, stderr := run(t, Dependencies{API: api}, args...)
+		failure := decodeEvent(t, []byte(stdout))
+		if exit != exitAuthentication || failure.Code != "ACCESS_TOKEN_INVALID" || failure.Next != "" ||
+			!strings.Contains(failure.Error, "OE_ACCESS_TOKEN") || !strings.Contains(failure.Error, "unset OE_ACCESS_TOKEN") {
+			t.Fatalf("%v with a refused OE_ACCESS_TOKEN: exit=%d %s", args, exit, stdout)
+		}
+		if strings.Contains(stdout+stderr, "refused-ci-token") {
+			t.Fatalf("%v printed the access token", args)
+		}
+	}
+}
+
+func TestStoredSessionRefusalStillNamesLogin(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+		return control.Project{}, &control.APIError{Status: 401, Code: "INVALID_SESSION", Message: "Run oe auth login again."}
+	}}
+	exit, stdout, _ := run(t, Dependencies{API: api, Store: store}, "--json", "project", "show", "any-chat")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitAuthentication || failure.Code != "INVALID_SESSION" || failure.Next != "oe auth login" {
+		t.Fatalf("a refused stored session lost its login next: exit=%d %s", exit, stdout)
+	}
+}
+
+func TestAccessTokenFailureThatNamesLoginLosesTheNext(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "ci-token")
+	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+		return control.Project{}, &control.APIError{Status: 403, Code: "ORGANIZATION_REQUIRED", Message: "Sign in to an organization."}
+	}}
+	exit, stdout, _ := run(t, Dependencies{API: api}, "--json", "project", "show", "any-chat")
+	failure := decodeEvent(t, []byte(stdout))
+	if exit != exitFailure || failure.Code != "ORGANIZATION_REQUIRED" || failure.Next != "" || !strings.Contains(failure.Error, "OE_ACCESS_TOKEN") {
+		t.Fatalf("ORGANIZATION_REQUIRED under OE_ACCESS_TOKEN named a login: exit=%d %s", exit, stdout)
+	}
+}
+
+func TestLoginThatNoPersonApprovesTimesOut(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	start := func(context.Context, control.AuthorizationRequest) (control.Authorization, error) {
+		return control.Authorization{DeviceCode: "device", VerificationURL: "https://login.example/device", UserCode: "ABCD", IntervalSeconds: 1}, nil
+	}
+	waitForDeadline := func(ctx context.Context, _ time.Duration) error { <-ctx.Done(); return ctx.Err() }
+	for name, poll := range map[string]func(context.Context, control.Authorization) (control.Token, error){
+		"local timeout": func(context.Context, control.Authorization) (control.Token, error) {
+			return control.Token{Pending: true}, nil
+		},
+		"expired device code": func(context.Context, control.Authorization) (control.Token, error) {
+			return control.Token{}, control.ErrAuthorizationExpired
+		},
+	} {
+		api := &fakeAPI{startAuthorization: start, pollAuthorization: poll}
+		args := []string{"--json", "auth", "login", "--timeout", "10ms"}
+		exit, stdout, _ := run(t, Dependencies{API: api, Sleep: waitForDeadline, Getenv: environment(nil)}, args...)
+		events := decodeEvents(t, stdout)
+		failure := events[len(events)-1]
+		if exit != exitTemporary || failure.Code != "LOGIN_TIMED_OUT" || failure.Next != "oe --json auth login --timeout 10ms" {
+			t.Fatalf("%s: exit=%d %s", name, exit, stdout)
+		}
+	}
+}
+
+func TestCancelledLoginKeepsItsError(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	loginCtx, stop := context.WithTimeout(ctx, time.Minute)
+	defer stop()
+	cancel()
+	cause := errors.New("login did not complete: context canceled")
+	if err := loginFailure(ctx, loginCtx, time.Minute, cause); err != cause {
+		t.Fatalf("a cancelled login became %v", err)
 	}
 }

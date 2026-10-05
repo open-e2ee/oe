@@ -79,7 +79,7 @@
     "environmentVariables": [
       {
         "name": "OE_ACCESS_TOKEN",
-        "summary": "A scoped CI credential. The CLI keeps it in memory and never stores it."
+        "summary": "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."
       },
       {
         "name": "OE_ACCESS_TOKEN_SCOPES",
@@ -109,7 +109,7 @@
       },
       {
         "code": 4,
-        "meaning": "Authentication is required. Run oe auth login."
+        "meaning": "Authentication is required. Run next, which is oe auth login. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."
       },
       {
         "code": 5,

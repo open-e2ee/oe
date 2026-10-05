@@ -59,6 +59,9 @@ var (
 	errAuthorizationPending = errors.New("authorization pending")
 	errSlowDown             = errors.New("authorization polling must slow down")
 	ErrSessionExpired       = errors.New("WorkOS session expired")
+	// ErrAuthorizationExpired is a device code that expired before a person
+	// approved it.
+	ErrAuthorizationExpired = errors.New("browser authorization expired")
 )
 
 type oauthRequestError struct {
@@ -246,7 +249,7 @@ func (c *Client) doForm(ctx context.Context, endpoint string, form url.Values, o
 		case "access_denied":
 			return errors.New("browser authorization was denied")
 		case "expired_token":
-			return errors.New("browser authorization expired; run oe auth login again")
+			return ErrAuthorizationExpired
 		case "invalid_grant":
 			return ErrSessionExpired
 		default:
