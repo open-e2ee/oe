@@ -26,6 +26,7 @@ import (
 	"github.com/open-e2ee/oe/internal/envfile"
 	iosnotifications "github.com/open-e2ee/oe/internal/notifications"
 	"github.com/open-e2ee/oe/internal/output"
+	"github.com/open-e2ee/oe/internal/projectlock"
 )
 
 const defaultControlURL = "https://console.open-e2ee.dev/api/cli"
@@ -347,7 +348,7 @@ func (r *runner) project(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		return r.out.Success("project", projectText(project, r.shownEnvironments()), map[string]any{"project": projectSummary(project, r.shownEnvironments())})
+		return r.out.Success("project show", projectText(project, r.shownEnvironments()), map[string]any{"project": projectSummary(project, r.shownEnvironments())})
 	case "connection":
 		slug, err := r.projectArgument("project connection", args[1:])
 		if err != nil {
@@ -362,14 +363,14 @@ func (r *runner) project(ctx context.Context, args []string) error {
 			relayURL = environment.RelayURL
 		}
 		if relayURL == "" {
-			return environmentNotActive(project.Slug, r.environment)
+			return r.environmentNotActive(project.Slug, project.Writer, r.environment)
 		}
 		connection, err := envfile.Detect(filepath.Dir(mustConfigPath(r.directory)), "")
 		if err != nil {
 			return err
 		}
 		// Text mode prints only the URL, so a shell can capture it.
-		return r.out.Success("project", relayURL, map[string]any{
+		return r.out.Success("project connection", relayURL, map[string]any{
 			"project": project.Slug, "environment": r.environment,
 			"relayUrl": relayURL, "variable": connection.Variable,
 		})
@@ -399,14 +400,6 @@ func (r *runner) projectArgument(command string, args []string) (string, error) 
 	}
 }
 
-func (r *runner) readProject(ctx context.Context, slug string) (control.Project, error) {
-	access, err := r.access(ctx, "project:read", false)
-	if err != nil {
-		return control.Project{}, err
-	}
-	return r.api.GetProject(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, slug)
-}
-
 func environmentOf(project control.Project, environment string) *control.ProjectEnvironment {
 	if environment == "production" {
 		return project.Production
@@ -414,15 +407,54 @@ func environmentOf(project control.Project, environment string) *control.Project
 	return project.Sandbox
 }
 
-func environmentNotActive(project, environment string) *problem {
-	next := "oe new"
-	if environment == "production" {
-		next = "oe config push"
-	}
-	return &problem{
-		code: "ENVIRONMENT_NOT_ACTIVE", exit: exitFailure, next: next,
+// environmentNotActive is a read of an environment that project has not
+// activated. writer is the writer mode of the project.
+func (r *runner) environmentNotActive(project, writer, environment string) *problem {
+	failure := &problem{
+		code: "ENVIRONMENT_NOT_ACTIVE", exit: exitFailure, next: "oe new",
 		message: fmt.Sprintf("the %s environment of project %s is not active", environment, project),
 	}
+	if environment == "production" {
+		var step string
+		failure.next, step = r.productionActivation(project, writer)
+		failure.message += "; " + step
+	}
+	return failure
+}
+
+// productionActivation returns the command and the step that activate the
+// Production of project. oe config push activates Production only from a
+// config of the project that has a production section, and only when the
+// project takes its policy from the config. The console activates Production
+// for every project. next is empty when no command alone activates it. writer
+// is the writer mode of the project, or empty when the caller did not read it.
+func (r *runner) productionActivation(project, writer string) (next, step string) {
+	console := fmt.Sprintf("activate Production on the plan page of project %s in the console", project)
+	if writer == "console" {
+		return "", "the console writes the policy of this project, so " + console
+	}
+	_, value, err := r.loadConfig()
+	switch {
+	case err != nil || value.Project != project:
+		return "", fmt.Sprintf("%s, or add production: {} under environments in the %s of project %s, then run oe config push in its directory",
+			console, config.Filename, project)
+	case value.Environments.Production == nil:
+		return "", fmt.Sprintf("%s has no Production section; add production: {} under environments, then run oe config push, or %s",
+			config.Filename, console)
+	default:
+		return "oe config push", fmt.Sprintf("run oe config push to apply the Production section of %s, or %s", config.Filename, console)
+	}
+}
+
+// productionNotFound adds the activation step to a control API refusal of a
+// Production read with ENVIRONMENT_NOT_FOUND. Every other error stays as it is.
+func (r *runner) productionNotFound(err error, project string) error {
+	refusal, ok := errors.AsType[*control.APIError](err)
+	if !ok || refusal.Code != "ENVIRONMENT_NOT_FOUND" || r.environment != "production" {
+		return err
+	}
+	next, step := r.productionActivation(project, "")
+	return &problem{code: refusal.Code, exit: exitFailure, next: next, cause: err, message: err.Error() + "; " + step}
 }
 
 // shownEnvironments gives the environments that oe project show and oe config
@@ -449,7 +481,7 @@ func projectSummary(project control.Project, names []string) map[string]any {
 			"active":                     true,
 			"revision":                   environment.Revision,
 			"attachmentRetentionSeconds": environment.AttachmentRetentionSeconds,
-			"deliveryTtlSeconds":         environment.DeliveryTtlSeconds,
+			"deliveryRetentionSeconds":   environment.DeliveryRetentionSeconds,
 		}
 	}
 	return map[string]any{
@@ -487,7 +519,7 @@ func (r *runner) notifications(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		return r.out.Success("notifications", "Notification configuration loaded. Push is a best-effort wake; durable Relay mailbox pull is delivery.", map[string]any{
+		return r.out.Success("notifications status", "Notification configuration loaded. Push is a best-effort wake; durable Relay mailbox pull is delivery.", map[string]any{
 			"allowedProfiles": configuration.AllowedProfiles,
 			"environment":     r.environment,
 			"providers":       configuration.Providers,
@@ -517,7 +549,7 @@ func (r *runner) notifications(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		return r.out.Success("notifications", "iOS notification setup is staged. Push is a best-effort wake; durable Relay mailbox pull is delivery.", map[string]any{
+		return r.out.Success("notifications setup ios", "iOS notification setup is staged. Push is a best-effort wake; durable Relay mailbox pull is delivery.", map[string]any{
 			"allowedProfiles": configuration.AllowedProfiles,
 			"changed":         local.Changed,
 			"environment":     r.environment,
@@ -540,7 +572,7 @@ func (r *runner) notifications(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		return r.out.Success("notifications", "The Notification Service Extension is staged without Apple filtering authority.", map[string]any{
+		return r.out.Success("notifications add-nse", "The Notification Service Extension is staged without Apple filtering authority.", map[string]any{
 			"allowedProfiles": configuration.AllowedProfiles,
 			"changed":         local.Changed,
 			"environment":     r.environment,
@@ -551,7 +583,7 @@ func (r *runner) notifications(ctx context.Context, args []string) error {
 		if len(args) != 1 {
 			return usageError("notifications", "usage: oe notifications apple-filtering-request")
 		}
-		return r.out.Success("notifications", "Apple notification filtering is optional. It permits an approved Notification Service Extension to suppress an alert; it does not improve APNs delivery or execution.", map[string]any{
+		return r.out.Success("notifications apple-filtering-request", "Apple notification filtering is optional. It permits an approved Notification Service Extension to suppress an alert; it does not improve APNs delivery or execution.", map[string]any{
 			"activation": "blocked until Apple approval, signed extension inspection, and physical-device suppression evidence pass",
 			"requestUrl": "https://developer.apple.com/contact/request/notification-service/",
 		})
@@ -589,7 +621,7 @@ func (r *runner) notifications(ctx context.Context, args []string) error {
 		if requireNSE {
 			physical = "required before nse-filtering activation; Simulator and signed-bundle inspection are not physical-device evidence"
 		}
-		return r.out.Success("notifications", "iOS notification configuration passed the available checks.", map[string]any{
+		return r.out.Success("notifications verify ios", "iOS notification configuration passed the available checks.", map[string]any{
 			"environment":     r.environment,
 			"physicalDevice":  physical,
 			"projectType":     local.Kind,
@@ -612,7 +644,7 @@ func (r *runner) notificationConfiguration(ctx context.Context, scope string) (c
 	}
 	configuration, err := r.api.Notifications(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, value.Project, r.environment)
 	if err != nil {
-		return control.NotificationConfiguration{}, err
+		return control.NotificationConfiguration{}, r.productionNotFound(err, value.Project)
 	}
 	if configuration.Environment != r.environment || configuration.ConfigurationVersion < 1 {
 		return control.NotificationConfiguration{}, errors.New("control API returned an invalid notification configuration")
@@ -632,7 +664,7 @@ func (r *runner) addNotificationProfile(ctx context.Context, profile control.Not
 	credential := control.CredentialRequest{AccessToken: access.AccessToken}
 	current, err := r.api.Notifications(ctx, credential, value.Project, r.environment)
 	if err != nil {
-		return control.NotificationConfiguration{}, err
+		return control.NotificationConfiguration{}, r.productionNotFound(err, value.Project)
 	}
 	profiles := append([]control.NotificationProfile{}, current.AllowedProfiles...)
 	if !hasNotificationProfile(profiles, control.NotificationBackgroundOnly) {
@@ -689,7 +721,7 @@ func controlPolicy(value config.Config, environment string) (control.RelayPolicy
 	}
 	return control.RelayPolicyRequest{
 		AttachmentRetentionSeconds: attachment,
-		DeliveryTtlSeconds:         delivery,
+		DeliveryRetentionSeconds:   delivery,
 	}, nil
 }
 
@@ -1003,6 +1035,21 @@ func writeRelayEnvironment(directory, filename, variable, relayURL string) error
 		return err
 	}
 	return ensureIgnored(directory, filename)
+}
+
+// lockProject takes the advisory project lock of directory. The lock file
+// stays in directory after the release, so it goes into .gitignore with the
+// lock held, as oe new and oe link put it there.
+func lockProject(ctx context.Context, directory string) (*projectlock.Lock, error) {
+	lock, err := projectlock.Acquire(ctx, directory)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureIgnored(directory, projectlock.Filename); err != nil {
+		lock.Release()
+		return nil, err
+	}
+	return lock, nil
 }
 
 // ensureIgnored adds filename to the .gitignore file in directory once.

@@ -84,9 +84,12 @@ type PlanRequest struct {
 	Writer      string             `json:"writer"`
 }
 
+// RelayPolicyRequest is the Relay policy of a plan or a deploy. The control
+// API owns the wire name deliveryTtlSeconds. The CLI calls the same value
+// delivery retention, as the config does.
 type RelayPolicyRequest struct {
 	AttachmentRetentionSeconds int `json:"attachmentRetentionSeconds"`
-	DeliveryTtlSeconds         int `json:"deliveryTtlSeconds"`
+	DeliveryRetentionSeconds   int `json:"deliveryTtlSeconds"`
 }
 
 type Change struct {
@@ -136,7 +139,7 @@ type Project struct {
 // RelayURL and the policy fields.
 type ProjectEnvironment struct {
 	AttachmentRetentionSeconds int    `json:"attachmentRetentionSeconds"`
-	DeliveryTtlSeconds         int    `json:"deliveryTtlSeconds"`
+	DeliveryRetentionSeconds   int    `json:"deliveryTtlSeconds"`
 	RelayURL                   string `json:"relayUrl"`
 	Revision                   string `json:"revision"`
 	State                      string `json:"state,omitempty"`

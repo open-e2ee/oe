@@ -16,6 +16,7 @@ import (
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
+	"github.com/open-e2ee/oe/internal/envfile"
 	"github.com/open-e2ee/oe/internal/output"
 )
 
@@ -35,24 +36,6 @@ func (r *runner) auth(ctx context.Context, args []string) error {
 	default:
 		return usageError("auth", fmt.Sprintf("unknown auth command %q", args[0]))
 	}
-}
-
-// envelopeCommand is the command that the output of a run names. An auth or
-// config command names its verb, such as "auth login" or "config push".
-func envelopeCommand(command string, args []string) string {
-	if command == "auth" && len(args) > 0 {
-		switch args[0] {
-		case "login", "status", "logout":
-			return "auth " + args[0]
-		}
-	}
-	if command == "config" && len(args) > 0 && (args[0] == "pull" || args[0] == "push") {
-		return "config " + args[0]
-	}
-	if command == "agent" && len(args) > 0 && args[0] == "setup" {
-		return "agent setup"
-	}
-	return command
 }
 
 // authLogin logs in with the device flow, then runs the terms step. With
@@ -141,11 +124,23 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 	return r.out.SuccessNext("auth login", text, next, data)
 }
 
-// setupNext is the setup command for directory after a login: oe link when a
-// config sets it up, oe new when it holds the package.json of an app, and
-// nothing otherwise.
+// setupNext is the setup command for directory after a login. In a directory
+// that a config sets up, it is oe doctor when the Sandbox Relay connection is
+// in .env.local, because the setup is done, and oe link when the connection is
+// not there. It is oe new in a directory that holds the package.json of an
+// app, and nothing otherwise. oe doctor also reports a connection that it
+// cannot read.
 func setupNext(directory string) string {
-	if _, err := config.Find(directory); err == nil {
+	if path, err := config.Find(directory); err == nil {
+		root := filepath.Dir(path)
+		connection, err := envfile.Detect(root, "")
+		if err != nil {
+			return "oe doctor"
+		}
+		local, err := envfile.Read(filepath.Join(root, environmentFiles["sandbox"]), connection.Variable)
+		if err != nil || local != "" {
+			return "oe doctor"
+		}
 		return "oe link"
 	}
 	if _, err := os.Stat(filepath.Join(directory, "package.json")); err == nil {

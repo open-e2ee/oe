@@ -456,7 +456,7 @@ func TestTerminalRefreshRemovesTheExpiredSession(t *testing.T) {
 func projectEnvironment(relayURL, revision string) *control.ProjectEnvironment {
 	return &control.ProjectEnvironment{
 		AttachmentRetentionSeconds: 86_400,
-		DeliveryTtlSeconds:         86_400,
+		DeliveryRetentionSeconds:   86_400,
 		RelayURL:                   relayURL,
 		Revision:                   revision,
 	}

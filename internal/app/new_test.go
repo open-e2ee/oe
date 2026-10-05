@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +25,7 @@ import (
 
 // newControl is a control API that answers POST /v1/projects/bootstrap with
 // respond, and records the idempotency key, the bearer token, and the body of
-// each call.
+// each call. It lists the projects in listed.
 type newControl struct {
 	api     control.API
 	mux     *http.ServeMux
@@ -32,6 +33,7 @@ type newControl struct {
 	keys    []string
 	tokens  []string
 	bodies  []map[string]any
+	listed  []string
 	respond func(call int, body map[string]any) (int, string)
 }
 
@@ -54,6 +56,16 @@ func startNewControl(t *testing.T, respond func(call int, body map[string]any) (
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(status)
 		io.WriteString(response, answer)
+	})
+	mux.HandleFunc("GET /v1/projects", func(response http.ResponseWriter, _ *http.Request) {
+		server.mu.Lock()
+		projects := []control.ProjectSummary{}
+		for _, slug := range server.listed {
+			projects = append(projects, control.ProjectSummary{Slug: slug, Name: slug, Product: "signal-relay"})
+		}
+		server.mu.Unlock()
+		response.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(response).Encode(projects)
 	})
 	httpServer := httptest.NewServer(mux)
 	t.Cleanup(httpServer.Close)
@@ -216,7 +228,7 @@ func TestNewOnAnExistingProjectIsProjectExistsAndNeverLinks(t *testing.T) {
 	}{
 		"same organization": {
 			http.StatusOK, `{"created":false,"project":"taken-chat","writer":"config"}`,
-			"PROJECT_EXISTS", exitUsage, "Project taken-chat already exists in your organization. To use the existing project, run oe link taken-chat.",
+			"PROJECT_EXISTS", exitUsage, "Project taken-chat already exists in your organization. Run oe new --project taken-chat-2 to create a project with another slug, or run oe link taken-chat to use the existing project.",
 		},
 		"other organization": {
 			http.StatusNotFound, `{"code":"PROJECT_NOT_FOUND","message":"Project not found."}`,
@@ -370,8 +382,11 @@ func TestNewDryRunWritesNothing(t *testing.T) {
 		}
 	}
 	server := startNewControl(t, never(t))
+	server.listed = []string{"other-chat"}
+	store := credential.NewMemory()
+	storeSession(t, store, sessionToken())
 
-	exit, stdout, _ := run(t, Dependencies{API: server.api, Store: credential.NewMemory(), WorkingDir: directory}, "--json", "new", "--dry-run", "--name", "Dry Chat")
+	exit, stdout, _ := run(t, Dependencies{API: server.api, Store: store, WorkingDir: directory}, "--json", "new", "--dry-run", "--name", "Dry Chat")
 	result := decodeEvent(t, []byte(stdout))
 	if exit != 0 || result.Data["dryRun"] != true || result.Data["changed"] != false || result.Next != "oe new --project dry-chat --name 'Dry Chat'" {
 		t.Fatalf("the dry run failed: exit=%d %s", exit, stdout)
@@ -387,6 +402,27 @@ func TestNewDryRunWritesNothing(t *testing.T) {
 		if after := string(mustRead(t, filepath.Join(directory, name))); after != contents {
 			t.Fatalf("the dry run changed %s: %q", name, after)
 		}
+	}
+}
+
+// TestNewDryRunReportsAnExistingProject proves that the dry run reports the
+// plan of the real run: a slug that the organization already uses fails with
+// the PROJECT_EXISTS of the real run, and the dry run does not say that it
+// would create the project.
+func TestNewDryRunReportsAnExistingProject(t *testing.T) {
+	directory := emptyDirectory(t, "taken-chat")
+	server := startNewControl(t, never(t))
+	server.listed = []string{"taken-chat"}
+	store := credential.NewMemory()
+	storeSession(t, store, sessionToken())
+	exit, stdout, _ := run(t, Dependencies{API: server.api, Store: store, WorkingDir: directory}, "--json", "new", "--dry-run")
+	failure := decodeEvent(t, []byte(stdout))
+	if exit != exitUsage || failure.Code != "PROJECT_EXISTS" || failure.Next != "oe new --project taken-chat-2" ||
+		strings.Contains(stdout, "would create") || !strings.Contains(failure.Error, failure.Next) {
+		t.Fatalf("the dry run for an existing project gave exit=%d %s", exit, stdout)
+	}
+	if names := entries(t, directory); len(names) != 0 {
+		t.Fatalf("the dry run wrote %v", names)
 	}
 }
 
@@ -478,11 +514,14 @@ func TestInitAndSandboxAreUsageErrors(t *testing.T) {
 
 func TestNewNeedsAProductAndAProject(t *testing.T) {
 	directory := emptyDirectory(t, "choice-chat")
+	store := credential.NewMemory()
+	storeSession(t, store, sessionToken())
+	api := &fakeAPI{listProjects: func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error) { return nil, nil }}
 	exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "new", "bogus")
 	if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || fmt.Sprint(failure.Data["choices"]) != "[signal-relay]" {
 		t.Fatalf("an unknown product gave exit=%d %s", exit, stdout)
 	}
-	exit, stdout, _ = run(t, Dependencies{WorkingDir: directory}, "--json", "new", "signal-relay", "--dry-run")
+	exit, stdout, _ = run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "new", "signal-relay", "--dry-run")
 	if result := decodeEvent(t, []byte(stdout)); exit != 0 || result.Next != "oe new signal-relay --project choice-chat" {
 		t.Fatalf("a named product gave exit=%d %s", exit, stdout)
 	}
@@ -494,7 +533,7 @@ func TestNewNeedsAProductAndAProject(t *testing.T) {
 		t.Fatalf("an agent without a product gave exit=%d %s", exit, stdout)
 	}
 	exit, stdout, _ = run(t, Dependencies{
-		WorkingDir: directory, Interactive: terminal, In: strings.NewReader("2\n"), Getenv: environment(nil),
+		API: api, Store: store, WorkingDir: directory, Interactive: terminal, In: strings.NewReader("2\n"), Getenv: environment(nil),
 	}, "--json", "new", "--dry-run")
 	if result := decodeEvent(t, []byte(stdout)); exit != 0 || result.Data["product"] != "signal-relay" {
 		t.Fatalf("a person could not pick the product: exit=%d %s", exit, stdout)

@@ -58,10 +58,6 @@ func loginRequired(code, message string, cause error) error {
 	return &problem{code: code, message: message, next: "oe auth login", exit: exitAuthentication, cause: cause}
 }
 
-// productionOptIn tells how to activate Production. A read of an environment
-// that is not active adds it to its message.
-const productionOptIn = "to activate Production, add production: {} under environments in " + config.Filename + " when it has no Production section, then run oe config push"
-
 // classify gives every error that reaches Run a code and an exit status. A
 // control API refusal keeps the code that the console sent. A temporary failure
 // exits 6, and its next is the command line of the run. A terms, card, or Free
@@ -116,9 +112,6 @@ func classify(err error, commandLine, environment string) *problem {
 		case refusal.Code == "ENVIRONMENT_NOT_FOUND" && environment == "sandbox":
 			// Every project has Sandbox, so the session cannot read this project.
 			result.next = "oe auth status"
-		case refusal.Code == "ENVIRONMENT_NOT_FOUND" && environment == "production":
-			result.next = "oe config push"
-			result.message += "; " + productionOptIn
 		case refusal.Code == "AUTHORITY_UNAVAILABLE", refusal.Status == http.StatusTooManyRequests,
 			refusal.Status == http.StatusBadGateway, refusal.Status == http.StatusServiceUnavailable,
 			refusal.Status == http.StatusGatewayTimeout:

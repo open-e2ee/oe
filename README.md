@@ -48,12 +48,30 @@ writes:
   running command, when the directory has a `package.json`.
 
 `oe new` does not run the package manager. Its result names the install
-command. Without `--project`, the project slug comes from the directory name.
-`--dry-run` shows the files that it would change, without a change. A
-directory that already has `open-e2ee.config.ts` fails with `ALREADY_SET_UP`,
-a `--project` value that is not a slug fails with `PROJECT_INVALID`, exit 2,
-and a slug that the organization already uses fails with `PROJECT_EXISTS`.
-`oe new` never connects a directory to an existing project.
+command. Without a `package.json`, `oe new` writes no `package.json`. `oe`
+reads the `@open-e2ee/oe/config` import of `open-e2ee.config.ts` with its own
+copy, so the file loads without an install. Without `--project`, the project
+slug comes from the directory name. `--dry-run` needs a session. It shows the
+files that it would change, without a change. A directory that already has
+`open-e2ee.config.ts` fails with `ALREADY_SET_UP`, and a `--project` value
+that is not a slug fails with `PROJECT_INVALID`, exit 2. A slug that the
+organization already uses fails with `PROJECT_EXISTS`, exit 2, in the run and
+in the dry run. Its `next` creates a project with another slug, and its
+message also names `oe link` for the project that exists. `oe new` never
+connects a directory to an existing project.
+
+`oe link PROJECT` connects the directory to a project that exists. When the
+directory has no config, it writes `open-e2ee.config.ts` from the server
+policy. It then adds the `@open-e2ee/oe` devDependency to a `package.json` and
+names the install command, as `oe new` does.
+
+`oe doctor --wait` waits for a managed message that is acknowledged after the
+wait starts. When no message is acknowledged before `--timeout`, it fails with
+`FIRST_MESSAGE_TIMED_OUT`, exit 6, and `next` is the same command. The control
+API reports only whether the first message of a project was ever
+acknowledged, so a project whose first message was acknowledged before the
+wait fails at once with `FIRST_MESSAGE_ALREADY_ACKNOWLEDGED`, exit 1, and
+`next` is `oe doctor`.
 
 ## Command contract
 
@@ -110,10 +128,11 @@ result, for success and for failure. `oe auth login` also writes one pending
 event before the result (see below).
 
 ```json
-{"status":"ok","command":"project","message":"...","data":{}}
+{"status":"ok","command":"project show","message":"...","data":{}}
 {"status":"error","command":"config push","error":"...","code":"CONFIG_NOT_FOUND","next":"oe new"}
 ```
 
+`command` is the command path, for example `project show` or `config push`.
 Switch on `code`, not on the text of `error`. When `next` is present, it is the
 command that moves the task forward. When `action` is present, `action.url` is a
 page that a person must open, so give it to the person. In text mode, a failure
@@ -167,7 +186,9 @@ acceptance.
 
 After the terms, `next` names the setup step of the directory: `oe new` in a
 directory with a `package.json` and no `open-e2ee.config.ts`, `oe link` in a
-directory that a config sets up, and nothing in other directories. A person at a
+directory that a config sets up and whose `.env.local` has no Relay
+connection, `oe doctor` in a directory that a config sets up and whose
+`.env.local` has the connection, and nothing in other directories. A person at a
 terminal who logs in, in an app directory with no config, chooses to create a
 project with `oe new`, link one with `oe link`, or skip. An agent or a run
 without a terminal gets no prompt, only `next`.
@@ -204,8 +225,25 @@ oe project connection my-chat --env production --json
 
 In JSON, `data.variable` names the variable that the application reads (see
 [Configuration ownership](#configuration-ownership)). A project with no active
-environment fails with `ENVIRONMENT_NOT_ACTIVE`, and `next` names
-`oe new` or `oe config push`.
+environment fails with `ENVIRONMENT_NOT_ACTIVE`. For Sandbox, `next` is
+`oe new`. For Production, `next` is `oe config push` only when the config of
+the project has a Production section and the repository writes the policy.
+Otherwise `next` is empty, and the message names the steps that apply: add
+`production: {}` under `environments`, then run `oe config push`, or activate
+Production on the plan page of the project in the console.
+
+A project read (`oe project show`, `oe project connection`, `oe link`,
+`oe doctor`, `oe config push`, and `oe config pull`) names `oe project list` as
+`next` when it cannot find the project. A value that is not a slug fails with
+`PROJECT_INVALID`, exit 2, before a request. A project that the account cannot
+read fails with `PROJECT_NOT_FOUND`, exit 1. When the control API refuses to
+read a project that the project list shows, the read fails with
+`CONTROL_CONFLICT`, exit 1, and `data.listed` is `true`. The control API
+also gives that code to a project that it is deleting or that cannot take a
+request yet, so run the command again once. When the refusal stays, the
+service holds an inconsistent record that no `oe` command repairs. `next` is
+empty, and `action.url` is the page where a person reports the slug and the
+error.
 
 `oe config push` applies the Sandbox section, then the Production section. The
 `production` entry under `environments` is the opt-in: without it, a push never
@@ -237,7 +275,10 @@ Each project has one writer mode:
 - `config` makes the repository the desired-state writer.
 - `console` makes the console the desired-state writer.
 
-Local mutation commands take an advisory project lock. Remote mutations include
+Local mutation commands take an advisory project lock on `.open-e2ee.lock`, an
+empty file next to `open-e2ee.config.ts`. The file stays after the command, and
+`oe new`, `oe link`, `oe config push`, and `oe config pull` add it to
+`.gitignore`. Remote mutations include
 a stable idempotency key. Plans and deploys include the server's expected
 revision. A console-first project or a revision conflict fails closed.
 

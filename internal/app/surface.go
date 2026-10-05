@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/open-e2ee/oe/internal/output"
@@ -103,6 +104,37 @@ var variableSurface = []variableSpec{
 	{"OE_ACCESS_TOKEN_SCOPES", "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."},
 	{"OE_ENV", "The environment of doctor, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
 	{"OE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to retry one mutation."},
+}
+
+// commandPath gives the words of usage that name the command: the words
+// after oe and before the first argument or flag, such as "project show" or
+// "notifications setup ios".
+func commandPath(usage string) string {
+	var words []string
+	for _, word := range strings.Fields(strings.TrimPrefix(usage, "oe ")) {
+		if strings.HasPrefix(word, "[") || strings.HasPrefix(word, "-") || strings.ToLower(word) != word {
+			break
+		}
+		words = append(words, word)
+	}
+	return strings.Join(words, " ")
+}
+
+// envelopeCommand is the command that the output of a run names: the longest
+// command path of the surface that the command and its arguments start with,
+// else the command. Every success of a command names the same path.
+func envelopeCommand(command string, args []string) string {
+	words := append([]string{command}, args...)
+	result, length := command, 1
+	for _, spec := range commandSurface {
+		for _, usage := range spec.Usage {
+			path := strings.Fields(commandPath(usage))
+			if len(path) > length && len(path) <= len(words) && slices.Equal(path, words[:len(path)]) {
+				result, length = strings.Join(path, " "), len(path)
+			}
+		}
+	}
+	return result
 }
 
 func lookupCommand(name string) (commandSpec, bool) {
