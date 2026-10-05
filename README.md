@@ -238,9 +238,12 @@ A project read (`oe project show`, `oe project connection`, `oe link`,
 `PROJECT_INVALID`, exit 2, before a request. A project that the account cannot
 read fails with `PROJECT_NOT_FOUND`, exit 1. When the control API refuses to
 read a project that the project list shows, the read fails with
-`CONTROL_CONFLICT`, exit 1, and `data.listed` is `true`. No `oe` command
-repairs that project, so `next` is empty, and `action.url` is the page where a
-person reports the slug and the error.
+`CONTROL_CONFLICT`, exit 1, and `data.listed` is `true`. The control API
+also gives that code to a project that it is deleting or that cannot take a
+request yet, so run the command again once. When the refusal stays, the
+service holds an inconsistent record that no `oe` command repairs. `next` is
+empty, and `action.url` is the page where a person reports the slug and the
+error.
 
 `oe config push` applies the Sandbox section, then the Production section. The
 `production` entry under `environments` is the opt-in: without it, a push never

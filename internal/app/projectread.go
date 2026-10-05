@@ -37,10 +37,13 @@ func (r *runner) readProject(ctx context.Context, project string) (control.Proje
 // the read with PROJECT_INVALID. The control API refuses a project that the
 // session cannot read with PROJECT_NOT_FOUND. It refuses a slug that it
 // cannot read for another reason with CONTROL_CONFLICT, so the project list
-// tells the two cases apart: a project that is not in the list is not found,
-// and a listed project that the read refuses is a record that the service
-// holds in an inconsistent state. That failure keeps its code and names the
-// page where a person reports it, because no oe command repairs it.
+// tells the two cases apart: a project that is not in the list is not found.
+// The control API also uses CONTROL_CONFLICT for a project that it is
+// deleting or that cannot take a request yet, and the code does not tell
+// those apart from a record that the service holds in an inconsistent state.
+// So a listed project that the read refuses keeps its code, its message says
+// to report the refusal only when a retry gets it again, and its action names
+// the page where a person reports it. No oe command repairs such a record.
 func (r *runner) getProject(ctx context.Context, access credential.Credential, project string) (control.Project, error) {
 	if !validSlug(project) {
 		return control.Project{}, &problem{
@@ -72,8 +75,8 @@ func (r *runner) getProject(ctx context.Context, access credential.Credential, p
 				actionURL: reportURL, actionReason: "report",
 				data: map[string]any{"project": project, "listed": true},
 				message: fmt.Sprintf("project %s is in the project list, but the control API refused to read it (%s); "+
-					"the service holds an inconsistent record of the project, and no oe command repairs it; "+
-					"report the project slug and this error at %s", project, strings.TrimSuffix(refusal.Message, "."), reportURL),
+					"when a retry gets the same refusal, the service holds an inconsistent record of the project that no oe command repairs, "+
+					"so report the project slug and this error at %s", project, strings.TrimSuffix(refusal.Message, "."), reportURL),
 			}
 		}
 	}

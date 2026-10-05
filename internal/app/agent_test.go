@@ -449,8 +449,10 @@ func TestAgentDefaultsToJSON(t *testing.T) {
 // does not exist, or that the session cannot read, names oe project list. The
 // control API refuses a slug that it cannot read with CONTROL_CONFLICT, so the
 // project list decides between a project that is not found and a listed
-// project that the service cannot read. That inconsistent record keeps the
-// code of the server and names the page that reports it.
+// project that the service cannot read. That refusal keeps the code of the
+// server and names the page that reports it. The code alone does not prove an
+// inconsistent record, so the message makes that claim only for a refusal
+// that a retry gets again.
 func TestProjectReadNamesTheProjectList(t *testing.T) {
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
@@ -492,7 +494,7 @@ func TestProjectReadNamesTheProjectList(t *testing.T) {
 			}
 			if test.code == "CONTROL_CONFLICT" && (failure.Action.URL != reportURL || failure.Action.Reason != "report" ||
 				failure.Data["listed"] != true || !strings.Contains(failure.Error, "The managed Relay project does not exist") ||
-				!strings.Contains(failure.Error, "inconsistent record")) {
+				!strings.Contains(failure.Error, "when a retry gets the same refusal, the service holds an inconsistent record")) {
 				t.Fatalf("a listed project that the read refuses did not name the report page: %s", stdout)
 			}
 		}
