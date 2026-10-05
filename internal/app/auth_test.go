@@ -824,3 +824,24 @@ func TestLoginNeedsAPositiveTimeout(t *testing.T) {
 		}
 	}
 }
+
+// TestRefusedAccessTokenKeepsTheData proves that ACCESS_TOKEN_INVALID keeps
+// the data of the failure, such as the state of each environment of a push.
+func TestRefusedAccessTokenKeepsTheData(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "ci-token")
+	t.Setenv("OE_ACCESS_TOKEN_SCOPES", "")
+	directory := initializedProject(t, "push-chat")
+	api := &fakeAPI{
+		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+			return control.Project{Slug: "push-chat", Writer: "config", Sandbox: &control.ProjectEnvironment{RelayURL: "https://relay.example/signal/v1/connection/pk_sandbox"}}, nil
+		},
+		plan: func(context.Context, control.CredentialRequest, control.PlanRequest) (control.Plan, error) {
+			return control.Plan{}, &control.APIError{Status: 401, Code: "INVALID_SESSION", Message: "Run oe auth login again."}
+		},
+	}
+	exit, stdout, _ := run(t, Dependencies{API: api, WorkingDir: directory}, "--json", "config", "push", "--dry-run")
+	failure := decodeEvent(t, []byte(stdout))
+	if exit != exitAuthentication || failure.Code != "ACCESS_TOKEN_INVALID" || failure.Data["environments"] == nil {
+		t.Fatalf("a refused OE_ACCESS_TOKEN lost the push data: exit=%d %s", exit, stdout)
+	}
+}

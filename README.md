@@ -190,8 +190,8 @@ IDs (`user`, `organization.id`, and `agent.registrationId` for an agent), `role`
 
 `OE_ACCESS_TOKEN` takes precedence over the stored session, and
 `oe auth login` never replaces it. When the control API refuses the token,
-every command, `oe auth login` too, fails with `ACCESS_TOKEN_INVALID`, exit 4,
-and no `next`. Set `OE_ACCESS_TOKEN` to a new token, or unset it and run
+each command that sends it, `oe auth login` too, fails with
+`ACCESS_TOKEN_INVALID`, exit 4, and no `next`. Set `OE_ACCESS_TOKEN` to a new token, or unset it and run
 `oe auth login`.
 
 Read the Relay connection URL of a project. Text mode prints only the URL, so a

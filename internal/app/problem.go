@@ -143,7 +143,7 @@ func environmentTokenFailure(err error, commandLine, environment string) *proble
 	switch {
 	case failure.exit == exitAuthentication:
 		return &problem{
-			code: "ACCESS_TOKEN_INVALID", exit: exitAuthentication, cause: err,
+			code: "ACCESS_TOKEN_INVALID", exit: exitAuthentication, cause: err, data: failure.data,
 			message: "the control API refused the token in OE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken,
 		}
 	case failure.next == "oe auth login":
