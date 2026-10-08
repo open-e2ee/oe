@@ -44,7 +44,9 @@ func validate(value any) (Config, error) {
 		}
 		fields = schemaErrors(failure, message.NewPrinter(language.English))
 	}
-	var result Config
+	// A shared policy that leaves out relayReceipts keeps Relay delivery
+	// receipts on.
+	result := Config{Relay: RelayPolicy{RelayReceipts: true}}
 	if len(fields) == 0 {
 		encoded, err := json.Marshal(value)
 		if err != nil {

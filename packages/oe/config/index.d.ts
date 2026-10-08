@@ -5,10 +5,20 @@ export type Retention =
 /** The products that a project config can name. */
 export type Product = "signal-relay";
 
-/** How long the Relay keeps undelivered messages and attachments. */
+/**
+ * How long the Relay keeps undelivered messages and attachments, and whether
+ * it sends Relay delivery receipts.
+ */
 export interface RelayPolicy {
   deliveryRetention: Retention;
   attachmentRetention: Retention;
+  /**
+   * Turns Relay delivery receipts on or off. A Relay delivery receipt means
+   * that the recipient device stored and acknowledged the message. It never
+   * proves decryption. Each stored Relay delivery receipt uses one delivery
+   * unit for each sender device. The default is `true`.
+   */
+  relayReceipts?: boolean;
 }
 
 /**

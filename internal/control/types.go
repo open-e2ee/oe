@@ -86,10 +86,12 @@ type PlanRequest struct {
 
 // RelayPolicyRequest is the Relay policy of a plan or a deploy. The control
 // API owns the wire name deliveryTtlSeconds. The CLI calls the same value
-// delivery retention, as the config does.
+// delivery retention, as the config does. RelayReceipts turns Relay delivery
+// receipts on or off.
 type RelayPolicyRequest struct {
-	AttachmentRetentionSeconds int `json:"attachmentRetentionSeconds"`
-	DeliveryRetentionSeconds   int `json:"deliveryTtlSeconds"`
+	AttachmentRetentionSeconds int  `json:"attachmentRetentionSeconds"`
+	DeliveryRetentionSeconds   int  `json:"deliveryTtlSeconds"`
+	RelayReceipts              bool `json:"relayReceipts"`
 }
 
 type Change struct {
@@ -136,10 +138,12 @@ type Project struct {
 // read is always present: State is "active", "available", or "inactive", and
 // BlockedBy names the first gate that stops activation. CanActivate and
 // CardOnFile are set on Production only. Only an active environment has a
-// RelayURL and the policy fields.
+// RelayURL and the policy fields. RelayReceipts is nil when the read does
+// not give it.
 type ProjectEnvironment struct {
 	AttachmentRetentionSeconds int    `json:"attachmentRetentionSeconds"`
 	DeliveryRetentionSeconds   int    `json:"deliveryTtlSeconds"`
+	RelayReceipts              *bool  `json:"relayReceipts,omitempty"`
 	RelayURL                   string `json:"relayUrl"`
 	Revision                   string `json:"revision"`
 	State                      string `json:"state,omitempty"`

@@ -44,10 +44,11 @@ export default defineConfig({
 });
 `
 
-// retention gives the policy of an active environment in seconds.
+// retention gives the policy of an active environment in seconds, with
+// Relay delivery receipts on.
 func retention(delivery, attachment int) *control.ProjectEnvironment {
 	return &control.ProjectEnvironment{
-		DeliveryRetentionSeconds: delivery, AttachmentRetentionSeconds: attachment,
+		DeliveryRetentionSeconds: delivery, AttachmentRetentionSeconds: attachment, RelayReceipts: new(true),
 		RelayURL: "https://relay.example/signal/v1/connection/pk_public", Revision: "4",
 	}
 }
@@ -485,6 +486,14 @@ func (c *pushConsole) Plan(_ context.Context, request control.CredentialRequest,
 			result.Changes = append(result.Changes, control.Change{Path: field.path, Before: field.before, After: field.after})
 		}
 	}
+	switch receipts := plan.Policy.RelayReceipts; {
+	case !active:
+		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", After: receipts})
+	case current.RelayReceipts == nil:
+		c.t.Fatalf("the active %s environment has no relayReceipts", plan.Environment)
+	case *current.RelayReceipts != receipts:
+		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", Before: *current.RelayReceipts, After: receipts})
+	}
 	return result, nil
 }
 
@@ -506,6 +515,7 @@ func (c *pushConsole) Deploy(_ context.Context, request control.CredentialReques
 	current.Revision = strconv.Itoa(revision + 1)
 	current.DeliveryRetentionSeconds = deploy.Policy.DeliveryRetentionSeconds
 	current.AttachmentRetentionSeconds = deploy.Policy.AttachmentRetentionSeconds
+	current.RelayReceipts = new(deploy.Policy.RelayReceipts)
 	if name == "production" {
 		current.RelayURL, current.State, current.BlockedBy, current.CanActivate = productionRelayURL, control.ProductionActive, "", false
 	}
@@ -767,7 +777,7 @@ func TestPushDryRunWritesNothing(t *testing.T) {
 	if pushStatus(t, result, "sandbox") != "planned" || production["status"] != "planned" || production["activation"] != "free" {
 		t.Fatalf("dry run did not report the plan: %s", stdout)
 	}
-	if changes, _ := production["changes"].([]any); len(changes) != 3 {
+	if changes, _ := production["changes"].([]any); len(changes) != 4 {
 		t.Fatalf("dry run did not report the Production changes: %s", stdout)
 	}
 	entries, err := os.ReadDir(directory)
@@ -891,5 +901,149 @@ func TestConfigWritesIgnoreTheLockFile(t *testing.T) {
 			t.Fatalf("pull failed: exit=%d %s", exit, stdout)
 		}
 		ignored(t, directory)
+	})
+}
+
+func TestPushCarriesRelayReceipts(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		from, to            string
+		sandbox, production bool
+	}{
+		{"default on", "", "", true, true},
+		{
+			"shared off",
+			"    attachmentRetention: \"30d\",\n  },",
+			"    attachmentRetention: \"30d\",\n    relayReceipts: false,\n  },",
+			false, false,
+		},
+		{
+			"sandbox override off",
+			`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`,
+			`relay: { deliveryRetention: "1d", attachmentRetention: "1d", relayReceipts: false },`,
+			false, true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := strings.Replace(sandboxOnly, "\n  },\n});", "\n    production: {},\n  },\n});", 1)
+			source = strings.Replace(source, "relay: {\n        deliveryRetention: \"1d\",\n        attachmentRetention: \"1d\",\n      },",
+				`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, 1)
+			if !strings.Contains(source, test.from) {
+				t.Fatalf("the source has no %q", test.from)
+			}
+			directory, _ := projectWith(t, strings.Replace(source, test.from, test.to, 1))
+			console := newPushConsole(t, "pull-chat")
+			console.activeProduction(2_592_000)
+
+			exit, stdout, _ := run(t, pushDependencies(t, console, directory), "--json", "config", "push", "--dry-run")
+			if exit != 0 {
+				t.Fatalf("the dry run failed: exit=%d %s", exit, stdout)
+			}
+			// The console holds relayReceipts on, so only a change to off is
+			// a planned change.
+			for name, want := range map[string]bool{"sandbox": test.sandbox, "production": test.production} {
+				changes, _ := environmentResult(t, decodeEvent(t, []byte(stdout)), name)["changes"].([]any)
+				planned := slices.ContainsFunc(changes, func(change any) bool {
+					fields, _ := change.(map[string]any)
+					return fields["path"] == "relay.relayReceipts" && fields["before"] == true && fields["after"] == false
+				})
+				if planned == want {
+					t.Fatalf("the %s dry run planned relayReceipts %v, want %v: %s", name, !planned, want, stdout)
+				}
+			}
+
+			exit, stdout, _ = run(t, pushDependencies(t, console, directory), "--json", "config", "push", "--yes")
+			if exit != 0 {
+				t.Fatalf("the push failed: exit=%d %s", exit, stdout)
+			}
+			// Sandbox always deploys, because its retention changes. Production
+			// deploys only when relayReceipts changes.
+			for name, want := range map[string]bool{"sandbox": test.sandbox, "production": test.production} {
+				deploy, ok := console.deployed[name]
+				if !ok && name == "production" && want {
+					continue
+				}
+				if !ok || deploy.Policy.RelayReceipts != want {
+					t.Fatalf("the %s deploy sent %#v (deployed %v), want relayReceipts %v", name, deploy.Policy, ok, want)
+				}
+				if receipts := console.environment(name).RelayReceipts; receipts == nil || *receipts != want {
+					t.Fatalf("the console holds relayReceipts %v for %s, want %v", receipts, name, want)
+				}
+			}
+		})
+	}
+}
+
+func TestPullWritesRelayReceipts(t *testing.T) {
+	off := func(environment *control.ProjectEnvironment) *control.ProjectEnvironment {
+		environment.RelayReceipts = new(false)
+		return environment
+	}
+	for _, test := range []struct {
+		name                string
+		sandbox, production *control.ProjectEnvironment
+		path                string
+		action              string
+		from                any
+		want                map[string]bool
+	}{
+		{
+			"sandbox off replaces the shared value",
+			off(retention(day, day)), nil,
+			"environments.sandbox.relay.relayReceipts", "replace", true,
+			map[string]bool{"sandbox": false},
+		},
+		{
+			"production off adds an override",
+			retention(day, day), off(retention(30*day, 30*day)),
+			"environments.production.relay.relayReceipts", "add", nil,
+			map[string]bool{"sandbox": true, "production": false},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory, path := projectWith(t, sandboxOnly)
+			dependencies, _ := pullServer(t, "pull-chat", test.sandbox, test.production)
+			dependencies.WorkingDir = directory
+
+			exit, stdout, _ := run(t, dependencies, "--json", "config", "pull", "--yes")
+			result := decodeEvent(t, []byte(stdout))
+			if exit != 0 || result.Data["changed"] != true {
+				t.Fatalf("the pull did not apply: exit=%d %s", exit, stdout)
+			}
+			name := strings.Split(test.path, ".")[1]
+			changes, _ := entry(t, result, name)["changes"].([]any)
+			if len(changes) != 1 {
+				t.Fatalf("the %s pull made %d changes, want 1: %s", name, len(changes), stdout)
+			}
+			change := changes[0].(map[string]any)
+			if change["path"] != test.path || change["action"] != test.action || change["from"] != test.from || change["to"] != false {
+				t.Fatalf("the pull change is %#v", change)
+			}
+			value := mustLoad(t, path)
+			for environment, want := range test.want {
+				if policy, err := value.RelayPolicyFor(environment); err != nil || policy.RelayReceipts != want {
+					t.Fatalf("the %s policy is %#v (%v), want relayReceipts %v", environment, policy, err, want)
+				}
+			}
+			if !value.Relay.RelayReceipts {
+				t.Fatalf("the pull changed the shared policy: %#v", value.Relay)
+			}
+		})
+	}
+
+	t.Run("a read without relayReceipts", func(t *testing.T) {
+		directory, path := projectWith(t, sandboxOnly)
+		before := mustRead(t, path)
+		sandbox := retention(day, day)
+		sandbox.RelayReceipts = nil
+		dependencies, _ := pullServer(t, "pull-chat", sandbox, nil)
+		dependencies.WorkingDir = directory
+		exit, stdout, _ := run(t, dependencies, "--json", "config", "pull", "--yes")
+		if exit == 0 || !strings.Contains(stdout, "no relayReceipts for the sandbox environment") {
+			t.Fatalf("a pull guessed a missing relayReceipts: exit=%d %s", exit, stdout)
+		}
+		if after := mustRead(t, path); string(after) != string(before) {
+			t.Fatalf("the refused pull changed the file:\n%s", after)
+		}
 	})
 }

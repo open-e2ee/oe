@@ -482,6 +482,7 @@ func projectSummary(project control.Project, names []string) map[string]any {
 			"revision":                   environment.Revision,
 			"attachmentRetentionSeconds": environment.AttachmentRetentionSeconds,
 			"deliveryRetentionSeconds":   environment.DeliveryRetentionSeconds,
+			"relayReceipts":              environment.RelayReceipts,
 		}
 	}
 	return map[string]any{
@@ -722,6 +723,7 @@ func controlPolicy(value config.Config, environment string) (control.RelayPolicy
 	return control.RelayPolicyRequest{
 		AttachmentRetentionSeconds: attachment,
 		DeliveryRetentionSeconds:   delivery,
+		RelayReceipts:              policy.RelayReceipts,
 	}, nil
 }
 

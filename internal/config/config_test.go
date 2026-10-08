@@ -131,7 +131,7 @@ export default defineConfig({
 	want := Config{
 		Product: "signal-relay",
 		Project: "secure-chat",
-		Relay:   RelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "7d"},
+		Relay:   RelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "7d", RelayReceipts: true},
 		Environments: Environments{
 			Sandbox:    Environment{Relay: &RelayOverride{DeliveryRetention: "1d"}},
 			Production: &Environment{},
@@ -141,7 +141,7 @@ export default defineConfig({
 		t.Fatalf("want %#v, got %#v", want, value)
 	}
 	policy, err := value.RelayPolicyFor("sandbox")
-	if err != nil || policy != (RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "7d"}) {
+	if err != nil || policy != (RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "7d", RelayReceipts: true}) {
 		t.Fatalf("the Sandbox override must merge field by field: %#v, %v", policy, err)
 	}
 }
@@ -335,6 +335,66 @@ func TestProductionSectionIsOptional(t *testing.T) {
 	requireFieldError(t, failure, "environments.sandbox", "required")
 }
 
+func TestRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing.T) {
+	const shared = "    attachmentRetention: \"30d\",\n  },"
+	const sandbox = `relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`
+	const production = "    production: {},\n"
+	for _, test := range []struct {
+		name                string
+		edits               [][2]string
+		shared              bool
+		sandbox, production bool
+	}{
+		{"absent", nil, true, true, true},
+		{"shared on", [][2]string{{shared, "    attachmentRetention: \"30d\",\n    relayReceipts: true,\n  },"}}, true, true, true},
+		{"shared off", [][2]string{{shared, "    attachmentRetention: \"30d\",\n    relayReceipts: false,\n  },"}}, false, false, false},
+		{
+			"sandbox override off",
+			[][2]string{{sandbox, `relay: { deliveryRetention: "1d", attachmentRetention: "1d", relayReceipts: false },`}},
+			true, false, true,
+		},
+		{
+			"production override off",
+			[][2]string{{production, "    production: { relay: { relayReceipts: false } },\n"}},
+			true, true, false,
+		},
+		{
+			"override on over shared off",
+			[][2]string{
+				{shared, "    attachmentRetention: \"30d\",\n    relayReceipts: false,\n  },"},
+				{sandbox, `relay: { deliveryRetention: "1d", attachmentRetention: "1d", relayReceipts: true },`},
+			},
+			false, true, false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := strings.Replace(sample, "\n  },\n});", "\n"+production+"  },\n});", 1)
+			for _, edit := range test.edits {
+				if !strings.Contains(source, edit[0]) {
+					t.Fatalf("the source has no %q", edit[0])
+				}
+				source = strings.Replace(source, edit[0], edit[1], 1)
+			}
+			value, err := Load(writeConfig(t, source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value.Relay.RelayReceipts != test.shared {
+				t.Fatalf("the shared relayReceipts is %v, want %v", value.Relay.RelayReceipts, test.shared)
+			}
+			for environment, want := range map[string]bool{"sandbox": test.sandbox, "production": test.production} {
+				policy, err := value.RelayPolicyFor(environment)
+				if err != nil || policy.RelayReceipts != want {
+					t.Fatalf("the %s policy is %#v (%v), want relayReceipts %v", environment, policy, err, want)
+				}
+			}
+		})
+	}
+	if !New("secure-chat").Relay.RelayReceipts {
+		t.Fatal("a new config must turn Relay delivery receipts on")
+	}
+}
+
 func TestSchemaErrorNamesThePropertyPath(t *testing.T) {
 	for name, test := range map[string]struct{ from, to, path, fragment string }{
 		"enum": {
@@ -352,6 +412,14 @@ func TestSchemaErrorNamesThePropertyPath(t *testing.T) {
 		"type": {
 			`deliveryRetention: "30d",`, `deliveryRetention: 30,`,
 			"relay.deliveryRetention", "",
+		},
+		"relayReceipts type": {
+			`attachmentRetention: "30d",`, `attachmentRetention: "30d", relayReceipts: "on",`,
+			"relay.relayReceipts", "",
+		},
+		"relayReceipts override type": {
+			`relay: { deliveryRetention: "1d"`, `relay: { relayReceipts: 0, deliveryRetention: "1d"`,
+			"environments.sandbox.relay.relayReceipts", "",
 		},
 		"managed maximum": {
 			`relay: { deliveryRetention: "1d", attachmentRetention: "1d" }`, `relay: { attachmentRetention: "1d" }`,
@@ -608,6 +676,7 @@ func TestApplyGivesTheValueThatEditWrites(t *testing.T) {
 		{Path: []string{"environments", "sandbox", "relay", "deliveryRetention"}, Value: "3d"},
 		{Path: []string{"environments", "production"}, Value: map[string]any{}},
 		{Path: []string{"environments", "production", "relay", "attachmentRetention"}, Value: "7d"},
+		{Path: []string{"environments", "production", "relay", "relayReceipts"}, Value: false},
 	}
 	applied, err := Apply(value, changes...)
 	if err != nil {
@@ -623,7 +692,8 @@ func TestApplyGivesTheValueThatEditWrites(t *testing.T) {
 	if !reflect.DeepEqual(applied, edited) {
 		t.Fatalf("Apply gave %#v, Edit wrote %#v", applied, edited)
 	}
-	if applied.Environments.Production == nil || applied.Environments.Sandbox.Relay.DeliveryRetention != "3d" {
+	if applied.Environments.Production == nil || applied.Environments.Sandbox.Relay.DeliveryRetention != "3d" ||
+		applied.Environments.Production.Relay.RelayReceipts == nil || *applied.Environments.Production.Relay.RelayReceipts {
 		t.Fatalf("Apply did not apply the changes: %#v", applied)
 	}
 }

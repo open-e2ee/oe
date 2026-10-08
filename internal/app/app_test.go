@@ -457,6 +457,7 @@ func projectEnvironment(relayURL, revision string) *control.ProjectEnvironment {
 	return &control.ProjectEnvironment{
 		AttachmentRetentionSeconds: 86_400,
 		DeliveryRetentionSeconds:   86_400,
+		RelayReceipts:              new(true),
 		RelayURL:                   relayURL,
 		Revision:                   revision,
 	}

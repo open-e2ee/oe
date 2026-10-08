@@ -245,6 +245,9 @@ func TestProjectShowNeedsNoConfigAndOmitsTheConnection(t *testing.T) {
 		strings.Contains(stdout, "deliveryTtlSeconds") {
 		t.Fatalf("project show named the retention fields wrong: %s", stdout)
 	}
+	if sandbox["relayReceipts"] != true {
+		t.Fatalf("project show lost the relayReceipts policy: %s", stdout)
+	}
 	if strings.Contains(stdout, "pk_sandbox_public") {
 		t.Fatalf("project show printed a Relay connection URL: %s", stdout)
 	}

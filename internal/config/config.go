@@ -26,10 +26,12 @@ type Config struct {
 }
 
 // RelayPolicy is the shared Relay policy. Each environment takes it unless
-// its own relay section overrides a field.
+// its own relay section overrides a field. RelayReceipts turns Relay delivery
+// receipts on or off. It is true when the file leaves it out.
 type RelayPolicy struct {
 	DeliveryRetention   string `json:"deliveryRetention"`
 	AttachmentRetention string `json:"attachmentRetention"`
+	RelayReceipts       bool   `json:"relayReceipts"`
 }
 
 // Environments holds the Sandbox section and, once the project deploys to
@@ -48,6 +50,7 @@ type Environment struct {
 type RelayOverride struct {
 	DeliveryRetention   string `json:"deliveryRetention,omitempty"`
 	AttachmentRetention string `json:"attachmentRetention,omitempty"`
+	RelayReceipts       *bool  `json:"relayReceipts,omitempty"`
 }
 
 // Error is a config failure with a stable code. Data holds the field errors
@@ -106,6 +109,9 @@ func (c Config) RelayPolicyFor(environment string) (RelayPolicy, error) {
 		if selected.Relay.AttachmentRetention != "" {
 			policy.AttachmentRetention = selected.Relay.AttachmentRetention
 		}
+		if selected.Relay.RelayReceipts != nil {
+			policy.RelayReceipts = *selected.Relay.RelayReceipts
+		}
 	}
 	return policy, nil
 }
@@ -143,6 +149,7 @@ func New(project string) Config {
 		Relay: RelayPolicy{
 			DeliveryRetention:   "30d",
 			AttachmentRetention: "30d",
+			RelayReceipts:       true,
 		},
 		Environments: Environments{
 			Sandbox:    Environment{Relay: &RelayOverride{DeliveryRetention: "1d", AttachmentRetention: "1d"}},
@@ -231,7 +238,7 @@ func writeSource(source *strings.Builder, value any, indent string) {
 func sourceOrder(object map[string]any) []string {
 	order := []string{
 		"product", "project", "relay", "environments", "sandbox", "production",
-		"deliveryRetention", "attachmentRetention",
+		"deliveryRetention", "attachmentRetention", "relayReceipts",
 	}
 	keys := make([]string, 0, len(object))
 	for key := range object {

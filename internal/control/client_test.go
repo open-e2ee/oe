@@ -432,7 +432,7 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
 		case "GET /v1/projects/chat":
-			response.Write([]byte(`{"production":{"blockedBy":"card","canActivate":false,"cardOnFile":false,"state":"inactive"},"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayUrl":"https://sandbox.example/relay","revision":"2"},"slug":"chat","writer":"config"}`))
+			response.Write([]byte(`{"production":{"blockedBy":"card","canActivate":false,"cardOnFile":false,"state":"inactive"},"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true,"relayUrl":"https://sandbox.example/relay","revision":"2"},"slug":"chat","writer":"config"}`))
 		case "POST /v1/deploys":
 			body, _ := io.ReadAll(request.Body)
 			bodies = append(bodies, string(body))
@@ -452,7 +452,7 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 		project.Production.CardOnFile || project.Production.RelayURL != "" || project.Sandbox.Revision != "2" || project.Sandbox.State != "" {
 		t.Fatalf("project read lost the Production standing: %#v %v", project, err)
 	}
-	policy := RelayPolicyRequest{AttachmentRetentionSeconds: 86_400, DeliveryRetentionSeconds: 86_400}
+	policy := RelayPolicyRequest{AttachmentRetentionSeconds: 86_400, DeliveryRetentionSeconds: 86_400, RelayReceipts: true}
 	for _, request := range []DeployRequest{
 		{Environment: "production", ExpectedRevision: "0", PlanID: "plan_production", Policy: policy, ProjectSlug: "chat", Writer: "config"},
 		{Environment: "sandbox", ExpectedRevision: "2", PlanID: "plan_sandbox", Policy: policy, ProjectSlug: "chat", Writer: "config"},
@@ -465,8 +465,8 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 	// The console deploy route takes exactly these fields, and environment is
 	// required for both environments.
 	if len(bodies) != 2 ||
-		bodies[0] != `{"environment":"production","expectedRevision":"0","planId":"plan_production","policy":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400},"project":"chat","writer":"config"}` ||
-		bodies[1] != `{"environment":"sandbox","expectedRevision":"2","planId":"plan_sandbox","policy":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400},"project":"chat","writer":"config"}` {
+		bodies[0] != `{"environment":"production","expectedRevision":"0","planId":"plan_production","policy":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true},"project":"chat","writer":"config"}` ||
+		bodies[1] != `{"environment":"sandbox","expectedRevision":"2","planId":"plan_sandbox","policy":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true},"project":"chat","writer":"config"}` {
 		t.Fatalf("deploy bodies %q", bodies)
 	}
 }
