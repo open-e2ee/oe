@@ -23,18 +23,18 @@ const (
 )
 
 // linkedProject is a project read as the console answers it: Sandbox keeps 3d
-// of deliveries and 1d of attachments, and Production is active with 7d and
-// 30d.
+// of deliveries and 1d of attachments with Relay delivery receipts on, and
+// Production is active with 7d and 30d and Relay delivery receipts off.
 var linkedProject = fmt.Sprintf(`{"slug":"%%s","writer":"config",
-	"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":259200,"relayUrl":%q,"revision":"3"},
+	"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":259200,"relayReceipts":true,"relayUrl":%q,"revision":"3"},
 	"production":{"state":"active","blockedBy":null,"canActivate":false,"cardOnFile":true,
-		"attachmentRetentionSeconds":2592000,"deliveryTtlSeconds":604800,"relayUrl":%q,"revision":"2"}}`,
+		"attachmentRetentionSeconds":2592000,"deliveryTtlSeconds":604800,"relayReceipts":false,"relayUrl":%q,"revision":"2"}}`,
 	linkSandboxURL, linkProductionURL)
 
 // sandboxOnlyProject is a project read whose Production is not active. The
 // console then sends the Production standing and no environment fields.
 const sandboxOnlyProject = `{"slug":"sandbox-chat","writer":"config",
-	"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayUrl":"` + linkSandboxURL + `","revision":"1"},
+	"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true,"relayUrl":"` + linkSandboxURL + `","revision":"1"},
 	"production":{"state":"available","blockedBy":null,"canActivate":true,"cardOnFile":false}}`
 
 // linkConsole serves the project read and the project list of the console
@@ -143,8 +143,8 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 		t.Fatalf("oe link wrote the wrong attachment: %#v", linked)
 	}
 	for environment, expected := range map[string]config.RelayPolicy{
-		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d"},
-		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d"},
+		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d", RelayReceipts: true},
+		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d", RelayReceipts: false},
 	} {
 		if policy, err := linked.RelayPolicyFor(environment); err != nil || policy != expected {
 			t.Fatalf("the %s policy is %#v (%v), want the server policy %#v", environment, policy, err, expected)
@@ -185,7 +185,7 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 	if linked.Environments.Production != nil {
 		t.Fatalf("oe link added a Production section for an inactive Production: %#v", linked)
 	}
-	if policy, err := linked.RelayPolicyFor("sandbox"); err != nil || policy != (config.RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d"}) {
+	if policy, err := linked.RelayPolicyFor("sandbox"); err != nil || policy != (config.RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d", RelayReceipts: true}) {
 		t.Fatalf("the sandbox policy is %#v (%v)", policy, err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, ".env.production.local")); !os.IsNotExist(err) {
@@ -338,15 +338,15 @@ func TestLinkToAnotherProjectNeedsYes(t *testing.T) {
 		t.Fatalf("oe link --yes did not change the project: %#v", linked)
 	}
 	for environment, expected := range map[string]config.RelayPolicy{
-		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d"},
-		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d"},
+		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d", RelayReceipts: true},
+		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d", RelayReceipts: false},
 	} {
 		if policy, err := linked.RelayPolicyFor(environment); err != nil || policy != expected {
 			t.Fatalf("the %s policy is %#v (%v), want the server policy %#v", environment, policy, err, expected)
 		}
 	}
 	// The pull changes only the values that differ: the shared policy stays.
-	if linked.Relay != (config.RelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "30d"}) {
+	if linked.Relay != (config.RelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "30d", RelayReceipts: true}) {
 		t.Fatalf("the pull changed the shared policy: %#v", linked.Relay)
 	}
 	for filename, expected := range map[string]string{".env.local": linkSandboxURL, ".env.production.local": linkProductionURL} {

@@ -163,7 +163,8 @@ func TestNewCreatesSandboxAndWritesTheFiles(t *testing.T) {
 	body := bodies[0]
 	policy, _ := body["policy"].(map[string]any)
 	if body["project"] != "acme-chat" || body["writer"] != "config" ||
-		policy["attachmentRetentionSeconds"] != float64(86_400) || policy["deliveryTtlSeconds"] != float64(86_400) {
+		policy["attachmentRetentionSeconds"] != float64(86_400) || policy["deliveryTtlSeconds"] != float64(86_400) ||
+		policy["relayReceipts"] != true {
 		t.Fatalf("oe new sent the wrong bootstrap: %v", body)
 	}
 	if !strings.HasPrefix(keys[0], "oe_new_") || tokens[0] != "Bearer "+token {
@@ -472,7 +473,7 @@ func TestNewAddsTheDevDependencyAndTheWrittenConfigLoads(t *testing.T) {
 	}
 	policy, err := loaded.RelayPolicyFor("sandbox")
 	if err != nil || loaded.Project != "dep-chat" || loaded.Product != "signal-relay" || loaded.Environments.Production != nil ||
-		policy != (config.RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d"}) {
+		policy != (config.RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d", RelayReceipts: true}) {
 		t.Fatalf("the written config loaded as %+v %+v %v", loaded, policy, err)
 	}
 

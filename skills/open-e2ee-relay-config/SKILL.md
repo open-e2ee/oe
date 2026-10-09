@@ -18,6 +18,7 @@ export default defineConfig({
   relay: {
     deliveryRetention: "30d",
     attachmentRetention: "30d",
+    relayReceipts: true,
   },
   environments: {
     sandbox: {
@@ -34,6 +35,11 @@ export default defineConfig({
   override each value.
 - A retention value is one of `1h`, `6h`, `12h`, `1d`, `3d`, `7d`, `14d`,
   and `30d`.
+- `relayReceipts` turns Relay delivery receipts on or off. It is `true` when
+  the file leaves it out. A Relay delivery receipt means that the recipient
+  device stored and acknowledged the message. It never proves decryption.
+  Each stored Relay delivery receipt uses one delivery unit for each sender
+  device.
 - `oe` reads the file with Node.js 22.18 or later. The schema refuses an
   unknown field.
 

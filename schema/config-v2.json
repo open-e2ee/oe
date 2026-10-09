@@ -24,13 +24,18 @@
     "retention": {
       "enum": ["1h", "6h", "12h", "1d", "3d", "7d", "14d", "30d"]
     },
+    "relayReceipts": {
+      "description": "Turns Relay delivery receipts on or off. The shared policy is true when it leaves the field out.",
+      "type": "boolean"
+    },
     "relayPolicy": {
       "type": "object",
       "additionalProperties": false,
       "required": ["deliveryRetention", "attachmentRetention"],
       "properties": {
         "deliveryRetention": { "$ref": "#/$defs/retention" },
-        "attachmentRetention": { "$ref": "#/$defs/retention" }
+        "attachmentRetention": { "$ref": "#/$defs/retention" },
+        "relayReceipts": { "$ref": "#/$defs/relayReceipts" }
       }
     },
     "relayOverride": {
@@ -38,7 +43,8 @@
       "additionalProperties": false,
       "properties": {
         "deliveryRetention": { "$ref": "#/$defs/retention" },
-        "attachmentRetention": { "$ref": "#/$defs/retention" }
+        "attachmentRetention": { "$ref": "#/$defs/retention" },
+        "relayReceipts": { "$ref": "#/$defs/relayReceipts" }
       }
     },
     "environment": {

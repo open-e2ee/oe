@@ -19,7 +19,7 @@ import (
 )
 
 // relayFields are the fields of a Relay policy, in the order of the file.
-var relayFields = []string{"deliveryRetention", "attachmentRetention"}
+var relayFields = []string{"deliveryRetention", "attachmentRetention", "relayReceipts"}
 
 // A person's push waits this long for a card, and reads the project at this
 // interval while it waits.
@@ -140,7 +140,7 @@ type pulledEnvironment struct {
 type pullChange struct {
 	Path   string `json:"path"`
 	Action string `json:"action"`
-	From   string `json:"from,omitempty"`
+	From   any    `json:"from,omitempty"`
 	To     any    `json:"to"`
 }
 
@@ -164,7 +164,12 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 		if err != nil {
 			return pullPlan{}, fmt.Errorf("the %s attachment retention: %w", name, err)
 		}
-		server := policyFields(config.RelayPolicy{DeliveryRetention: delivery, AttachmentRetention: attachment})
+		if remote.RelayReceipts == nil {
+			return pullPlan{}, fmt.Errorf("control API returned no relayReceipts for the %s environment", name)
+		}
+		server := policyFields(config.RelayPolicy{
+			DeliveryRetention: delivery, AttachmentRetention: attachment, RelayReceipts: *remote.RelayReceipts,
+		})
 		entry := &pulledEnvironment{Status: "unchanged"}
 		plan.environments[name] = entry
 		section := "environments." + name
@@ -204,8 +209,12 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 	return plan, nil
 }
 
-func policyFields(policy config.RelayPolicy) map[string]string {
-	return map[string]string{"deliveryRetention": policy.DeliveryRetention, "attachmentRetention": policy.AttachmentRetention}
+func policyFields(policy config.RelayPolicy) map[string]any {
+	return map[string]any{
+		"deliveryRetention":   policy.DeliveryRetention,
+		"attachmentRetention": policy.AttachmentRetention,
+		"relayReceipts":       policy.RelayReceipts,
+	}
 }
 
 // data gives each environment with changes the status, and keeps the status
@@ -233,7 +242,8 @@ func (p pullPlan) text(heading string) string {
 				fmt.Fprintf(&text, "\n  add %s: %s", change.Path, to)
 				continue
 			}
-			fmt.Fprintf(&text, "\n  replace %s: %q -> %s", change.Path, change.From, to)
+			from, _ := json.Marshal(change.From)
+			fmt.Fprintf(&text, "\n  replace %s: %s -> %s", change.Path, from, to)
 		}
 	}
 	return text.String()
