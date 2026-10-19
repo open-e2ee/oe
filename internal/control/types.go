@@ -6,7 +6,7 @@ type API interface {
 	Health(context.Context) error
 	StartAuthorization(context.Context, AuthorizationRequest) (Authorization, error)
 	PollAuthorization(context.Context, Authorization) (Token, error)
-	RefreshAuthorization(context.Context, string) (Token, error)
+	RefreshAuthorization(context.Context, string, string) (Token, error)
 	BootstrapSandbox(context.Context, CredentialRequest, BootstrapRequest) (Bootstrap, error)
 	Activation(context.Context, CredentialRequest, string) (Activation, error)
 	Plan(context.Context, CredentialRequest, PlanRequest) (Plan, error)

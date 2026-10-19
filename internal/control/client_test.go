@@ -104,7 +104,7 @@ func TestWorkOSDeviceAuthorizationAndRefreshStayOffTheControlOrigin(t *testing.T
 	if err != nil || issued.AccessToken == "" || issued.RefreshToken != "refresh-one" || issued.ExpiresAt == "" {
 		t.Fatalf("issued token: %#v %v", issued, err)
 	}
-	refreshed, err := client.RefreshAuthorization(context.Background(), issued.RefreshToken)
+	refreshed, err := client.RefreshAuthorization(context.Background(), issued.RefreshToken, "")
 	if err != nil || refreshed.RefreshToken != "refresh-two" || refreshes.Load() != 3 {
 		t.Fatalf("refreshed token: %#v %v", refreshed, err)
 	}
@@ -129,9 +129,62 @@ func TestRefreshClassifiesInvalidGrantAsExpiredSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.RefreshAuthorization(context.Background(), "expired-refresh")
+	_, err = client.RefreshAuthorization(context.Background(), "expired-refresh", "")
 	if !errors.Is(err, ErrSessionExpired) {
 		t.Fatalf("invalid_grant was not classified as expired: %v", err)
+	}
+}
+
+func TestRefreshSendsTheOrganizationOnlyWhenSet(t *testing.T) {
+	var forms []map[string][]string
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v1/auth/configuration" {
+			json.NewEncoder(response).Encode(authConfiguration{
+				ClientID: "client_test", DeviceAuthorizationEndpoint: server.URL + "/user_management/authorize/device",
+				SchemaVersion: 1, TokenEndpoint: server.URL + "/user_management/authenticate",
+			})
+			return
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		forms = append(forms, request.PostForm)
+		json.NewEncoder(response).Encode(oauthTokenResponse{AccessToken: testAccessToken(), RefreshToken: "refresh-two"})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RefreshAuthorization(context.Background(), "refresh-one", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RefreshAuthorization(context.Background(), "refresh-one", "org_target"); err != nil {
+		t.Fatal(err)
+	}
+	if len(forms) != 2 {
+		t.Fatalf("token requests: %d", len(forms))
+	}
+	plain, switched := forms[0], forms[1]
+	if _, ok := plain["organization_id"]; ok {
+		t.Fatalf("a refresh without an organization sent organization_id: %#v", plain)
+	}
+	want := map[string]string{
+		"client_id": "client_test", "grant_type": "refresh_token",
+		"refresh_token": "refresh-one", "organization_id": "org_target",
+	}
+	if len(switched) != len(want) {
+		t.Fatalf("switch form fields: %#v", switched)
+	}
+	for name, value := range want {
+		if got := switched[name]; len(got) != 1 || got[0] != value {
+			t.Fatalf("switch form %s: %#v, want %q", name, got, value)
+		}
+	}
+	if len(plain) != len(want)-1 || plain["refresh_token"][0] != "refresh-one" || plain["grant_type"][0] != "refresh_token" {
+		t.Fatalf("plain refresh form: %#v", plain)
 	}
 }
 

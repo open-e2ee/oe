@@ -159,7 +159,10 @@ func (c *Client) PollAuthorization(ctx context.Context, authorization Authorizat
 	return token(response)
 }
 
-func (c *Client) RefreshAuthorization(ctx context.Context, refreshToken string) (Token, error) {
+// RefreshAuthorization trades refreshToken for a new token pair. With an
+// organizationID, the refresh grant also moves the session to that
+// organization. The form carries organization_id only when it is set.
+func (c *Client) RefreshAuthorization(ctx context.Context, refreshToken, organizationID string) (Token, error) {
 	var configuration authConfiguration
 	if err := c.do(ctx, http.MethodGet, "/v1/auth/configuration", CredentialRequest{}, nil, &configuration); err != nil {
 		return Token{}, err
@@ -174,6 +177,9 @@ func (c *Client) RefreshAuthorization(ctx context.Context, refreshToken string) 
 		"client_id":     {configuration.ClientID},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
+	}
+	if organizationID != "" {
+		form.Set("organization_id", organizationID)
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		var response oauthTokenResponse

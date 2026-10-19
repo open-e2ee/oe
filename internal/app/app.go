@@ -746,7 +746,7 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 	}
 	r.credentialSource = value.Source
 	if value.Source != "environment" && value.RefreshToken != "" && credentialNeedsRefresh(value, r.now()) {
-		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken)
+		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken, "")
 		if refreshErr != nil {
 			if errors.Is(refreshErr, control.ErrSessionExpired) {
 				_ = r.store.Delete(profile)

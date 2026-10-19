@@ -403,7 +403,7 @@ func TestTransientRefreshKeepsAStillValidSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := &fakeAPI{
-		refreshAuthorization: func(context.Context, string) (control.Token, error) {
+		refreshAuthorization: func(context.Context, string, string) (control.Token, error) {
 			return control.Token{}, errors.New("temporary WorkOS failure")
 		},
 		getProject: func(_ context.Context, request control.CredentialRequest, _ string) (control.Project, error) {
@@ -437,7 +437,7 @@ func TestTerminalRefreshRemovesTheExpiredSession(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	api := &fakeAPI{refreshAuthorization: func(context.Context, string) (control.Token, error) {
+	api := &fakeAPI{refreshAuthorization: func(context.Context, string, string) (control.Token, error) {
 		return control.Token{}, control.ErrSessionExpired
 	}}
 	var stdout bytes.Buffer
@@ -495,7 +495,7 @@ func storeCredential(t *testing.T, store credential.Store, scopes ...string) {
 type fakeAPI struct {
 	startAuthorization     func(context.Context, control.AuthorizationRequest) (control.Authorization, error)
 	pollAuthorization      func(context.Context, control.Authorization) (control.Token, error)
-	refreshAuthorization   func(context.Context, string) (control.Token, error)
+	refreshAuthorization   func(context.Context, string, string) (control.Token, error)
 	bootstrapSandbox       func(context.Context, control.CredentialRequest, control.BootstrapRequest) (control.Bootstrap, error)
 	activation             func(context.Context, control.CredentialRequest, string) (control.Activation, error)
 	plan                   func(context.Context, control.CredentialRequest, control.PlanRequest) (control.Plan, error)
@@ -528,11 +528,11 @@ func (f *fakeAPI) PollAuthorization(ctx context.Context, authorization control.A
 	}
 	return f.pollAuthorization(ctx, authorization)
 }
-func (f *fakeAPI) RefreshAuthorization(ctx context.Context, refreshToken string) (control.Token, error) {
+func (f *fakeAPI) RefreshAuthorization(ctx context.Context, refreshToken, organizationID string) (control.Token, error) {
 	if f.refreshAuthorization == nil {
 		return control.Token{}, errors.New("unexpected RefreshAuthorization")
 	}
-	return f.refreshAuthorization(ctx, refreshToken)
+	return f.refreshAuthorization(ctx, refreshToken, organizationID)
 }
 func (f *fakeAPI) BootstrapSandbox(ctx context.Context, credential control.CredentialRequest, request control.BootstrapRequest) (control.Bootstrap, error) {
 	if f.bootstrapSandbox == nil {
