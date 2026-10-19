@@ -885,7 +885,7 @@ func TestLoginThatNoPersonApprovesTimesOut(t *testing.T) {
 	} {
 		api := &fakeAPI{startAuthorization: start, pollAuthorization: poll}
 		args := []string{"--json", "auth", "login", "--timeout", "10ms"}
-		exit, stdout, _ := run(t, Dependencies{API: api, Sleep: waitForDeadline, Getenv: environment(nil)}, args...)
+		exit, stdout, _ := run(t, Dependencies{API: api, Sleep: waitForDeadline, Getenv: environment(nil), OpenURL: (&opener{}).open}, args...)
 		events := decodeEvents(t, stdout)
 		failure := events[len(events)-1]
 		if exit != exitTemporary || failure.Code != "LOGIN_TIMED_OUT" || failure.Next != "oe --json auth login --timeout 10ms" {

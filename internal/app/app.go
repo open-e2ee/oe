@@ -115,7 +115,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 		dependencies.Store = credential.Keychain{}
 	}
 	if dependencies.OpenURL == nil {
-		dependencies.OpenURL = openBrowser
+		dependencies.OpenURL = defaultOpenURL
 	}
 	if dependencies.Sleep == nil {
 		dependencies.Sleep = sleepContext
@@ -987,6 +987,11 @@ func askConfirmation(in io.Reader, out io.Writer, prompt string) (bool, error) {
 		return false, nil
 	}
 }
+
+// defaultOpenURL opens a URL when Dependencies.OpenURL is nil. The tests
+// of this package replace it, so a test that omits OpenURL fails instead of
+// opening a browser on the machine that runs it.
+var defaultOpenURL = openBrowser
 
 func openBrowser(target string) error {
 	var command *exec.Cmd
