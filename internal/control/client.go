@@ -51,8 +51,33 @@ type oauthTokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// oauthErrorResponse is a WorkOS refusal. Error is the OAuth error code.
+// WorkOS puts some authentication codes in Code instead, and gives
+// AuthKitRedirectURL when the person must sign in on the hosted page.
 type oauthErrorResponse struct {
-	Code string `json:"error"`
+	Error              string `json:"error"`
+	Code               string `json:"code"`
+	AuthKitRedirectURL string `json:"authkit_redirect_url"`
+}
+
+// signInReasons are the WorkOS codes that refuse to move a session to an
+// organization until the person signs in to it on the hosted page.
+var signInReasons = map[string]bool{
+	"sso_required": true, "mfa_enrollment": true, "organization_authentication_methods_required": true,
+}
+
+// signInReason gives the reason of a refusal that needs a new sign-in, or ""
+// for any other refusal.
+func (failure oauthErrorResponse) signInReason() string {
+	for _, code := range []string{failure.Error, failure.Code} {
+		if signInReasons[code] {
+			return code
+		}
+	}
+	if failure.AuthKitRedirectURL != "" {
+		return cmp.Or(failure.Code, failure.Error, "authkit_redirect_url")
+	}
+	return ""
 }
 
 var (
@@ -63,6 +88,22 @@ var (
 	// approved it.
 	ErrAuthorizationExpired = errors.New("browser authorization expired")
 )
+
+// ErrOrganizationsNotAvailable is a control API that does not list
+// organizations, because it is older than the organization commands.
+var ErrOrganizationsNotAvailable = errors.New("the control API does not list organizations")
+
+// SignInRequiredError is a WorkOS refusal to move a session to an
+// organization until the person signs in to that organization on the hosted
+// page, for example with SSO or after an MFA enrollment. Reason is the WorkOS
+// code.
+type SignInRequiredError struct {
+	Reason string
+}
+
+func (e *SignInRequiredError) Error() string {
+	return "WorkOS requires a new sign-in for the organization (" + e.Reason + ")"
+}
 
 type oauthRequestError struct {
 	status    int
@@ -247,7 +288,10 @@ func (c *Client) doForm(ctx context.Context, endpoint string, form url.Values, o
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var failure oauthErrorResponse
 		_ = json.NewDecoder(limited).Decode(&failure)
-		switch failure.Code {
+		if reason := failure.signInReason(); reason != "" {
+			return &SignInRequiredError{Reason: reason}
+		}
+		switch failure.Error {
 		case "authorization_pending":
 			return errAuthorizationPending
 		case "slow_down":
@@ -381,6 +425,39 @@ func (c *Client) Session(ctx context.Context, credential CredentialRequest) (Ses
 		return Session{}, err
 	}
 	return response, nil
+}
+
+// ListOrganizations reads the organizations of the person and the
+// organization of the session. A control API without the list answers 404,
+// which gives ErrOrganizationsNotAvailable.
+func (c *Client) ListOrganizations(ctx context.Context, credential CredentialRequest) (OrganizationList, error) {
+	var response OrganizationList
+	err := c.do(ctx, http.MethodGet, "/v1/organizations", credential, nil, &response)
+	if refusal, ok := errors.AsType[*APIError](err); ok && refusal.Status == http.StatusNotFound {
+		return OrganizationList{}, fmt.Errorf("%w: %w", ErrOrganizationsNotAvailable, err)
+	}
+	if err != nil {
+		return OrganizationList{}, err
+	}
+	if err := validateOrganizations(response); err != nil {
+		return OrganizationList{}, err
+	}
+	if response.Organizations == nil {
+		response.Organizations = []Organization{}
+	}
+	return response, nil
+}
+
+func validateOrganizations(list OrganizationList) error {
+	if list.SchemaVersion != 1 {
+		return fmt.Errorf("the control API answered an unknown organization list schema version %d", list.SchemaVersion)
+	}
+	for _, organization := range list.Organizations {
+		if organization.ID == "" || organization.Name == "" {
+			return errors.New("the control API answered an incomplete organization list")
+		}
+	}
+	return nil
 }
 
 func validateSession(session Session) error {

@@ -18,6 +18,7 @@ type API interface {
 	Terms(context.Context, CredentialRequest) (Terms, error)
 	AcceptTerms(context.Context, CredentialRequest, TermsAcceptanceRequest) (TermsAcceptance, error)
 	Session(context.Context, CredentialRequest) (Session, error)
+	ListOrganizations(context.Context, CredentialRequest) (OrganizationList, error)
 }
 
 type CredentialRequest struct {
@@ -243,6 +244,9 @@ type Session struct {
 	Organization  SessionOrganization `json:"organization"`
 	Role          string              `json:"role"`
 	Agent         *SessionAgent       `json:"agent"`
+	// OrganizationCount is the number of organizations of the person. It is
+	// zero when the control API does not give it.
+	OrganizationCount int `json:"organizationCount"`
 }
 
 // SessionUser is the person of a session. Name is empty when the person has
@@ -260,4 +264,23 @@ type SessionOrganization struct {
 
 type SessionAgent struct {
 	RegistrationID string `json:"registrationId"`
+}
+
+// OrganizationList is the answer of the organization list: the organizations
+// of the person, sorted by name, and the organization of the session. Current
+// is empty when the session has no organization.
+type OrganizationList struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	Current       string         `json:"current"`
+	Organizations []Organization `json:"organizations"`
+}
+
+// Organization is one organization of the person. Role is the role of the
+// person in it. Switchable is false for the one organization of an agent
+// session, and nil when the control API does not give it.
+type Organization struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Role       string `json:"role"`
+	Switchable *bool  `json:"switchable,omitempty"`
 }

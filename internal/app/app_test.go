@@ -507,6 +507,7 @@ type fakeAPI struct {
 	terms                  func(context.Context, control.CredentialRequest) (control.Terms, error)
 	acceptTerms            func(context.Context, control.CredentialRequest, control.TermsAcceptanceRequest) (control.TermsAcceptance, error)
 	session                func(context.Context, control.CredentialRequest) (control.Session, error)
+	listOrganizations      func(context.Context, control.CredentialRequest) (control.OrganizationList, error)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -600,6 +601,13 @@ func (f *fakeAPI) Session(ctx context.Context, credential control.CredentialRequ
 		return control.Session{}, errors.New("unexpected Session")
 	}
 	return f.session(ctx, credential)
+}
+
+func (f *fakeAPI) ListOrganizations(ctx context.Context, credential control.CredentialRequest) (control.OrganizationList, error) {
+	if f.listOrganizations == nil {
+		return control.OrganizationList{}, errors.New("unexpected ListOrganizations")
+	}
+	return f.listOrganizations(ctx, credential)
 }
 
 func TestLoginPromptMatchesTheVerificationPage(t *testing.T) {
