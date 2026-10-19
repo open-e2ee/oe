@@ -320,8 +320,8 @@ func (r *runner) pickProject(ctx context.Context) (string, error) {
 	}
 	if len(projects) == 0 {
 		return "", &problem{
-			code: "PROJECT_REQUIRED", exit: exitUsage, next: "oe auth status",
-			message: "this account can read no Relay project; check the organization of the session",
+			code: "PROJECT_REQUIRED", exit: exitUsage, next: "oe org switch",
+			message: "this account can read no Relay project in the organization of the session; oe org switch changes the organization",
 		}
 	}
 	for index, project := range projects {
@@ -339,24 +339,71 @@ func (r *runner) pickProject(ctx context.Context) (string, error) {
 	return projects[choice-1].Slug, nil
 }
 
-// projectList prints the projects that the account can read, with the state
-// of each Production.
+// projectList prints the projects that the account can read in the
+// organization of the session, with the state of each Production. The text
+// and data.organization name that organization. A failed organization read
+// degrades the output to the projects alone. An empty list for a person with
+// more than one organization names oe org switch; the command never reads the
+// projects of another organization.
 func (r *runner) projectList(ctx context.Context) error {
-	projects, err := r.listProjects(ctx)
+	access, err := r.access(ctx, "project:read", false)
 	if err != nil {
 		return err
 	}
-	message := "This account can read no Relay project."
-	if len(projects) > 0 {
-		var text strings.Builder
-		table := tabwriter.NewWriter(&text, 0, 0, 2, ' ', 0)
-		for _, project := range projects {
-			fmt.Fprintf(table, "%s\t%s\tProduction %s\n", project.Slug, project.Name, project.Production.State)
-		}
-		table.Flush()
-		message = strings.TrimSuffix(text.String(), "\n")
+	request := control.CredentialRequest{AccessToken: access.AccessToken}
+	projects, err := r.api.ListProjects(ctx, request)
+	if err != nil {
+		return err
 	}
-	return r.out.Success("project list", message, map[string]any{"projects": projects})
+	data := map[string]any{"projects": projects}
+	organization, others, known := r.sessionOrganization(ctx, request)
+	if known {
+		data["organization"] = map[string]any{"id": organization.ID, "name": organization.Name}
+	}
+	if len(projects) == 0 {
+		switch {
+		case known && others > 0:
+			message := fmt.Sprintf("%s has no Relay project. You belong to %s; run oe org switch.",
+				organization.Name, otherOrganizations(others))
+			return r.out.SuccessNext("project list", message, "oe org switch", data)
+		case known:
+			return r.out.Success("project list", organization.Name+" has no Relay project.", data)
+		}
+		return r.out.Success("project list", "This account can read no Relay project.", data)
+	}
+	var text strings.Builder
+	if known {
+		text.WriteString("Projects in " + organization.Name + ":\n")
+	}
+	table := tabwriter.NewWriter(&text, 0, 0, 2, ' ', 0)
+	for _, project := range projects {
+		fmt.Fprintf(table, "%s\t%s\tProduction %s\n", project.Slug, project.Name, project.Production.State)
+	}
+	table.Flush()
+	return r.out.Success("project list", strings.TrimSuffix(text.String(), "\n"), data)
+}
+
+// sessionOrganization reads the organization of the session and the number
+// of the other organizations of the person. known is false when the read
+// fails or the session has no organization.
+func (r *runner) sessionOrganization(ctx context.Context, request control.CredentialRequest) (control.Organization, int, bool) {
+	list, err := r.api.ListOrganizations(ctx, request)
+	if err != nil {
+		return control.Organization{}, 0, false
+	}
+	organization, ok := organizationByID(list, list.Current)
+	if !ok {
+		return control.Organization{}, 0, false
+	}
+	return organization, len(list.Organizations) - 1, true
+}
+
+// otherOrganizations counts the other organizations of the person in words.
+func otherOrganizations(count int) string {
+	if count == 1 {
+		return "1 other organization"
+	}
+	return fmt.Sprintf("%d other organizations", count)
 }
 
 func (r *runner) listProjects(ctx context.Context) ([]control.ProjectSummary, error) {

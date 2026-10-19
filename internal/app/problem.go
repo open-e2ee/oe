@@ -92,7 +92,7 @@ func classify(err error, commandLine, environment string) *problem {
 			result.next = "oe auth login"
 			result.exit = exitAuthentication
 		case refusal.Code == "ORGANIZATION_REQUIRED":
-			result.next = "oe auth login"
+			result.next = "oe org switch"
 		case refusal.Code == "TERMS_REQUIRED":
 			result.exit = exitPersonAction
 			result.data = map[string]any{
@@ -128,9 +128,10 @@ func classify(err error, commandLine, environment string) *problem {
 
 // environmentTokenFailure is the failure of a run whose credential came from
 // OE_ACCESS_TOKEN. A login never replaces OE_ACCESS_TOKEN, so a failure that
-// names oe auth login would send the caller back to the same failure. A
-// refused token gets its own code and names the variable. Any other failure
-// that names oe auth login loses that next and says how to change the token.
+// names oe auth login would send the caller back to the same failure, and oe
+// org switch refuses the token. A refused token gets its own code and names
+// the variable. Any other failure that names oe auth login or oe org switch
+// loses that next and says how to change the token.
 func environmentTokenFailure(err error, commandLine, environment string) *problem {
 	failure := classify(err, commandLine, environment)
 	switch {
@@ -139,7 +140,7 @@ func environmentTokenFailure(err error, commandLine, environment string) *proble
 			code: "ACCESS_TOKEN_INVALID", exit: exitAuthentication, cause: err, data: failure.data,
 			message: "the control API refused the token in OE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken,
 		}
-	case failure.next == "oe auth login":
+	case failure.next == "oe auth login", failure.next == "oe org switch":
 		failure.next = ""
 		failure.message += "; the credential comes from OE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken
 	}

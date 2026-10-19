@@ -105,7 +105,7 @@ func (r *runner) orgSwitch(ctx context.Context, argument string) error {
 	if err != nil {
 		return err
 	}
-	identity, err := r.switchOrganization(ctx, profile, value, list, target)
+	_, identity, err := r.switchOrganization(ctx, profile, value, list, target)
 	if err != nil {
 		return err
 	}
@@ -125,21 +125,22 @@ func (r *runner) orgSwitch(ctx context.Context, argument string) error {
 }
 
 // switchOrganization refreshes value into target, stores the rotated pair,
-// and confirms the organization of the new session. The refresh spends the
+// and confirms the organization of the new session. It returns the new
+// credential and its session. The refresh spends the
 // old refresh token, so the one store.Set comes before the confirmation:
 // a failed confirmation still leaves a live session in the store. A WorkOS
 // demand for a new sign-in changes nothing.
-func (r *runner) switchOrganization(ctx context.Context, profile string, value credential.Credential, list control.OrganizationList, target control.Organization) (control.Session, error) {
+func (r *runner) switchOrganization(ctx context.Context, profile string, value credential.Credential, list control.OrganizationList, target control.Organization) (credential.Credential, control.Session, error) {
 	login := commandLine([]string{"auth", "login", "--organization", organizationArgument(list, target)})
 	if value.RefreshToken == "" {
-		return control.Session{}, &problem{
+		return credential.Credential{}, control.Session{}, &problem{
 			code: "AUTHENTICATION_REQUIRED", exit: exitAuthentication, next: login,
 			message: "the stored session has no refresh token, so it cannot switch the organization; run " + login,
 		}
 	}
 	token, err := r.api.RefreshAuthorization(ctx, value.RefreshToken, target.ID)
 	if signIn, ok := errors.AsType[*control.SignInRequiredError](err); ok {
-		return control.Session{}, &problem{
+		return credential.Credential{}, control.Session{}, &problem{
 			code: "ORGANIZATION_SIGN_IN_REQUIRED", exit: exitPersonAction, next: login, cause: err,
 			data: map[string]any{"organization": organizationEntry(target, list.Current), "reason": signIn.Reason},
 			message: fmt.Sprintf("%s requires a new sign-in (%s); run %s and finish the sign-in in the browser; the stored session did not change",
@@ -147,27 +148,27 @@ func (r *runner) switchOrganization(ctx context.Context, profile string, value c
 		}
 	}
 	if errors.Is(err, control.ErrSessionExpired) {
-		return control.Session{}, &problem{
+		return credential.Credential{}, control.Session{}, &problem{
 			code: "SESSION_EXPIRED", exit: exitAuthentication, next: login, cause: err,
 			message: "the WorkOS session expired; run " + login,
 		}
 	}
 	if err != nil {
-		return control.Session{}, fmt.Errorf("switch to the organization %s: %w", target.Name, err)
+		return credential.Credential{}, control.Session{}, fmt.Errorf("switch to the organization %s: %w", target.Name, err)
 	}
 	switched := credential.Credential{
 		AccessToken: token.AccessToken, ExpiresAt: token.ExpiresAt,
 		RefreshToken: token.RefreshToken, Source: "keychain",
 	}
 	if err := r.store.Set(profile, switched); err != nil {
-		return control.Session{}, err
+		return credential.Credential{}, control.Session{}, err
 	}
 	identity, err := r.api.Session(ctx, control.CredentialRequest{AccessToken: switched.AccessToken})
 	if err != nil {
-		return control.Session{}, err
+		return credential.Credential{}, control.Session{}, err
 	}
 	if identity.Organization.ID != target.ID {
-		return control.Session{}, &problem{
+		return credential.Credential{}, control.Session{}, &problem{
 			code: "ORGANIZATION_SWITCH_FAILED", exit: exitFailure, next: "oe org list",
 			data: map[string]any{
 				"requested":    organizationEntry(target, list.Current),
@@ -176,7 +177,7 @@ func (r *runner) switchOrganization(ctx context.Context, profile string, value c
 			message: fmt.Sprintf("WorkOS did not move the session to %s; the stored session is in %s", target.Name, identity.Organization.Name),
 		}
 	}
-	return identity, nil
+	return switched, identity, nil
 }
 
 // alreadyInOrganization is the result of a switch to the organization of the
@@ -326,6 +327,28 @@ func organizationTable(list control.OrganizationList) string {
 		lines[index] = strings.TrimRight(line, " ")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// organizationSummary names each organization with the role of the person
+// and a marker on the organization of the session, such as "Acme Inc.
+// (admin, current), Beta LLC (member)".
+func organizationSummary(list control.OrganizationList) string {
+	parts := make([]string, 0, len(list.Organizations))
+	for _, organization := range list.Organizations {
+		var notes []string
+		if organization.Role != "" {
+			notes = append(notes, organization.Role)
+		}
+		if organization.ID == list.Current {
+			notes = append(notes, "current")
+		}
+		part := organization.Name
+		if len(notes) > 0 {
+			part += " (" + strings.Join(notes, ", ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // organizationListData is the data of a list: the ID of the organization of
