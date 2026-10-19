@@ -5,7 +5,8 @@ the current operating system and CPU. It does not download a binary during
 installation.
 
 Run `oe auth login` to log in with a browser and accept the terms for the
-organization. Use `oe new` to create a project and its Sandbox environment,
+organization. Run `oe org switch` to move the session to another organization.
+Use `oe new` to create a project and its Sandbox environment,
 and `oe config push` to apply the environment sections of the config.
 
 `open-e2ee.config.ts` imports `defineConfig` and the config types from

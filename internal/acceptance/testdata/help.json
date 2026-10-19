@@ -13,16 +13,16 @@
       },
       {
         "name": "auth",
-        "summary": "Log in with a browser and store the session in the OS keychain, then accept the OpenE2EE terms for the organization. In an app directory with no config, a person at a terminal then creates a project, links one, or skips. Show or remove the session.",
+        "summary": "Log in with a browser and store the session in the OS keychain, then accept the OpenE2EE terms for the organization. --organization ORG puts the session in that organization. Without it, a person at a terminal who belongs to more than one organization chooses one. In an app directory with no config, a person at a terminal then creates a project, links one, or skips. Show the session and its organizations, or remove the session.",
         "usage": [
-          "oe auth login [--accept-terms] [--timeout DURATION]",
+          "oe auth login [--accept-terms] [--organization ORG] [--timeout DURATION]",
           "oe auth status",
           "oe auth logout"
         ]
       },
       {
         "name": "org",
-        "summary": "List the organizations of the account, or move the stored session to another organization. ORG is an ID or a name that only one organization has. Without ORG, a person at a terminal chooses one.",
+        "summary": "List the organizations of the account, or move the stored session to another organization. ORG is an ID or a name that only one organization has. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.",
         "usage": ["oe org list", "oe org switch [ORG]"]
       },
       {
@@ -39,7 +39,7 @@
       },
       {
         "name": "project",
-        "summary": "List the Relay projects, read one, or print a Relay connection URL.",
+        "summary": "List the Relay projects of the organization of the session, read one, or print a Relay connection URL.",
         "usage": [
           "oe project list",
           "oe project show [PROJECT] [--env sandbox|production]",
@@ -114,7 +114,7 @@
       },
       {
         "code": 4,
-        "meaning": "Authentication is required. Run next, which is oe auth login. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."
+        "meaning": "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."
       },
       {
         "code": 5,
