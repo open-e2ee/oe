@@ -115,7 +115,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 		dependencies.Store = credential.Keychain{}
 	}
 	if dependencies.OpenURL == nil {
-		dependencies.OpenURL = openBrowser
+		dependencies.OpenURL = defaultOpenURL
 	}
 	if dependencies.Sleep == nil {
 		dependencies.Sleep = sleepContext
@@ -217,6 +217,8 @@ func (r *runner) execute(ctx context.Context, command string, args []string) err
 		return r.link(ctx, args)
 	case "project":
 		return r.project(ctx, args)
+	case "org":
+		return r.org(ctx, args)
 	case "notifications":
 		return r.notifications(ctx, args)
 	case "agent":
@@ -746,7 +748,7 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 	}
 	r.credentialSource = value.Source
 	if value.Source != "environment" && value.RefreshToken != "" && credentialNeedsRefresh(value, r.now()) {
-		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken)
+		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken, "")
 		if refreshErr != nil {
 			if errors.Is(refreshErr, control.ErrSessionExpired) {
 				_ = r.store.Delete(profile)
@@ -985,6 +987,11 @@ func askConfirmation(in io.Reader, out io.Writer, prompt string) (bool, error) {
 		return false, nil
 	}
 }
+
+// defaultOpenURL opens a URL when Dependencies.OpenURL is nil. The tests
+// of this package replace it, so a test that omits OpenURL fails instead of
+// opening a browser on the machine that runs it.
+var defaultOpenURL = openBrowser
 
 func openBrowser(target string) error {
 	var command *exec.Cmd

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -467,5 +468,105 @@ func TestProjectSelectIsAUsageError(t *testing.T) {
 	exit, stdout, _ = run(t, Dependencies{}, "--json", "help", "project")
 	if help := decodeEvent(t, []byte(stdout)); exit != 0 || strings.Contains(stdout, "select") || !strings.Contains(fmt.Sprint(help.Data["usage"]), "oe project list") {
 		t.Fatalf("oe help project still names select or lacks list: %s", stdout)
+	}
+}
+
+// projectListAPI lists projects in Acme Inc. for a person with count
+// organizations. A count of zero fails the organization read.
+func projectListAPI(projects []control.ProjectSummary, count int) *fakeAPI {
+	return &fakeAPI{
+		listProjects: func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error) {
+			return projects, nil
+		},
+		listOrganizations: func(context.Context, control.CredentialRequest) (control.OrganizationList, error) {
+			if count == 0 {
+				return control.OrganizationList{}, control.ErrOrganizationsNotAvailable
+			}
+			list := control.OrganizationList{SchemaVersion: 1, Current: "org_example", Organizations: []control.Organization{
+				{ID: "org_example", Name: "Acme Inc.", Role: "admin"},
+			}}
+			for index := 1; index < count; index++ {
+				list.Organizations = append(list.Organizations, control.Organization{ID: fmt.Sprintf("org_other_%d", index), Name: fmt.Sprintf("Other %d", index)})
+			}
+			return list, nil
+		},
+	}
+}
+
+func TestProjectListNamesTheOrganization(t *testing.T) {
+	projects := []control.ProjectSummary{{Slug: "chat-demo", Name: "Chat demo", Production: control.ProductionStanding{State: "active"}}}
+	api := projectListAPI(projects, 2)
+	exit, stdout, _ := run(t, Dependencies{API: api, Store: readSession(t)}, "project", "list")
+	if exit != 0 || stdout != "Projects in Acme Inc.:\nchat-demo  Chat demo  Production active\n" {
+		t.Fatalf("oe project list text: exit=%d %q", exit, stdout)
+	}
+	exit, stdout, _ = run(t, Dependencies{API: api, Store: readSession(t)}, "--json", "project", "list")
+	result := decodeEvent(t, []byte(stdout))
+	organization, _ := result.Data["organization"].(map[string]any)
+	listed, _ := result.Data["projects"].([]any)
+	if exit != 0 || organization["id"] != "org_example" || organization["name"] != "Acme Inc." || len(listed) != 1 {
+		t.Fatalf("oe project list JSON: exit=%d %s", exit, stdout)
+	}
+
+	// A console without the organization list keeps the output as it was.
+	exit, stdout, _ = run(t, Dependencies{API: projectListAPI(projects, 0), Store: readSession(t)}, "--json", "project", "list")
+	if result := decodeEvent(t, []byte(stdout)); exit != 0 || result.Data["organization"] != nil || result.Data["projects"] == nil {
+		t.Fatalf("oe project list without the organization list: exit=%d %s", exit, stdout)
+	}
+}
+
+func TestProjectListEmptyNamesOrgSwitchForMoreThanOneOrganization(t *testing.T) {
+	for _, test := range []struct {
+		count         int
+		message, next string
+	}{
+		{3, "Acme Inc. has no Relay project. You belong to 2 other organizations; run oe org switch.", "oe org switch"},
+		{2, "Acme Inc. has no Relay project. You belong to 1 other organization; run oe org switch.", "oe org switch"},
+		{1, "Acme Inc. has no Relay project.", ""},
+		{0, "This account can read no Relay project.", ""},
+	} {
+		exit, stdout, _ := run(t, Dependencies{API: projectListAPI(nil, test.count), Store: readSession(t)}, "--json", "project", "list")
+		result := decodeEvent(t, []byte(stdout))
+		if exit != 0 || result.Message != test.message || result.Next != test.next {
+			t.Fatalf("an empty project list with %d organizations: exit=%d %s", test.count, exit, stdout)
+		}
+	}
+}
+
+func TestLinkPickerWithNoProjectNamesOrgSwitch(t *testing.T) {
+	dependencies := Dependencies{API: projectListAPI(nil, 2), Store: readSession(t), Interactive: terminal, In: unreadable{t}}
+	exit, _, stderr := run(t, dependencies, "--agent", "no", "link")
+	if exit != exitUsage || !strings.Contains(stderr, "no Relay project in the organization of the session") || !strings.Contains(stderr, "next: oe org switch") {
+		t.Fatalf("the empty picker: exit=%d %q", exit, stderr)
+	}
+}
+
+func TestProjectNotFoundNamesAnotherOrganizationForAPersonInMoreThanOne(t *testing.T) {
+	for count, hinted := range map[int]bool{0: false, 1: false, 2: true} {
+		api := &fakeAPI{
+			getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+				return control.Project{}, &control.APIError{Status: 404, Code: "PROJECT_NOT_FOUND", Message: "Relay project not found."}
+			},
+			session: func(context.Context, control.CredentialRequest) (control.Session, error) {
+				return control.Session{SchemaVersion: 1, OrganizationCount: count}, nil
+			},
+		}
+		exit, stdout, _ := run(t, Dependencies{API: api, Store: readSession(t)}, "--json", "project", "show", "gone-chat")
+		failure := decodeEvent(t, []byte(stdout))
+		if exit != exitFailure || failure.Code != "PROJECT_NOT_FOUND" || failure.Next != "oe project list" ||
+			strings.Contains(failure.Error, "or it belongs to another organization; run oe org list") != hinted {
+			t.Fatalf("PROJECT_NOT_FOUND with %d organizations: exit=%d %s", count, exit, stdout)
+		}
+	}
+}
+
+func TestOrganizationRequiredNamesOrgSwitch(t *testing.T) {
+	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+		return control.Project{}, &control.APIError{Status: 403, Code: "ORGANIZATION_REQUIRED", Message: "Sign in to an organization."}
+	}}
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	exit, stdout, _ := run(t, Dependencies{API: api, Store: readSession(t)}, "--json", "project", "show", "chat-demo")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "ORGANIZATION_REQUIRED" || failure.Next != "oe org switch" {
+		t.Fatalf("ORGANIZATION_REQUIRED: exit=%d %s", exit, stdout)
 	}
 }

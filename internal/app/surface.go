@@ -43,10 +43,14 @@ var commandSurface = []commandSpec{
 	{"new", "Create a project and its Sandbox environment, then write open-e2ee.config.ts, the Relay connection in .env.local, and the @open-e2ee/oe devDependency.", []string{
 		"oe new [signal-relay] [--project SLUG] [--name NAME] [--env-var NAME] [--dry-run]",
 	}},
-	{"auth", "Log in with a browser and store the session in the OS keychain, then accept the OpenE2EE terms for the organization. In an app directory with no config, a person at a terminal then creates a project, links one, or skips. Show or remove the session.", []string{
-		"oe auth login [--accept-terms] [--timeout DURATION]",
+	{"auth", "Log in with a browser and store the session in the OS keychain, then accept the OpenE2EE terms for the organization. --organization ORG puts the session in that organization. Without it, a person at a terminal who belongs to more than one organization chooses one. In an app directory with no config, a person at a terminal then creates a project, links one, or skips. Show the session and its organizations, or remove the session.", []string{
+		"oe auth login [--accept-terms] [--organization ORG] [--timeout DURATION]",
 		"oe auth status",
 		"oe auth logout",
+	}},
+	{"org", "List the organizations of the account, or move the stored session to another organization. ORG is an ID or a name that only one organization has. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.", []string{
+		"oe org list",
+		"oe org switch [ORG]",
 	}},
 	{"doctor", "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
 		"oe doctor [--env sandbox|production] [--wait] [--timeout DURATION]",
@@ -54,7 +58,7 @@ var commandSurface = []commandSpec{
 	{"link", "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
 	}},
-	{"project", "List the Relay projects, read one, or print a Relay connection URL.", []string{
+	{"project", "List the Relay projects of the organization of the session, read one, or print a Relay connection URL.", []string{
 		"oe project list",
 		"oe project show [PROJECT] [--env sandbox|production]",
 		"oe project connection [PROJECT] [--env sandbox|production]",
@@ -94,7 +98,7 @@ var exitCodeSurface = []exitCodeSpec{
 	{0, "The command succeeded."},
 	{exitFailure, "The command failed. The error and its code tell why."},
 	{exitUsage, "The command line is invalid or a required input is missing."},
-	{exitAuthentication, "Authentication is required. Run next, which is oe auth login. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."},
+	{exitAuthentication, "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."},
 	{exitPersonAction, "A person must act before the command can continue. The error tells what to do. When action.url is present, it is the page that the person opens."},
 	{exitTemporary, "The failure is temporary. It is safe to run the same command again later. next is that command."},
 }

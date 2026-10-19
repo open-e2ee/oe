@@ -18,12 +18,17 @@ import (
 
 // TestMain removes the variables that coding agents set, and OE_ENV, so a
 // test that runs under an agent or in a configured shell sees the same
-// defaults as CI. A test that needs a variable passes Getenv.
+// defaults as CI. A test that needs a variable passes Getenv. It also
+// replaces the default browser opener, so a test that omits OpenURL fails
+// instead of opening a real browser tab on the machine that runs the tests.
 func TestMain(m *testing.M) {
 	for _, name := range agent.Variables() {
 		os.Unsetenv(name)
 	}
 	os.Unsetenv("OE_ENV")
+	defaultOpenURL = func(target string) error {
+		panic("a test reached the real browser opener with " + target + "; pass Dependencies.OpenURL")
+	}
 	m.Run()
 }
 
@@ -523,7 +528,7 @@ func TestCommandFieldIsTheCommandPath(t *testing.T) {
 		}
 	}
 	want := []string{
-		"new", "auth login", "auth status", "auth logout", "doctor", "link",
+		"new", "auth login", "auth status", "auth logout", "org list", "org switch", "doctor", "link",
 		"project list", "project show", "project connection", "config push", "config pull",
 		"notifications status", "notifications setup ios", "notifications add-nse", "notifications verify ios",
 		"notifications apple-filtering-request", "agent setup", "version", "help",

@@ -77,12 +77,14 @@ wait fails at once with `FIRST_MESSAGE_ALREADY_ACKNOWLEDGED`, exit 1, and
 
 ```text
 oe new                  create a project and its Sandbox environment, and write the config and its Relay connection
-oe auth login           log in with a browser, store the session in the OS keychain, and accept the terms
-oe auth status          show the person, the organization, the terms state, and where the session is
+oe auth login           log in with a browser, store the session in the OS keychain, and accept the terms; --organization selects the organization
+oe auth status          show the person, the organizations, the terms state, and where the session is
 oe auth logout          remove the stored session
+oe org list             list the organizations of the account, and mark the current one
+oe org switch [ORG]     move the stored session to another organization
 oe doctor               check project, environment, connection, credentials, and control-plane health; --wait waits for the first acknowledged Sandbox message
 oe link [PROJECT]       link the directory to a project and write the env file of each active environment
-oe project list         list the projects that the session can read, with the state of Production
+oe project list         list the projects of the organization of the session, with the state of Production
 oe project show         read a project and the state of each environment
 oe project connection   print the Relay connection URL of one environment
 oe config push          apply the Sandbox section, then the Production section when the config has one; --dry-run changes nothing
@@ -138,14 +140,14 @@ command that moves the task forward. When `action` is present, `action.url` is a
 page that a person must open, so give it to the person. In text mode, a failure
 goes to stderr as `error:`, `action:`, and `next:` lines, and stdout stays clean.
 
-| Exit code | Meaning                                                                                             |
-| --------- | --------------------------------------------------------------------------------------------------- |
-| 0         | The command succeeded.                                                                              |
-| 1         | The command failed. `code` tells why.                                                               |
-| 2         | The command line is invalid, or a required input is missing, for example `--yes`.                   |
-| 4         | Authentication is required. Run `next`, which is `oe auth login`. See `ACCESS_TOKEN_INVALID` below. |
-| 5         | A person must act. `error` tells what to do. When `action.url` is present, it is the page to open.  |
-| 6         | The failure is temporary. `next` is the same command. Run it again later.                           |
+| Exit code | Meaning                                                                                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0         | The command succeeded.                                                                                                                               |
+| 1         | The command failed. `code` tells why.                                                                                                                |
+| 2         | The command line is invalid, or a required input is missing, for example `--yes`.                                                                    |
+| 4         | Authentication is required. Run `next`, which is `oe auth login`, with `--organization ORG` after a failed switch. See `ACCESS_TOKEN_INVALID` below. |
+| 5         | A person must act. `error` tells what to do. When `action.url` is present, it is the page to open.                                                   |
+| 6         | The failure is temporary. `next` is the same command. Run it again later.                                                                            |
 
 Log in once. A person must approve the login in a browser. At a terminal, `oe`
 opens the browser and prints the page and the code:
@@ -195,19 +197,65 @@ without a terminal gets no prompt, only `next`.
 
 `oe auth status` shows the person, the organization, the terms state, and where
 the session is, and exits 4 without a session. An agent session names the
-person that the agent works for. The text shows no ID:
+person that the agent works for. The last line names each organization of the
+account, its role, and the current one. The text shows no ID:
 
 ```text
 Signed in as Jane Doe (jane@example.com) in Acme Inc. (macOS Keychain)
 Acme Inc. has accepted the OpenE2EE terms.
+Organizations: Acme Inc. (admin, current), Beta LLC (member)
 ```
 
 The store is `macOS Keychain`, `Secret Service` on Linux,
 `Windows Credential Manager`, or `OE_ACCESS_TOKEN`. In JSON, `data` also has the
 IDs (`user`, `organization.id`, and `agent.registrationId` for an agent), `role`,
 `source`, and `store` (`keychain`, `secret-service`, `wincred`, or
-`environment`). It never has a token. Protected CI uses a scoped
-`OE_ACCESS_TOKEN` instead of a login.
+`environment`), and `data.organizations` when the control API lists them. It
+never has a token. Protected CI uses a scoped `OE_ACCESS_TOKEN` instead of a
+login.
+
+A person can belong to more than one organization. The session is in one
+organization at a time, and each project command reads only the projects of
+that organization. `oe project list` starts with the line
+`Projects in Acme Inc.:`, and `data.organization` has its `id` and `name`.
+When the list is empty and the person belongs to another organization, `next`
+is `oe org switch`.
+
+```bash
+oe org list
+oe org switch "Beta LLC"
+oe auth login --organization "Beta LLC"
+```
+
+`oe org list` prints the name and the role of each organization, and marks the
+current one with `*`. In JSON, `data.current` is the ID of the current
+organization, and each entry of `data.organizations` has `id`, `name`, `role`,
+`current`, and `switchable`. `oe org switch ORG` moves the stored session to
+ORG. ORG is an ID, or a name that only one organization has, in any case.
+Without ORG, a person at a terminal chooses one, and Enter keeps the current
+organization. Under `--json` or an agent, `oe org switch` without ORG fails with
+`USAGE_ERROR`, exit 2, and `data.organizations` lists the choices. An unknown
+or ambiguous ORG fails with `USAGE_ERROR`, and `data.candidates` lists the
+organizations that can match. A control command that needs an organization
+fails with `ORGANIZATION_REQUIRED`, and `next` is `oe org switch`.
+
+Some organizations need their own sign-in, for example SSO or MFA enrollment.
+A switch to one of them fails with `ORGANIZATION_SIGN_IN_REQUIRED`, exit 5,
+and the stored session does not change. `next` is
+`oe auth login --organization ORG`. The person signs in again and chooses that
+organization on the sign-in page. When the control API confirms another
+organization after a switch, the switch fails with
+`ORGANIZATION_SWITCH_FAILED`, exit 1, and `next` is `oe org list`. When the
+control API does not list organizations yet, `oe org` fails with
+`CONTROL_UPDATE_REQUIRED`, exit 1. `oe auth status` and `oe project list` then
+show no organization line.
+
+`oe auth login --organization ORG` logs in, then switches to ORG when the
+session is in another organization. Without the flag, a person at a terminal
+who belongs to more than one organization chooses one after a new login.
+`oe org switch` and `--organization` refuse a session from `OE_ACCESS_TOKEN`.
+`oe org switch` also refuses an agent session, because it belongs to one
+organization.
 
 `OE_ACCESS_TOKEN` takes precedence over the stored session, and
 `oe auth login` never replaces it. When the control API refuses the token,
@@ -236,7 +284,9 @@ A project read (`oe project show`, `oe project connection`, `oe link`,
 `oe doctor`, `oe config push`, and `oe config pull`) names `oe project list` as
 `next` when it cannot find the project. A value that is not a slug fails with
 `PROJECT_INVALID`, exit 2, before a request. A project that the account cannot
-read fails with `PROJECT_NOT_FOUND`, exit 1. When the control API refuses to
+read fails with `PROJECT_NOT_FOUND`, exit 1. For a person in more than one
+organization, the error adds that the project can belong to another
+organization, and names `oe org list`. When the control API refuses to
 read a project that the project list shows, the read fails with
 `CONTROL_CONFLICT`, exit 1, and `data.listed` is `true`. The control API
 also gives that code to a project that it is deleting or that cannot take a

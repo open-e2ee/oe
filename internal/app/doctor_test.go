@@ -112,8 +112,8 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
 			return control.Project{Slug: "refresh-wait", Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
 		},
-		refreshAuthorization: func(_ context.Context, refreshToken string) (control.Token, error) {
-			if refreshToken != "refresh-1" {
+		refreshAuthorization: func(_ context.Context, refreshToken, organizationID string) (control.Token, error) {
+			if refreshToken != "refresh-1" || organizationID != "" {
 				return control.Token{}, errors.New("unexpected refresh token " + refreshToken)
 			}
 			return control.Token{AccessToken: "second-token", RefreshToken: "refresh-2", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}, nil

@@ -57,12 +57,20 @@ func (r *runner) getProject(ctx context.Context, access credential.Credential, p
 	if !ok || (refusal.Code != "PROJECT_NOT_FOUND" && refusal.Code != "CONTROL_CONFLICT") {
 		return value, err
 	}
-	notFound := &problem{
-		code: "PROJECT_NOT_FOUND", exit: exitFailure, next: "oe project list", cause: err, data: map[string]any{"project": project},
-		message: fmt.Sprintf("project %s was not found, or this account has no access to it", project),
+	// A person with more than one organization may have the project in
+	// another one. A failed session read leaves the message as it is.
+	notFound := func() error {
+		failure := &problem{
+			code: "PROJECT_NOT_FOUND", exit: exitFailure, next: "oe project list", cause: err, data: map[string]any{"project": project},
+			message: fmt.Sprintf("project %s was not found, or this account has no access to it", project),
+		}
+		if identity, sessionErr := r.api.Session(ctx, request); sessionErr == nil && identity.OrganizationCount > 1 {
+			failure.message += ", or it belongs to another organization; run oe org list"
+		}
+		return failure
 	}
 	if refusal.Code == "PROJECT_NOT_FOUND" {
-		return control.Project{}, notFound
+		return control.Project{}, notFound()
 	}
 	projects, listErr := r.api.ListProjects(ctx, request)
 	if listErr != nil {
@@ -80,5 +88,5 @@ func (r *runner) getProject(ctx context.Context, access credential.Credential, p
 			}
 		}
 	}
-	return control.Project{}, notFound
+	return control.Project{}, notFound()
 }

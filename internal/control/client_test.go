@@ -104,7 +104,7 @@ func TestWorkOSDeviceAuthorizationAndRefreshStayOffTheControlOrigin(t *testing.T
 	if err != nil || issued.AccessToken == "" || issued.RefreshToken != "refresh-one" || issued.ExpiresAt == "" {
 		t.Fatalf("issued token: %#v %v", issued, err)
 	}
-	refreshed, err := client.RefreshAuthorization(context.Background(), issued.RefreshToken)
+	refreshed, err := client.RefreshAuthorization(context.Background(), issued.RefreshToken, "")
 	if err != nil || refreshed.RefreshToken != "refresh-two" || refreshes.Load() != 3 {
 		t.Fatalf("refreshed token: %#v %v", refreshed, err)
 	}
@@ -129,9 +129,62 @@ func TestRefreshClassifiesInvalidGrantAsExpiredSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.RefreshAuthorization(context.Background(), "expired-refresh")
+	_, err = client.RefreshAuthorization(context.Background(), "expired-refresh", "")
 	if !errors.Is(err, ErrSessionExpired) {
 		t.Fatalf("invalid_grant was not classified as expired: %v", err)
+	}
+}
+
+func TestRefreshSendsTheOrganizationOnlyWhenSet(t *testing.T) {
+	var forms []map[string][]string
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v1/auth/configuration" {
+			json.NewEncoder(response).Encode(authConfiguration{
+				ClientID: "client_test", DeviceAuthorizationEndpoint: server.URL + "/user_management/authorize/device",
+				SchemaVersion: 1, TokenEndpoint: server.URL + "/user_management/authenticate",
+			})
+			return
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		forms = append(forms, request.PostForm)
+		json.NewEncoder(response).Encode(oauthTokenResponse{AccessToken: testAccessToken(), RefreshToken: "refresh-two"})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RefreshAuthorization(context.Background(), "refresh-one", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RefreshAuthorization(context.Background(), "refresh-one", "org_target"); err != nil {
+		t.Fatal(err)
+	}
+	if len(forms) != 2 {
+		t.Fatalf("token requests: %d", len(forms))
+	}
+	plain, switched := forms[0], forms[1]
+	if _, ok := plain["organization_id"]; ok {
+		t.Fatalf("a refresh without an organization sent organization_id: %#v", plain)
+	}
+	want := map[string]string{
+		"client_id": "client_test", "grant_type": "refresh_token",
+		"refresh_token": "refresh-one", "organization_id": "org_target",
+	}
+	if len(switched) != len(want) {
+		t.Fatalf("switch form fields: %#v", switched)
+	}
+	for name, value := range want {
+		if got := switched[name]; len(got) != 1 || got[0] != value {
+			t.Fatalf("switch form %s: %#v, want %q", name, got, value)
+		}
+	}
+	if len(plain) != len(want)-1 || plain["refresh_token"][0] != "refresh-one" || plain["grant_type"][0] != "refresh_token" {
+		t.Fatalf("plain refresh form: %#v", plain)
 	}
 }
 
@@ -397,6 +450,134 @@ func TestSessionReadUsesTheConsoleShape(t *testing.T) {
 	_, err = client.Session(context.Background(), CredentialRequest{})
 	if failure, ok := errors.AsType[*APIError](err); !ok || failure.Status != http.StatusUnauthorized || failure.Code != "AUTHENTICATION_REQUIRED" {
 		t.Fatalf("a read without a token: %v", err)
+	}
+}
+
+func TestOrganizationListUsesTheConsoleShape(t *testing.T) {
+	answers := map[string]string{
+		"person":          `{"schemaVersion":1,"current":"org_2","organizations":[{"id":"org_1","name":"Acme Inc.","role":"admin"},{"id":"org_2","name":"Beta","role":"member"}]}`,
+		"no organization": `{"schemaVersion":1,"current":null,"organizations":[{"id":"org_1","name":"Acme Inc.","role":"admin"}]}`,
+		"agent":           `{"schemaVersion":1,"current":"org_1","organizations":[{"id":"org_1","name":"Acme Inc.","role":"admin","switchable":false}]}`,
+		"no memberships":  `{"schemaVersion":1,"current":null,"organizations":[]}`,
+		"no name":         `{"schemaVersion":1,"current":null,"organizations":[{"id":"org_1","name":"","role":"admin"}]}`,
+		"another version": `{"schemaVersion":2,"current":null,"organizations":[]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.Method+" "+request.URL.Path != "GET /api/cli/v1/organizations" {
+			t.Errorf("unexpected request %s %s", request.Method, request.URL.Path)
+		}
+		bearer, _ := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+		answer, ok := answers[bearer]
+		if !ok {
+			response.WriteHeader(http.StatusNotFound)
+			response.Write([]byte(`{"message":"Not found."}`))
+			return
+		}
+		response.Write([]byte(answer))
+	}))
+	defer server.Close()
+	client, err := New(server.URL+"/api/cli", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(token string) (OrganizationList, error) {
+		return client.ListOrganizations(context.Background(), CredentialRequest{AccessToken: token})
+	}
+	person, err := read("person")
+	if err != nil || person.Current != "org_2" || len(person.Organizations) != 2 ||
+		person.Organizations[0] != (Organization{ID: "org_1", Name: "Acme Inc.", Role: "admin"}) ||
+		person.Organizations[1].Name != "Beta" || person.Organizations[1].Switchable != nil {
+		t.Fatalf("person list: %#v %v", person, err)
+	}
+	none, err := read("no organization")
+	if err != nil || none.Current != "" || len(none.Organizations) != 1 {
+		t.Fatalf("list without an organization: %#v %v", none, err)
+	}
+	agent, err := read("agent")
+	if err != nil || len(agent.Organizations) != 1 || agent.Organizations[0].Switchable == nil || *agent.Organizations[0].Switchable {
+		t.Fatalf("agent list: %#v %v", agent, err)
+	}
+	empty, err := read("no memberships")
+	if err != nil || empty.Organizations == nil || len(empty.Organizations) != 0 {
+		t.Fatalf("empty list: %#v %v", empty, err)
+	}
+	for _, token := range []string{"no name", "another version"} {
+		if _, err := read(token); err == nil {
+			t.Fatalf("the %s answer passed", token)
+		}
+	}
+	_, err = read("an older console")
+	if !errors.Is(err, ErrOrganizationsNotAvailable) {
+		t.Fatalf("a 404 was not mapped to ErrOrganizationsNotAvailable: %v", err)
+	}
+	if strings.Contains(err.Error(), "an older console") {
+		t.Fatalf("the error echoes the bearer token: %v", err)
+	}
+}
+
+func TestSessionReadsTheOrganizationCount(t *testing.T) {
+	answers := map[string]string{
+		"counted":   `{"schemaVersion":1,"user":{"id":"user_1","email":"jane@example.com","name":null},"organization":{"id":"org_1","name":"Acme Inc."},"role":"admin","agent":null,"organizationCount":3}`,
+		"uncounted": `{"schemaVersion":1,"user":{"id":"user_1","email":"jane@example.com","name":null},"organization":{"id":"org_1","name":"Acme Inc."},"role":"admin","agent":null}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		bearer, _ := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+		response.Write([]byte(answers[bearer]))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted, err := client.Session(context.Background(), CredentialRequest{AccessToken: "counted"})
+	if err != nil || counted.OrganizationCount != 3 {
+		t.Fatalf("counted session: %#v %v", counted, err)
+	}
+	uncounted, err := client.Session(context.Background(), CredentialRequest{AccessToken: "uncounted"})
+	if err != nil || uncounted.OrganizationCount != 0 {
+		t.Fatalf("an older console's session: %#v %v", uncounted, err)
+	}
+}
+
+func TestRefreshClassifiesAnOrganizationSignInAsSignInRequired(t *testing.T) {
+	answers := map[string]string{
+		"sso":      `{"error":"sso_required","error_description":"SSO is required."}`,
+		"mfa":      `{"code":"mfa_enrollment","message":"Enroll in MFA.","pending_authentication_token":"pending"}`,
+		"redirect": `{"code":"organization_selection_required","authkit_redirect_url":"https://auth.example/sign-in"}`,
+	}
+	want := map[string]string{"sso": "sso_required", "mfa": "mfa_enrollment", "redirect": "organization_selection_required"}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v1/auth/configuration" {
+			json.NewEncoder(response).Encode(authConfiguration{
+				ClientID: "client_test", DeviceAuthorizationEndpoint: server.URL + "/user_management/authorize/device",
+				SchemaVersion: 1, TokenEndpoint: server.URL + "/user_management/authenticate",
+			})
+			return
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		response.WriteHeader(http.StatusBadRequest)
+		response.Write([]byte(answers[request.PostForm.Get("refresh_token")]))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for refresh, reason := range want {
+		_, err := client.RefreshAuthorization(context.Background(), refresh, "org_target")
+		failure, ok := errors.AsType[*SignInRequiredError](err)
+		if !ok || failure.Reason != reason {
+			t.Fatalf("%s refusal: %v", refresh, err)
+		}
+		if strings.Contains(err.Error(), "https://auth.example") {
+			t.Fatalf("%s refusal shows the redirect URL: %v", refresh, err)
+		}
 	}
 }
 

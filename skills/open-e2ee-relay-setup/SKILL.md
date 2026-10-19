@@ -1,6 +1,6 @@
 ---
 name: open-e2ee-relay-setup
-description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ACCESS_TOKEN_INVALID, LOGIN_TIMED_OUT, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_INVALID, PROJECT_NOT_FOUND, PROJECT_REQUIRED, CONTROL_CONFLICT, TERMS_REQUIRED, TERMS_PERMISSION_REQUIRED, FIRST_MESSAGE_TIMED_OUT, or FIRST_MESSAGE_ALREADY_ACKNOWLEDGED.
+description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the organization, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ACCESS_TOKEN_INVALID, LOGIN_TIMED_OUT, ORGANIZATION_REQUIRED, ORGANIZATION_SIGN_IN_REQUIRED, ORGANIZATION_SWITCH_FAILED, CONTROL_UPDATE_REQUIRED, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_INVALID, PROJECT_NOT_FOUND, PROJECT_REQUIRED, CONTROL_CONFLICT, TERMS_REQUIRED, TERMS_PERMISSION_REQUIRED, FIRST_MESSAGE_TIMED_OUT, or FIRST_MESSAGE_ALREADY_ACKNOWLEDGED.
 ---
 
 # OpenE2EE Relay setup
@@ -30,7 +30,22 @@ document to stdout. It never prompts and never opens a browser.
 3. Read the result. The message names the person and the organization, for
    example "Signed in as Jane Doe (jane@example.com) in Acme Inc." Show it to
    the person. `oe auth status` shows the session at any time.
-4. If `data.terms` is `required`, follow [The terms](#the-terms).
+4. Confirm the organization with the person. If it is wrong, follow
+   [The organization](#the-organization).
+5. If `data.terms` is `required`, follow [The terms](#the-terms).
+
+## The organization
+
+A person can belong to more than one organization. The session is in one
+organization at a time, and `oe` reads only the projects of that
+organization.
+
+1. Run `oe org list`. `data.current` is the ID of the current organization.
+   `data.organizations` lists each organization with its `id`, `name`, and
+   `role`.
+2. Ask the person which organization to use. Do not choose for the person.
+3. Run `oe org switch ORG`, where ORG is the `id` of that organization.
+   Under an agent, `oe org switch` without ORG fails with `USAGE_ERROR`.
 
 ## The terms
 
@@ -74,8 +89,10 @@ reads. Do not print the value of the variable.
 ## Link a project that exists
 
 Run `oe link my-chat` only when the person names the project `my-chat`.
-`oe project list` lists the projects that the session can read. When no
-person names a project, ask the person which project to link.
+`oe project list` lists the projects of the organization of the session.
+When no person names a project, ask the person which project to link. When
+the list is empty and `next` is `oe org switch`, the project can be in
+another organization. Follow [The organization](#the-organization).
 
 `oe link my-chat` writes `open-e2ee.config.ts` from the server policy when
 the directory has no config. It writes the env file of each active
@@ -93,21 +110,25 @@ message. Only an acknowledgment that comes after the wait starts counts.
 
 ## Codes
 
-| `code`                               | What to do                                                                                                                                                                                                                                      |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTHENTICATION_REQUIRED`            | No session is stored. Follow [Log in](#log-in), then run the command again.                                                                                                                                                                     |
-| `ACCESS_TOKEN_INVALID`               | The control API refused the token in `OE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OE_ACCESS_TOKEN` to a new token, or to unset it and log in.                                                              |
-| `LOGIN_TIMED_OUT`                    | No person approved the device in time. Run `next` again, and give the person the new URL and code.                                                                                                                                              |
-| `ALREADY_SET_UP`                     | `open-e2ee.config.ts` already sets up this directory. Do not run `oe new` again. Run `oe link` to write the env files.                                                                                                                          |
-| `PROJECT_EXISTS`                     | The organization already has a project with this slug. `next` creates a project with another slug. Never replace `next` with `oe link` unless the person asked for that project. Another person can own it.                                     |
-| `PROJECT_INVALID`                    | The `--project` value or the `PROJECT` argument is not a slug. Run `next`. Ask the person before you use a slug that the person did not give.                                                                                                   |
-| `PROJECT_NOT_FOUND`                  | No project that this account can read has this slug. `next` is `oe project list`. Ask the person which project to link.                                                                                                                         |
-| `PROJECT_REQUIRED`                   | No slug comes from the directory name, or `oe link` has no project. Run `next`. If `next` is `oe project list`, ask the person which project to link.                                                                                           |
-| `CONTROL_CONFLICT`                   | When `data.listed` is `true`, the project is in the list, but the service refused to read it. Run the command again once. When the refusal stays, no `oe` command repairs it. Give `action.url` to the person to report the slug and the error. |
-| `TERMS_REQUIRED`                     | The organization did not accept the terms. Follow [The terms](#the-terms). Then run the command in `data.retry`.                                                                                                                                |
-| `TERMS_PERMISSION_REQUIRED`          | This account cannot accept the terms. Tell the person that an administrator of the organization must accept them.                                                                                                                               |
-| `FIRST_MESSAGE_TIMED_OUT`            | No message was acknowledged before `--timeout`. Tell the person to send a message from the app, then run `next`.                                                                                                                                |
-| `FIRST_MESSAGE_ALREADY_ACKNOWLEDGED` | The first message of the project was acknowledged before the wait started, so the wait cannot see a new one. Run `next`, which checks the Relay connection.                                                                                     |
+| `code`                               | What to do                                                                                                                                                                                                                                          |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTHENTICATION_REQUIRED`            | No session is stored. Follow [Log in](#log-in), then run the command again.                                                                                                                                                                         |
+| `ACCESS_TOKEN_INVALID`               | The control API refused the token in `OE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OE_ACCESS_TOKEN` to a new token, or to unset it and log in.                                                                  |
+| `LOGIN_TIMED_OUT`                    | No person approved the device in time. Run `next` again, and give the person the new URL and code.                                                                                                                                                  |
+| `ORGANIZATION_REQUIRED`              | The session is in no organization. Follow [The organization](#the-organization), then run the command again.                                                                                                                                        |
+| `ORGANIZATION_SIGN_IN_REQUIRED`      | The organization needs its own sign-in, for example SSO. The stored session did not change. Run `next` as in [Log in](#log-in). The person chooses that organization on the sign-in page.                                                           |
+| `ORGANIZATION_SWITCH_FAILED`         | The service confirmed another organization after the switch. Do not run the switch again. Run `next`, and tell the person which organization is current.                                                                                            |
+| `CONTROL_UPDATE_REQUIRED`            | The control API does not support the command yet. Tell the person. Do not run the command again.                                                                                                                                                    |
+| `ALREADY_SET_UP`                     | `open-e2ee.config.ts` already sets up this directory. Do not run `oe new` again. Run `oe link` to write the env files.                                                                                                                              |
+| `PROJECT_EXISTS`                     | The organization already has a project with this slug. `next` creates a project with another slug. Never replace `next` with `oe link` unless the person asked for that project. Another person can own it.                                         |
+| `PROJECT_INVALID`                    | The `--project` value or the `PROJECT` argument is not a slug. Run `next`. Ask the person before you use a slug that the person did not give.                                                                                                       |
+| `PROJECT_NOT_FOUND`                  | No project that this account can read has this slug in the organization of the session. `next` is `oe project list`. Ask the person which project to link. When the error names another organization, follow [The organization](#the-organization). |
+| `PROJECT_REQUIRED`                   | No slug comes from the directory name, or `oe link` has no project. Run `next`. If `next` is `oe project list`, ask the person which project to link.                                                                                               |
+| `CONTROL_CONFLICT`                   | When `data.listed` is `true`, the project is in the list, but the service refused to read it. Run the command again once. When the refusal stays, no `oe` command repairs it. Give `action.url` to the person to report the slug and the error.     |
+| `TERMS_REQUIRED`                     | The organization did not accept the terms. Follow [The terms](#the-terms). Then run the command in `data.retry`.                                                                                                                                    |
+| `TERMS_PERMISSION_REQUIRED`          | This account cannot accept the terms. Tell the person that an administrator of the organization must accept them.                                                                                                                                   |
+| `FIRST_MESSAGE_TIMED_OUT`            | No message was acknowledged before `--timeout`. Tell the person to send a message from the app, then run `next`.                                                                                                                                    |
+| `FIRST_MESSAGE_ALREADY_ACKNOWLEDGED` | The first message of the project was acknowledged before the wait started, so the wait cannot see a new one. Run `next`, which checks the Relay connection.                                                                                         |
 
 ## Agent skills
 

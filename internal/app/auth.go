@@ -44,11 +44,14 @@ func (r *runner) auth(ctx context.Context, args []string) error {
 // succeeded, and next names the acceptance when the caller may give it. With
 // accepted terms, next names the setup step of the directory. A person at a
 // terminal who logged in, in an app directory with no config, chooses to
-// create a project, link one, or skip.
+// create a project, link one, or skip. With --organization, the login then
+// moves the session to that organization. Without it, a person at a terminal
+// with more than one organization chooses one.
 func (r *runner) authLogin(ctx context.Context, args []string) error {
 	flags := newFlags("auth login")
 	timeout := flags.Duration("timeout", 5*time.Minute, "login timeout")
 	acceptTerms := flags.Bool("accept-terms", false, "accept the OpenE2EE terms for the organization")
+	target := flags.String("organization", "", "the organization of the session, by ID or by name")
 	if err := parseFlags(flags, "auth", args); err != nil {
 		return err
 	}
@@ -57,7 +60,17 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 	if *timeout <= 0 {
 		return usageError("auth", "--timeout must be positive")
 	}
+	if *target != "" && r.getenv("OE_ACCESS_TOKEN") != "" {
+		return &problem{
+			code: "USAGE_ERROR", exit: exitUsage,
+			message: "the session comes from OE_ACCESS_TOKEN, which a login never replaces; unset OE_ACCESS_TOKEN to choose the organization",
+		}
+	}
 	session, loggedIn, err := r.loginSession(ctx, *timeout, *acceptTerms)
+	if err != nil {
+		return err
+	}
+	session, organizations, err := r.loginOrganization(ctx, session, loggedIn, *target)
 	if err != nil {
 		return err
 	}
@@ -94,6 +107,12 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 	data["canAccept"] = terms.CanAccept
 
 	message := []string{signedIn(identity)}
+	if organizations != nil {
+		data["organizations"] = organizationEntries(organizations.Organizations, organizations.Current)
+		if count := len(organizations.Organizations); count > 1 && session.Source != "environment" {
+			message = append(message, fmt.Sprintf("You belong to %d organizations; run oe org switch to change.", count))
+		}
+	}
 	if session.Source == "environment" {
 		message = append(message, "Using the scoped CI credential from OE_ACCESS_TOKEN. It was not stored.")
 	}
@@ -122,6 +141,61 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 		return r.offerSetup(ctx, text, data)
 	}
 	return r.out.SuccessNext("auth login", text, next, data)
+}
+
+// loginOrganization reads the organizations of the session and moves the
+// session to the organization that argument names, or that a person at a
+// terminal chooses after a login. Enter keeps the organization of the
+// session. Without argument, a failed list read degrades: the session keeps
+// its organization, and the list is nil. With argument, the list read must
+// succeed. A WorkOS demand for a new sign-in tells the person to choose the
+// organization on the sign-in page.
+func (r *runner) loginOrganization(ctx context.Context, session credential.Credential, loggedIn bool, argument string) (credential.Credential, *control.OrganizationList, error) {
+	var list control.OrganizationList
+	var target control.Organization
+	if argument == "" {
+		var err error
+		list, err = r.api.ListOrganizations(ctx, control.CredentialRequest{AccessToken: session.AccessToken})
+		if err != nil {
+			return session, nil, nil
+		}
+		if !loggedIn || r.mode != output.Text || !r.canPrompt() || len(list.Organizations) < 2 {
+			return session, &list, nil
+		}
+		chosen, keep, err := r.pickOrganization(list)
+		if err != nil {
+			return session, nil, err
+		}
+		if keep {
+			return session, &list, nil
+		}
+		target = chosen
+	} else {
+		var err error
+		if list, err = r.organizations(ctx, session); err != nil {
+			return session, nil, err
+		}
+		if target, err = resolveOrganization(list, argument); err != nil {
+			return session, nil, err
+		}
+	}
+	if target.ID == list.Current {
+		return session, &list, nil
+	}
+	profile, err := credential.Profile(r.controlURL)
+	if err != nil {
+		return session, nil, err
+	}
+	switched, _, err := r.switchOrganization(ctx, profile, session, list, target)
+	if failure, ok := errors.AsType[*problem](err); ok && failure.code == "ORGANIZATION_SIGN_IN_REQUIRED" {
+		failure.message = fmt.Sprintf("%s requires its own sign-in (%s); run %s again and choose %s on the sign-in page",
+			target.Name, failure.data["reason"], failure.next, target.Name)
+	}
+	if err != nil {
+		return session, nil, err
+	}
+	list.Current = target.ID
+	return switched, &list, nil
 }
 
 // setupNext is the setup command for directory after a login. In a directory
@@ -235,8 +309,8 @@ func (r *runner) termsActor(flag bool) control.TermsAcceptanceRequest {
 
 // authStatus reads the identity of the session and the terms state of its
 // organization. Both reads also check the session with the control API. The
-// text names the person, the organization, and the store; the IDs and the
-// role are in the data only.
+// text names the person, the organization, the store, and each organization
+// of the person with its role; the IDs are in the data only.
 func (r *runner) authStatus(ctx context.Context, args []string) error {
 	if err := parseFlags(newFlags("auth status"), "auth", args); err != nil {
 		return err
@@ -266,6 +340,13 @@ func (r *runner) authStatus(ctx context.Context, args []string) error {
 		message += "\n" + identity.Organization.Name + " has accepted the OpenE2EE terms."
 	} else {
 		message += "\n" + identity.Organization.Name + " has not accepted the OpenE2EE terms."
+	}
+	// The organization list is extra: a failed read never fails the status.
+	if list, err := r.api.ListOrganizations(ctx, request); err == nil {
+		data["organizations"] = organizationEntries(list.Organizations, list.Current)
+		if len(list.Organizations) > 0 {
+			message += "\nOrganizations: " + organizationSummary(list)
+		}
 	}
 	return r.out.Success("auth status", message, data)
 }

@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,20 +41,27 @@ func personSession() map[string]any {
 }
 
 // console is a loopback control API with the WorkOS device flow, the session
-// route, and the terms routes. The CLI reaches it through the real control
-// client, so each body is the JSON that the console route answers. session is
-// the answer of the session route. routes serves any other authorized route
-// that a test adds.
+// route, the organization list, and the terms routes. The CLI reaches it
+// through the real control client, so each body is the JSON that the console
+// route answers. session is the answer of the session route. organizations is
+// the answer of the organization list; when it is nil, the list answers 404,
+// as a console older than the organization commands does. A refresh with an
+// organization_id moves the session and the list to that organization, or
+// answers the WorkOS error signIn when it is set. routes serves any other
+// authorized route that a test adds.
 type console struct {
-	t         *testing.T
-	server    *httptest.Server
-	routes    *http.ServeMux
-	mu        sync.Mutex
-	state     string
-	canAccept bool
-	session   map[string]any
-	requests  []string
-	accepts   []map[string]any
+	t             *testing.T
+	server        *httptest.Server
+	routes        *http.ServeMux
+	mu            sync.Mutex
+	state         string
+	canAccept     bool
+	session       map[string]any
+	organizations map[string]any
+	signIn        string
+	requests      []string
+	accepts       []map[string]any
+	refreshes     []url.Values
 }
 
 func newConsole(t *testing.T, state string, canAccept bool) *console {
@@ -101,6 +109,23 @@ func (c *console) serve(response http.ResponseWriter, request *http.Request) {
 		})
 		return
 	case "/user_management/authenticate":
+		if err := request.ParseForm(); err != nil {
+			c.t.Errorf("parse the token form: %v", err)
+		}
+		if request.PostForm.Get("grant_type") == "refresh_token" {
+			c.refreshes = append(c.refreshes, request.PostForm)
+		}
+		if target := request.PostForm.Get("organization_id"); target != "" {
+			if c.signIn != "" {
+				c.answer(response, http.StatusBadRequest, map[string]any{"error": c.signIn, "error_description": "Sign in again."})
+				return
+			}
+			c.moveTo(target)
+			c.answer(response, http.StatusOK, map[string]any{
+				"access_token": sessionTokenIn(target), "refresh_token": "refresh-" + target,
+			})
+			return
+		}
 		c.answer(response, http.StatusOK, map[string]any{
 			"access_token": sessionToken(), "refresh_token": "refresh",
 		})
@@ -115,6 +140,12 @@ func (c *console) serve(response http.ResponseWriter, request *http.Request) {
 	switch request.Method + " " + request.URL.Path {
 	case "GET /api/cli/v1/auth/session":
 		c.answer(response, http.StatusOK, c.session)
+	case "GET /api/cli/v1/organizations":
+		if c.organizations == nil {
+			c.answer(response, http.StatusNotFound, map[string]any{"code": "NOT_FOUND", "message": "Not found."})
+			return
+		}
+		c.answer(response, http.StatusOK, c.organizations)
 	case "GET /api/cli/v1/terms":
 		c.answer(response, http.StatusOK, c.terms())
 	case "POST /api/cli/v1/terms/acceptance":
@@ -145,6 +176,38 @@ func (c *console) serve(response http.ResponseWriter, request *http.Request) {
 	}
 }
 
+// moveTo moves the session and the organization list to target, as a
+// WorkOS refresh with organization_id does.
+func (c *console) moveTo(target string) {
+	session := maps.Clone(c.session)
+	for _, entry := range c.organizations["organizations"].([]map[string]any) {
+		if entry["id"] == target {
+			session["organization"] = map[string]any{"id": target, "name": entry["name"]}
+			session["role"] = entry["role"]
+		}
+	}
+	c.session = session
+	organizations := maps.Clone(c.organizations)
+	organizations["current"] = target
+	c.organizations = organizations
+}
+
+// twoOrganizations is the organization list of a person in Acme Inc., the
+// organization of the session, and in Beta LLC.
+func twoOrganizations() map[string]any {
+	return map[string]any{"schemaVersion": 1, "current": "org_example", "organizations": []map[string]any{
+		{"id": "org_example", "name": "Acme Inc.", "role": "admin"},
+		{"id": "org_beta", "name": "Beta LLC", "role": "member"},
+	}}
+}
+
+// refreshed reports the form of each refresh grant that the console answered.
+func (c *console) refreshed() []url.Values {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.refreshes)
+}
+
 func (c *console) terms() map[string]any {
 	var acceptedAt any
 	if c.state == "accepted" {
@@ -166,9 +229,12 @@ func (c *console) answer(response http.ResponseWriter, status int, body any) {
 
 // sessionToken is an unsigned access token with the claims of a WorkOS
 // session in the console route tests.
-func sessionToken() string {
+func sessionToken() string { return sessionTokenIn("org_example") }
+
+// sessionTokenIn is a session token in organization.
+func sessionTokenIn(organization string) string {
 	claims, _ := json.Marshal(map[string]any{
-		"client_id": "client_cli_test", "sub": "user_example", "org_id": "org_example",
+		"client_id": "client_cli_test", "sub": "user_example", "org_id": organization,
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	return "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".signature"
@@ -819,7 +885,7 @@ func TestLoginThatNoPersonApprovesTimesOut(t *testing.T) {
 	} {
 		api := &fakeAPI{startAuthorization: start, pollAuthorization: poll}
 		args := []string{"--json", "auth", "login", "--timeout", "10ms"}
-		exit, stdout, _ := run(t, Dependencies{API: api, Sleep: waitForDeadline, Getenv: environment(nil)}, args...)
+		exit, stdout, _ := run(t, Dependencies{API: api, Sleep: waitForDeadline, Getenv: environment(nil), OpenURL: (&opener{}).open}, args...)
 		events := decodeEvents(t, stdout)
 		failure := events[len(events)-1]
 		if exit != exitTemporary || failure.Code != "LOGIN_TIMED_OUT" || failure.Next != "oe --json auth login --timeout 10ms" {
@@ -874,5 +940,160 @@ func TestRefusedAccessTokenKeepsTheData(t *testing.T) {
 	failure := decodeEvent(t, []byte(stdout))
 	if exit != exitAuthentication || failure.Code != "ACCESS_TOKEN_INVALID" || failure.Data["environments"] == nil {
 		t.Fatalf("a refused OE_ACCESS_TOKEN lost the push data: exit=%d %s", exit, stdout)
+	}
+}
+
+// A login with --organization runs the device flow, then moves the session
+// to the organization with one refresh, and stores the rotated pair.
+func TestAuthLoginOrganizationSwitchesAfterTheDeviceFlow(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	server := newConsole(t, "accepted", true)
+	server.organizations = twoOrganizations()
+	store := credential.NewMemory()
+	dependencies := server.dependencies(store, underClaudeCode)
+	dependencies.Interactive, dependencies.OpenURL, dependencies.In = terminal, (&opener{}).open, unreadable{t}
+	exit, stdout, stderr := run(t, dependencies, "--control-url", server.controlURL(), "auth", "login", "--organization", "beta llc")
+	events := decodeEvents(t, stdout)
+	if exit != 0 || len(events) != 2 || stderr != "" {
+		t.Fatalf("login --organization: exit=%d stdout=%s stderr=%q", exit, stdout, stderr)
+	}
+	result := events[1]
+	organization, _ := result.Data["organization"].(map[string]any)
+	organizations, _ := result.Data["organizations"].([]any)
+	if organization["id"] != "org_beta" || result.Data["organizationName"] != "Beta LLC" || len(organizations) != 2 ||
+		result.Message != "Signed in as Jane Doe (jane@example.com) in Beta LLC. You belong to 2 organizations; run oe org switch to change. Beta LLC has accepted the OpenE2EE terms." {
+		t.Fatalf("the login did not end in Beta LLC: %s", stdout)
+	}
+	if current, _ := organizations[1].(map[string]any); current["id"] != "org_beta" || current["current"] != true {
+		t.Fatalf("data.organizations does not mark Beta LLC current: %s", stdout)
+	}
+	refreshes := server.refreshed()
+	if len(refreshes) != 1 || refreshes[0].Get("organization_id") != "org_beta" || refreshes[0].Get("refresh_token") != "refresh" {
+		t.Fatalf("the switch refreshed %v", refreshes)
+	}
+	profile, _ := credential.Profile(server.controlURL())
+	if stored, err := store.Get(profile); err != nil || stored.RefreshToken != "refresh-org_beta" || sessionClaimsOf(stored.AccessToken).Organization != "org_beta" {
+		t.Fatalf("the store does not hold the switched session: %v", err)
+	}
+}
+
+// A login whose organization needs its own sign-in exits 5. The session of
+// the device flow stays stored, and the message says to choose the
+// organization on the sign-in page.
+func TestAuthLoginOrganizationNeedsItsOwnSignIn(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	server := newConsole(t, "accepted", true)
+	server.organizations, server.signIn = twoOrganizations(), "sso_required"
+	store := credential.NewMemory()
+	dependencies := server.dependencies(store, underClaudeCode)
+	dependencies.Interactive, dependencies.OpenURL, dependencies.In = terminal, (&opener{}).open, unreadable{t}
+	exit, stdout, _ := run(t, dependencies, "--control-url", server.controlURL(), "auth", "login", "--organization", "Beta LLC")
+	events := decodeEvents(t, stdout)
+	failure := events[len(events)-1]
+	if exit != exitPersonAction || failure.Code != "ORGANIZATION_SIGN_IN_REQUIRED" || failure.Next != "oe auth login --organization 'Beta LLC'" ||
+		!strings.Contains(failure.Error, "choose Beta LLC on the sign-in page") || failure.Data["reason"] != "sso_required" {
+		t.Fatalf("a sign-in refusal: exit=%d %s", exit, stdout)
+	}
+	profile, _ := credential.Profile(server.controlURL())
+	if stored, err := store.Get(profile); err != nil || stored.RefreshToken != "refresh" {
+		t.Fatalf("the refusal changed the stored session: %v %#v", err, stored)
+	}
+}
+
+func TestAuthLoginOrganizationRefusesAnEnvironmentToken(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", sessionToken())
+	server := newConsole(t, "accepted", true)
+	dependencies := server.dependencies(credential.NewMemory(), environment(map[string]string{"OE_ACCESS_TOKEN": sessionToken()}))
+	exit, stdout, _ := run(t, dependencies, "--json", "--control-url", server.controlURL(), "auth", "login", "--organization", "org_beta")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || !strings.Contains(failure.Error, "unset OE_ACCESS_TOKEN") {
+		t.Fatalf("login --organization under OE_ACCESS_TOKEN: exit=%d %s", exit, stdout)
+	}
+	if len(server.requested()) != 0 {
+		t.Fatalf("the refusal reached the console: %q", server.requested())
+	}
+}
+
+// --json and an agent never get the organization chooser, even at a
+// terminal. The result still lists the organizations.
+func TestAuthLoginNeverPromptsForTheOrganizationUnderJSONOrAnAgent(t *testing.T) {
+	for name, global := range map[string]struct {
+		args   []string
+		getenv func(string) string
+	}{
+		"json":  {[]string{"--json"}, nil},
+		"agent": {nil, underClaudeCode},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OE_ACCESS_TOKEN", "")
+			server := newConsole(t, "accepted", true)
+			server.organizations = twoOrganizations()
+			dependencies := server.dependencies(credential.NewMemory(), global.getenv)
+			dependencies.Interactive, dependencies.OpenURL, dependencies.In = terminal, (&opener{}).open, unreadable{t}
+			exit, stdout, stderr := run(t, dependencies, append(global.args, "--control-url", server.controlURL(), "auth", "login")...)
+			events := decodeEvents(t, stdout)
+			result := events[len(events)-1]
+			organizations, _ := result.Data["organizations"].([]any)
+			if exit != 0 || strings.Contains(stderr, "Switch to which organization") || len(organizations) != 2 ||
+				!strings.Contains(result.Message, "You belong to 2 organizations; run oe org switch to change.") {
+				t.Fatalf("login: exit=%d stdout=%s stderr=%q", exit, stdout, stderr)
+			}
+			if refreshes := server.refreshed(); len(refreshes) != 0 {
+				t.Fatalf("a login without a person switched the organization: %v", refreshes)
+			}
+		})
+	}
+}
+
+// A person at a terminal with more than one organization chooses one after
+// the login. Enter keeps the organization of the session.
+func TestAuthLoginLetsAPersonChooseTheOrganization(t *testing.T) {
+	for _, test := range []struct {
+		answer, organization string
+		refreshes            int
+	}{
+		{"2\n", "Beta LLC", 1},
+		{"\n", "Acme Inc.", 0},
+	} {
+		t.Run(test.organization, func(t *testing.T) {
+			t.Setenv("OE_ACCESS_TOKEN", "")
+			server := newConsole(t, "accepted", true)
+			server.organizations = twoOrganizations()
+			dependencies := server.dependencies(credential.NewMemory(), nil)
+			dependencies.Interactive, dependencies.OpenURL, dependencies.In = terminal, (&opener{}).open, strings.NewReader(test.answer)
+			exit, stdout, stderr := run(t, dependencies, "--control-url", server.controlURL(), "auth", "login")
+			if exit != 0 || !strings.Contains(stderr, "  1. Acme Inc. (current)\n  2. Beta LLC\nSwitch to which organization? [1-2, Enter keeps Acme Inc.] ") ||
+				!strings.Contains(stdout, "\nSigned in as Jane Doe (jane@example.com) in "+strings.TrimSuffix(test.organization, ".")+". You belong to 2 organizations; run oe org switch to change.") {
+				t.Fatalf("the chooser: exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
+			}
+			if refreshes := server.refreshed(); len(refreshes) != test.refreshes {
+				t.Fatalf("the chooser refreshed %v", refreshes)
+			}
+		})
+	}
+}
+
+// auth status names each organization with its role. A console without the
+// list keeps the output of TestAuthStatusTextNamesThePersonNotAnID.
+func TestAuthStatusListsTheOrganizations(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	server := newConsole(t, "accepted", true)
+	server.organizations = twoOrganizations()
+	store := credential.NewMemory()
+	server.storeSession(t, keychainStore{store})
+	dependencies := server.dependencies(keychainStore{store}, nil)
+	exit, stdout, stderr := run(t, dependencies, "--control-url", server.controlURL(), "auth", "status")
+	if exit != 0 || !strings.HasSuffix(stdout, "\nAcme Inc. has accepted the OpenE2EE terms.\nOrganizations: Acme Inc. (admin, current), Beta LLC (member)\n") {
+		t.Fatalf("auth status: exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
+	}
+	exit, stdout, _ = run(t, dependencies, "--json", "--control-url", server.controlURL(), "auth", "status")
+	organizations, _ := decodeEvent(t, []byte(stdout)).Data["organizations"].([]any)
+	if exit != 0 || len(organizations) != 2 {
+		t.Fatalf("auth status --json: exit=%d %s", exit, stdout)
+	}
+
+	server.organizations = nil
+	exit, stdout, _ = run(t, dependencies, "--json", "--control-url", server.controlURL(), "auth", "status")
+	if status := decodeEvent(t, []byte(stdout)); exit != 0 || status.Data["organizations"] != nil {
+		t.Fatalf("auth status on a console without the list: exit=%d %s", exit, stdout)
 	}
 }
