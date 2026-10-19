@@ -21,6 +21,11 @@
         ]
       },
       {
+        "name": "org",
+        "summary": "List the organizations of the account, or move the stored session to another organization. ORG is an ID or a name that only one organization has. Without ORG, a person at a terminal chooses one.",
+        "usage": ["oe org list", "oe org switch [ORG]"]
+      },
+      {
         "name": "doctor",
         "summary": "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.",
         "usage": [

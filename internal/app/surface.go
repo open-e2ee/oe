@@ -48,6 +48,10 @@ var commandSurface = []commandSpec{
 		"oe auth status",
 		"oe auth logout",
 	}},
+	{"org", "List the organizations of the account, or move the stored session to another organization. ORG is an ID or a name that only one organization has. Without ORG, a person at a terminal chooses one.", []string{
+		"oe org list",
+		"oe org switch [ORG]",
+	}},
 	{"doctor", "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
 		"oe doctor [--env sandbox|production] [--wait] [--timeout DURATION]",
 	}},

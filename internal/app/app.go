@@ -217,6 +217,8 @@ func (r *runner) execute(ctx context.Context, command string, args []string) err
 		return r.link(ctx, args)
 	case "project":
 		return r.project(ctx, args)
+	case "org":
+		return r.org(ctx, args)
 	case "notifications":
 		return r.notifications(ctx, args)
 	case "agent":
