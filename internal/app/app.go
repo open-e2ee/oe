@@ -213,6 +213,8 @@ func (r *runner) execute(ctx context.Context, command string, args []string) err
 		}
 	case "doctor":
 		return r.doctor(ctx, args)
+	case "identity":
+		return r.identity(ctx, args)
 	case "link":
 		return r.link(ctx, args)
 	case "project":
@@ -879,13 +881,13 @@ func parseGlobal(args []string) (globalOptions, string, []string, error) {
 }
 
 // defaultEnvironment gives the environment of a run without --env. doctor,
-// project, and notifications take OE_ENV, then sandbox. new keeps Sandbox, so
+// identity, project, and notifications take OE_ENV, then sandbox. new keeps Sandbox, so
 // a variable left in a shell never changes the target of a new project. config
 // ignores OE_ENV, so the variable never narrows a pull or changes what a push
 // applies.
 func defaultEnvironment(command string, getenv func(string) string) (string, bool, error) {
 	switch command {
-	case "doctor", "project", "notifications":
+	case "doctor", "project", "notifications", "identity":
 		selected := getenv("OE_ENV")
 		if selected == "" {
 			return "sandbox", false, nil

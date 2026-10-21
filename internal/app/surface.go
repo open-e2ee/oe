@@ -55,6 +55,9 @@ var commandSurface = []commandSpec{
 	{"doctor", "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
 		"oe doctor [--env sandbox|production] [--wait] [--timeout DURATION]",
 	}},
+	{"identity", "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle.", []string{
+		"oe identity check --profile PATH [--assertion-stdin] [--env sandbox|production]",
+	}},
 	{"link", "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
 	}},
@@ -89,7 +92,7 @@ var globalFlagSurface = []globalFlagSpec{
 	{"--json", "Write one JSON document to stdout for the result, for success and for failure. oe auth login writes one pending event before it, while a person approves the device."},
 	{"--json-stream", "Write newline-delimited JSON progress events, then one final event, to stdout."},
 	{"--agent yes|no|auto", "Say whether a coding agent runs oe. The default, auto, reads the environment variables that coding agents set. Under an agent, the default output is JSON, and oe never prompts and never opens a browser. --agent no restores text output."},
-	{"--env sandbox|production", "Select the environment. -e is the short form. Without it, doctor, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."},
+	{"--env sandbox|production", "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."},
 	{"--control-url URL", "Use another control API. It must use HTTPS except on loopback."},
 	{"-h, --help", "Show help."},
 }
@@ -106,7 +109,7 @@ var exitCodeSurface = []exitCodeSpec{
 var variableSurface = []variableSpec{
 	{"OE_ACCESS_TOKEN", "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."},
 	{"OE_ACCESS_TOKEN_SCOPES", "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."},
-	{"OE_ENV", "The environment of doctor, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
+	{"OE_ENV", "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
 	{"OE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to retry one mutation."},
 }
 

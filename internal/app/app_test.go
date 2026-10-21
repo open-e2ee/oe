@@ -17,6 +17,7 @@ import (
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
+	"github.com/open-e2ee/oe/internal/identity"
 )
 
 const (
@@ -493,6 +494,7 @@ func storeCredential(t *testing.T, store credential.Store, scopes ...string) {
 }
 
 type fakeAPI struct {
+	checkIdentity          func(context.Context, control.CredentialRequest, string, string, identity.Draft) (identity.Check, error)
 	startAuthorization     func(context.Context, control.AuthorizationRequest) (control.Authorization, error)
 	pollAuthorization      func(context.Context, control.Authorization) (control.Token, error)
 	refreshAuthorization   func(context.Context, string, string) (control.Token, error)
@@ -517,6 +519,12 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 }
 
 func (f *fakeAPI) Health(context.Context) error { return nil }
+func (f *fakeAPI) CheckIdentity(ctx context.Context, credential control.CredentialRequest, project, environment string, draft identity.Draft) (identity.Check, error) {
+	if f.checkIdentity == nil {
+		return identity.Check{}, errors.New("unexpected CheckIdentity")
+	}
+	return f.checkIdentity(ctx, credential, project, environment, draft)
+}
 func (f *fakeAPI) StartAuthorization(ctx context.Context, request control.AuthorizationRequest) (control.Authorization, error) {
 	if f.startAuthorization == nil {
 		return control.Authorization{}, errors.New("unexpected StartAuthorization")

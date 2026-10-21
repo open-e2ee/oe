@@ -83,6 +83,7 @@ oe auth logout          remove the stored session
 oe org list             list the organizations of the account, and mark the current one
 oe org switch [ORG]     move the stored session to another organization
 oe doctor               check project, environment, connection, credentials, and control-plane health; --wait waits for the first acknowledged Sandbox message
+oe identity check       check a public draft identity profile with an optional transient assertion
 oe link [PROJECT]       link the directory to a project and write the env file of each active environment
 oe project list         list the projects of the organization of the session, with the state of Production
 oe project show         read a project and the state of each environment
@@ -104,11 +105,69 @@ Global flags can come before or after the command. Global `--json` emits one
 final JSON document, and `oe auth login` emits one pending event before it. `--json-stream` emits newline-delimited progress and final
 events. `--agent yes|no|auto` says whether a coding agent runs `oe`.
 `--env sandbox|production` (`-e`) selects the environment. Without it,
-`oe doctor`, `oe project`, and `oe notifications` read `OE_ENV`, then use
+`oe doctor`, `oe identity`, `oe project`, and `oe notifications` read `OE_ENV`, then use
 sandbox. `oe new` always uses sandbox. The config pull reads each active
 environment, and `oe config push` applies every environment section of the
 config. Only `--env` narrows either to one environment; `OE_ENV` never changes
 what a pull reads or what a push applies.
+
+## Identity setup check
+
+Run the check from a linked application directory with a current CLI session.
+The session needs read access to the project and the selected environment.
+The check writes no identity configuration or member account.
+
+Save a public draft profile in `public-profile.json`:
+
+```json
+{
+  "mode": "custom-token",
+  "algorithms": ["ES256"],
+  "issuer": "https://members.example",
+  "audience": "relay-production",
+  "subjectClaim": "sub",
+  "keys": [
+    {
+      "kid": "signing-1",
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "PUBLIC_X",
+      "y": "PUBLIC_Y"
+    }
+  ]
+}
+```
+
+Replace the example values with your public verifier values.
+Use canonical base64url P-256 coordinates for `x` and `y`.
+Keep private keys on your backend.
+Native Clerk and Firebase profiles are unavailable in this check.
+An external `provider-bound` profile uses the same explicit ES256 fields.
+
+For an external profile, supply a fresh registration assertion through stdin:
+
+```bash
+oe identity check --profile public-profile.json --assertion-stdin --env production
+```
+
+This command sends the transient assertion once to the authenticated Console verifier.
+Supply it through a protected stdin pipe from your backend or test harness.
+Do not put assertions in command arguments, repository files, or support messages.
+The assertion must follow the [Relay identity contract](https://docs.open-e2ee.dev/relay/identity).
+
+For device-owned identity, use `{"mode":"device-owned"}` as the profile.
+Omit `--assertion-stdin`. The command forbids that flag and reads no assertion.
+
+The result is `accepted_at_check` or `not_applicable` for device-owned identity.
+An accepted result records the signed expiry as a historical fact.
+It does not prove that the assertion remains valid.
+Installed configuration, device admission, member binding, encrypted exchange, and lifecycle remain `unverified`.
+The output omits assertions, member subjects, public keys, and arbitrary server errors.
+
+After configuration, test the application with two test members and two devices.
+Confirm separate accounts, repeat-member stability, message decryption, key rotation, removal, and suspension.
+The Console check accepts drafts before the first account admission.
+This CLI check can validate a draft for an existing project without changing it.
 
 ## Use from a coding agent
 
