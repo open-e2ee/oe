@@ -1,9 +1,13 @@
 package control
 
-import "context"
+import (
+	"context"
+	"github.com/open-e2ee/oe/internal/identity"
+)
 
 type API interface {
 	Health(context.Context) error
+	CheckIdentity(context.Context, CredentialRequest, string, string, identity.Draft) (identity.Check, error)
 	StartAuthorization(context.Context, AuthorizationRequest) (Authorization, error)
 	PollAuthorization(context.Context, Authorization) (Token, error)
 	RefreshAuthorization(context.Context, string, string) (Token, error)

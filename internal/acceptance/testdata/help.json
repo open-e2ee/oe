@@ -33,6 +33,13 @@
         ]
       },
       {
+        "name": "identity",
+        "summary": "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle.",
+        "usage": [
+          "oe identity check --profile PATH [--assertion-stdin] [--env sandbox|production]"
+        ]
+      },
+      {
         "name": "link",
         "summary": "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.",
         "usage": ["oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]"]
@@ -92,7 +99,7 @@
       },
       {
         "name": "OE_ENV",
-        "summary": "The environment of doctor, project, and notifications when --env is not given: sandbox or production. new and config ignore it."
+        "summary": "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."
       },
       {
         "name": "OE_OPERATION_ID",
@@ -140,7 +147,7 @@
       },
       {
         "name": "--env sandbox|production",
-        "summary": "Select the environment. -e is the short form. Without it, doctor, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."
+        "summary": "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."
       },
       {
         "name": "--control-url URL",
