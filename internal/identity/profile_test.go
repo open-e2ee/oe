@@ -35,7 +35,7 @@ func TestPublicProfilesExcludeSecretsAndUnsupportedContracts(t *testing.T) {
 		strings.Replace(publicDraft, `"ES256"`, `"RS256"`, 1),
 		strings.Replace(publicDraft, `"sub"`, `"iss"`, 1),
 		strings.Replace(publicDraft, `https://members.example`, `http://members.example`, 1),
-		strings.Replace(publicDraft, `https://members.example`, `https://user:PRIVATE_CANARY@members.example`, 1),
+		strings.Replace(publicDraft, `https://members.example`, `https://PRIVATE_CANARY@members.example`, 1),
 		strings.Replace(publicDraft, `"crv":"P-256"`, `"crv":"P-384"`, 1),
 		strings.Replace(publicDraft, `"x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"`, `"x":"PRIVATE_CANARY"`, 1),
 		publicDraft + `{}`,
