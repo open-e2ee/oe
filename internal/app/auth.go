@@ -329,6 +329,7 @@ func (r *runner) authStatus(ctx context.Context, args []string) error {
 		return err
 	}
 	data := sessionData(identity, session.Source)
+	data["protectionBypass"] = map[string]any{"source": r.protectionBypassSource}
 	data["terms"] = terms.State
 	data["canAccept"] = terms.CanAccept
 
@@ -347,6 +348,9 @@ func (r *runner) authStatus(ctx context.Context, args []string) error {
 		if len(list.Organizations) > 0 {
 			message += "\nOrganizations: " + organizationSummary(list)
 		}
+	}
+	if r.protectionBypassSource != "none" {
+		message += "\nProtection bypass: " + r.protectionBypassSource + "."
 	}
 	return r.out.Success("auth status", message, data)
 }

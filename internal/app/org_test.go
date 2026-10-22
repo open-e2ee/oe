@@ -369,3 +369,24 @@ func TestOrgListReportsAControlFailure(t *testing.T) {
 		t.Fatalf("a temporary failure: exit=%d %#v", exit, result)
 	}
 }
+
+func TestOrgSwitchPreservesStoredProtectionBypass(t *testing.T) {
+	fixture := newOrgFixture(t)
+	value := fixture.stored(t)
+	value.ProtectionBypass = "stored-bypass"
+	if err := fixture.memory.Set(fixture.profile, value); err != nil {
+		t.Fatal(err)
+	}
+	deps := fixture.dependencies()
+	deps.Getenv = environment(map[string]string{"OE_PROTECTION_BYPASS": "override-bypass"})
+	exit, stdout, stderr := run(t, deps, "--json", "org", "switch", "org_beta")
+	if exit != 0 {
+		t.Fatal("organization switch failed")
+	}
+	if stored := fixture.stored(t); stored.ProtectionBypass != "stored-bypass" || stored.RefreshToken != "new-refresh" {
+		t.Fatal("organization switch did not preserve the stored bypass")
+	}
+	if strings.Contains(stdout+stderr, "stored-bypass") || strings.Contains(stdout+stderr, "override-bypass") {
+		t.Fatal("organization switch exposed a bypass")
+	}
+}

@@ -26,6 +26,13 @@ func TestWorkOSDeviceAuthorizationAndRefreshStayOffTheControlOrigin(t *testing.T
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
+		wantBypass := ""
+		if request.URL.Path == "/v1/auth/configuration" {
+			wantBypass = "control-bypass"
+		}
+		if request.Header.Get("x-vercel-protection-bypass") != wantBypass {
+			t.Error("protection bypass header crossed the control boundary")
+		}
 		switch request.URL.Path {
 		case "/v1/auth/configuration":
 			json.NewEncoder(response).Encode(authConfiguration{
@@ -84,6 +91,7 @@ func TestWorkOSDeviceAuthorizationAndRefreshStayOffTheControlOrigin(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.SetProtectionBypass("control-bypass")
 	authorization, err := client.StartAuthorization(context.Background(), AuthorizationRequest{})
 	if err != nil {
 		t.Fatal(err)
@@ -649,5 +657,106 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 		bodies[0] != `{"environment":"production","expectedRevision":"0","planId":"plan_production","policy":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true},"project":"chat","writer":"config"}` ||
 		bodies[1] != `{"environment":"sandbox","expectedRevision":"2","planId":"plan_sandbox","policy":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true},"project":"chat","writer":"config"}` {
 		t.Fatalf("deploy bodies %q", bodies)
+	}
+}
+
+func TestProtectionBypassControlRequests(t *testing.T) {
+	for _, bypass := range []string{"", "control-bypass"} {
+		t.Run("set="+fmt.Sprint(bypass != ""), func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Header.Get("x-vercel-protection-bypass") != bypass {
+					t.Error("incorrect protection bypass header")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			client, err := New(server.URL, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.SetProtectionBypass("  " + bypass + "  ")
+			if err := client.Health(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.do(t.Context(), http.MethodGet, "/v1/projects", CredentialRequest{AccessToken: "access"}, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			if requests.Load() != 2 {
+				t.Fatal("missing control requests")
+			}
+		})
+	}
+}
+
+func TestProtectionBypassDoesNotFollowCrossOriginRedirects(t *testing.T) {
+	var received atomic.Int32
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Add(1)
+		if r.Header.Get("x-vercel-protection-bypass") != "" {
+			t.Error("redirect exposed the protection bypass")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer destination.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-vercel-protection-bypass") != "control-bypass" {
+			t.Error("control request omitted the protection bypass")
+		}
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer origin.Close()
+	for _, customRedirect := range []bool{false, true} {
+		httpClient := origin.Client()
+		if customRedirect {
+			httpClient.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+				if r.Header.Get("x-vercel-protection-bypass") != "" {
+					t.Error("redirect hook received the protection bypass")
+				}
+				return nil
+			}
+		}
+		client, err := New(origin.URL, httpClient)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.SetProtectionBypass("control-bypass")
+		if err := client.Health(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if received.Load() != 2 {
+		t.Fatal("redirect destinations were not reached")
+	}
+}
+
+func TestProtectionBypassIsRedactedFromControlErrors(t *testing.T) {
+	const bypass = "control-bypass"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": "TERMS_REQUIRED", "message": "header x-vercel-protection-bypass: " + bypass,
+			"billingSetupUrl": "https://example.invalid/" + bypass,
+			"documents":       []TermsDocument{{Name: bypass, URL: bypass, Version: bypass}},
+		})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetProtectionBypass(bypass)
+	err = client.Health(t.Context())
+	if err == nil || strings.Contains(err.Error(), bypass) {
+		t.Fatal("control error exposed the protection bypass or did not fail")
+	}
+	refusal, ok := errors.AsType[*APIError](err)
+	if !ok || refusal.Code != "TERMS_REQUIRED" || refusal.Status != http.StatusForbidden {
+		t.Fatal("redaction lost the API error classification")
+	}
+	encoded, err := json.Marshal(refusal)
+	if err != nil || strings.Contains(string(encoded), bypass) {
+		t.Fatal("structured error exposed the protection bypass")
 	}
 }
