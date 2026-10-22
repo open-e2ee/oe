@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -638,6 +639,37 @@ func TestLoginPromptMatchesTheVerificationPage(t *testing.T) {
 	} {
 		if got := loginPrompt(test.authorization); got != test.want {
 			t.Fatalf("%s prompt: %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
+func TestFailedControlRequestNeverPrintsProtectionBypass(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	const bypass = "request-bypass-secret"
+	for _, transportFailure := range []bool{false, true} {
+		for _, mode := range []string{"--json", "--agent=no"} {
+			store := credential.NewMemory()
+			storeCredential(t, store)
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.Header.Get("x-vercel-protection-bypass") != bypass {
+					t.Error("runner did not configure the protection bypass")
+				}
+				if transportFailure {
+					return nil, fmt.Errorf("request URL https://example.invalid/%s header x-vercel-protection-bypass: %s", bypass, bypass)
+				}
+				return &http.Response{
+					StatusCode: http.StatusForbidden, Header: make(http.Header),
+					Body: io.NopCloser(strings.NewReader(`{"code":"TERMS_REQUIRED","message":"header ` + bypass + `","documents":[{"name":"` + bypass + `","url":"https://example.invalid/` + bypass + `","version":"` + bypass + `"}]}`)),
+				}, nil
+			})}
+			var stdout, stderr bytes.Buffer
+			exit := Run(t.Context(), []string{mode, "auth", "status"}, Dependencies{
+				Store: store, HTTP: client, Out: &stdout, Err: &stderr, WorkingDir: t.TempDir(),
+				Getenv: environment(map[string]string{"OE_PROTECTION_BYPASS": bypass}),
+			})
+			if exit == 0 || strings.Contains(stdout.String()+stderr.String(), bypass) {
+				t.Fatal("failed control request exposed the bypass or did not fail")
+			}
 		}
 	}
 }

@@ -98,6 +98,10 @@
         "summary": "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."
       },
       {
+        "name": "OE_PROTECTION_BYPASS",
+        "summary": "A protection bypass secret for the control URL. Login stores it with that session. It takes precedence over the stored bypass and never appears in output."
+      },
+      {
         "name": "OE_ENV",
         "summary": "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."
       },

@@ -109,6 +109,7 @@ var exitCodeSurface = []exitCodeSpec{
 var variableSurface = []variableSpec{
 	{"OE_ACCESS_TOKEN", "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."},
 	{"OE_ACCESS_TOKEN_SCOPES", "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."},
+	{"OE_PROTECTION_BYPASS", "A protection bypass secret for the control URL. Login stores it with that session. It takes precedence over the stored bypass and never appears in output."},
 	{"OE_ENV", "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
 	{"OE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to retry one mutation."},
 }

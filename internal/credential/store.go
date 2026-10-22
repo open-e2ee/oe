@@ -18,11 +18,12 @@ const service = "dev.open-e2ee.cli"
 var ErrNotFound = errors.New("credential not found")
 
 type Credential struct {
-	AccessToken  string   `json:"accessToken"`
-	ExpiresAt    string   `json:"expiresAt,omitempty"`
-	RefreshToken string   `json:"refreshToken,omitempty"`
-	Scopes       []string `json:"scopes"`
-	Source       string   `json:"-"`
+	AccessToken      string   `json:"accessToken"`
+	ExpiresAt        string   `json:"expiresAt,omitempty"`
+	RefreshToken     string   `json:"refreshToken,omitempty"`
+	ProtectionBypass string   `json:"protectionBypass,omitempty"`
+	Scopes           []string `json:"scopes"`
+	Source           string   `json:"-"`
 }
 
 type Store interface {

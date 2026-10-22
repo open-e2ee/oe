@@ -159,6 +159,7 @@ func (r *runner) switchOrganization(ctx context.Context, profile string, value c
 	switched := credential.Credential{
 		AccessToken: token.AccessToken, ExpiresAt: token.ExpiresAt,
 		RefreshToken: token.RefreshToken, Source: "keychain",
+		ProtectionBypass: value.ProtectionBypass,
 	}
 	if err := r.store.Set(profile, switched); err != nil {
 		return credential.Credential{}, control.Session{}, err

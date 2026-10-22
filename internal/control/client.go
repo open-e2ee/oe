@@ -17,8 +17,9 @@ import (
 )
 
 type Client struct {
-	baseURL *url.URL
-	http    *http.Client
+	baseURL          *url.URL
+	http             *http.Client
+	protectionBypass string
 }
 
 type apiError struct {
@@ -478,7 +479,28 @@ func validateTerms(terms Terms) error {
 	return nil
 }
 
-func (c *Client) do(ctx context.Context, method, endpoint string, credential CredentialRequest, body, output any) error {
+// SetProtectionBypass sets the secret for control requests. Call it before use.
+func (c *Client) SetProtectionBypass(value string) {
+	c.protectionBypass = strings.TrimSpace(value)
+}
+
+func (c *Client) do(ctx context.Context, method, endpoint string, credential CredentialRequest, body, output any) (err error) {
+	defer func() {
+		err = sanitizeCredentialError(err, credential.AccessToken, c.protectionBypass)
+	}()
+	httpClient := *c.http
+	httpClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if request.URL.Scheme != c.baseURL.Scheme || request.URL.Host != c.baseURL.Host {
+			request.Header.Del("x-vercel-protection-bypass")
+		}
+		if c.http.CheckRedirect != nil {
+			return c.http.CheckRedirect(request, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
 	encoded, err := encodeBody(body)
 	if err != nil {
 		return err
@@ -494,6 +516,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 			return err
 		}
 		request.Header.Set("Accept", "application/json")
+		if c.protectionBypass != "" {
+			request.Header.Set("x-vercel-protection-bypass", c.protectionBypass)
+		}
 		if body != nil {
 			request.Header.Set("Content-Type", "application/json")
 		}
@@ -503,12 +528,12 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 		if credential.OperationID != "" {
 			request.Header.Set("Idempotency-Key", credential.OperationID)
 		}
-		response, err := c.http.Do(request)
+		response, err := httpClient.Do(request)
 		if err != nil {
 			if attempt < 2 && retryable {
 				continue
 			}
-			return sanitizeCredentialError(fmt.Errorf("control request failed: %w", err), credential.AccessToken)
+			return fmt.Errorf("control request failed: %w", err)
 		}
 		err = decodeResponse(response, output)
 		response.Body.Close()
@@ -518,19 +543,38 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 		if apiError, ok := errors.AsType[*APIError](err); attempt < 2 && retryable && ok && apiError.retryable() {
 			continue
 		}
-		return sanitizeCredentialError(err, credential.AccessToken)
+		return err
 	}
 	return errors.New("control request exhausted retries")
 }
 
-func sanitizeCredentialError(err error, accessToken string) error {
-	if err == nil || accessToken == "" {
-		return err
+func sanitizeCredentialError(err error, secrets ...string) error {
+	if err == nil {
+		return nil
 	}
-	return &sanitizedError{
-		cause:   err,
-		message: strings.ReplaceAll(err.Error(), accessToken, "[redacted]"),
+	redact := func(value string) string {
+		for _, secret := range secrets {
+			if secret != "" {
+				value = strings.ReplaceAll(value, secret, "[redacted]")
+			}
+		}
+		return value
 	}
+	cause := err
+	if refusal, ok := errors.AsType[*APIError](err); ok {
+		copy := *refusal
+		copy.Code = redact(copy.Code)
+		copy.Message = redact(copy.Message)
+		copy.BillingSetupURL = redact(copy.BillingSetupURL)
+		copy.Documents = append([]TermsDocument(nil), copy.Documents...)
+		for i := range copy.Documents {
+			copy.Documents[i].Name = redact(copy.Documents[i].Name)
+			copy.Documents[i].URL = redact(copy.Documents[i].URL)
+			copy.Documents[i].Version = redact(copy.Documents[i].Version)
+		}
+		cause = &copy
+	}
+	return &sanitizedError{cause: cause, message: redact(err.Error())}
 }
 
 type sanitizedError struct {

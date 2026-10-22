@@ -79,7 +79,9 @@ type runner struct {
 	harness agent.Harness
 	// credentialSource is the source of the credential that access resolved,
 	// such as environment for OE_ACCESS_TOKEN. It is empty before access.
-	credentialSource string
+	credentialSource       string
+	protectionBypass       string
+	protectionBypassSource string
 }
 
 func Run(ctx context.Context, args []string, dependencies Dependencies) int {
@@ -144,12 +146,30 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 	if err := validateControlURL(global.controlURL); err != nil {
 		return fail(writer, command, args, global.environment, usageError(command, err.Error()))
 	}
+	protectionBypass := strings.TrimSpace(dependencies.Getenv("OE_PROTECTION_BYPASS"))
+	protectionBypassSource := "none"
+	if protectionBypass != "" {
+		protectionBypassSource = "environment"
+	} else {
+		profile, _ := credential.Profile(global.controlURL)
+		// Session resolution reports store errors. Local commands and a fresh
+		// login can still run when the keychain is unavailable.
+		if stored, err := dependencies.Store.Get(profile); err == nil {
+			protectionBypass = strings.TrimSpace(stored.ProtectionBypass)
+			if protectionBypass != "" {
+				protectionBypassSource = "keychain"
+			}
+		}
+	}
 	api := dependencies.API
 	if api == nil {
 		api, err = control.New(global.controlURL, dependencies.HTTP)
 		if err != nil {
 			return fail(writer, command, args, global.environment, usageError(command, err.Error()))
 		}
+	}
+	if client, ok := api.(*control.Client); ok {
+		client.SetProtectionBypass(protectionBypass)
 	}
 	// One buffered reader serves every prompt of the run, so a prompt that
 	// follows another reads the next line and not the buffer of the first.
@@ -161,6 +181,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 		controlURL: global.controlURL, environment: global.environment,
 		environmentSelected: global.environmentSelected, mode: global.mode,
 		underAgent: underAgent, harness: harness,
+		protectionBypass: protectionBypass, protectionBypassSource: protectionBypassSource,
 	}
 	if err := r.execute(ctx, command, commandArgs); err != nil {
 		if r.credentialSource == "environment" {
@@ -271,7 +292,7 @@ func (r *runner) interactiveLogin(ctx context.Context, timeout time.Duration, an
 			}
 			value := credential.Credential{
 				AccessToken: token.AccessToken, ExpiresAt: token.ExpiresAt,
-				RefreshToken: token.RefreshToken,
+				RefreshToken: token.RefreshToken, ProtectionBypass: r.protectionBypass,
 			}
 			if err := r.store.Set(profile, value); err != nil {
 				return credential.Credential{}, err
@@ -763,6 +784,7 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 			value = credential.Credential{
 				AccessToken: refreshed.AccessToken, ExpiresAt: refreshed.ExpiresAt,
 				RefreshToken: refreshed.RefreshToken, Source: "keychain",
+				ProtectionBypass: value.ProtectionBypass,
 			}
 			if err := r.store.Set(profile, value); err != nil {
 				return credential.Credential{}, err

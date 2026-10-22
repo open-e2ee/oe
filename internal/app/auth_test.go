@@ -50,18 +50,19 @@ func personSession() map[string]any {
 // answers the WorkOS error signIn when it is set. routes serves any other
 // authorized route that a test adds.
 type console struct {
-	t             *testing.T
-	server        *httptest.Server
-	routes        *http.ServeMux
-	mu            sync.Mutex
-	state         string
-	canAccept     bool
-	session       map[string]any
-	organizations map[string]any
-	signIn        string
-	requests      []string
-	accepts       []map[string]any
-	refreshes     []url.Values
+	t                *testing.T
+	server           *httptest.Server
+	routes           *http.ServeMux
+	mu               sync.Mutex
+	state            string
+	canAccept        bool
+	session          map[string]any
+	organizations    map[string]any
+	signIn           string
+	requests         []string
+	accepts          []map[string]any
+	protectionBypass *string
+	refreshes        []url.Values
 }
 
 func newConsole(t *testing.T, state string, canAccept bool) *console {
@@ -93,6 +94,15 @@ func (c *console) serve(response http.ResponseWriter, request *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.requests = append(c.requests, request.Method+" "+request.URL.Path)
+	if c.protectionBypass != nil {
+		want := ""
+		if strings.HasPrefix(request.URL.Path, "/api/cli/") {
+			want = *c.protectionBypass
+		}
+		if request.Header.Get("x-vercel-protection-bypass") != want {
+			c.t.Error("incorrect protection bypass header at " + request.URL.Path)
+		}
+	}
 	switch request.URL.Path {
 	case "/api/cli/v1/auth/configuration":
 		c.answer(response, http.StatusOK, map[string]any{
@@ -1095,5 +1105,134 @@ func TestAuthStatusListsTheOrganizations(t *testing.T) {
 	exit, stdout, _ = run(t, dependencies, "--json", "--control-url", server.controlURL(), "auth", "status")
 	if status := decodeEvent(t, []byte(stdout)); exit != 0 || status.Data["organizations"] != nil {
 		t.Fatalf("auth status on a console without the list: exit=%d %s", exit, stdout)
+	}
+}
+
+func TestAuthLoginPersistsProtectionBypassForLaterCommands(t *testing.T) {
+	t.Setenv("OE_ACCESS_TOKEN", "")
+	server := newConsole(t, "accepted", true)
+	server.protectionBypass = new("login-bypass")
+	store := credential.NewMemory()
+	profile, err := credential.Profile(server.controlURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []map[string]string{
+		{"OE_PROTECTION_BYPASS": "  login-bypass \n"},
+		nil,
+	} {
+		dependencies := server.dependencies(store, environment(env))
+		dependencies.Interactive = func() bool { return false }
+		exit, stdout, stderr := run(t, dependencies, "--control-url", server.controlURL(), "--json", "auth", "login")
+		if exit != 0 {
+			t.Fatal("login failed")
+		}
+		if strings.Contains(stdout+stderr, "login-bypass") {
+			t.Fatal("login exposed the protection bypass")
+		}
+		stored, err := store.Get(profile)
+		if err != nil || stored.ProtectionBypass != "login-bypass" {
+			t.Fatal("login did not preserve the protection bypass")
+		}
+	}
+	exit, stdout, stderr := run(t, server.dependencies(store, environment(nil)), "--control-url", server.controlURL(), "--json", "auth", "status")
+	if exit != 0 || strings.Contains(stdout+stderr, "login-bypass") {
+		t.Fatal("stored bypass did not support the later status command")
+	}
+	if !slices.Contains(server.requested(), "GET /api/cli/v1/auth/configuration") {
+		t.Fatal("login did not read the authentication configuration")
+	}
+	exit, _, _ = run(t, server.dependencies(store, environment(nil)), "--control-url", server.controlURL(), "auth", "logout")
+	if _, err := store.Get(profile); exit != 0 || !errors.Is(err, credential.ErrNotFound) {
+		t.Fatal("logout did not remove the profile and its bypass")
+	}
+}
+
+func TestAuthStatusProtectionBypassSources(t *testing.T) {
+	for _, test := range []struct {
+		name, stored, env, expected, source string
+		environmentToken                    bool
+	}{
+		{name: "none", source: "none"},
+		{name: "stored", stored: "stored-bypass", expected: "stored-bypass", source: "keychain"},
+		{name: "environment wins", stored: "stored-bypass", env: "  env-bypass \n", expected: "env-bypass", source: "environment"},
+		{name: "blank falls back", stored: "stored-bypass", env: " \n", expected: "stored-bypass", source: "keychain"},
+		{name: "environment token", env: "env-bypass", expected: "env-bypass", source: "environment", environmentToken: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("OE_ACCESS_TOKEN", "")
+			if test.environmentToken {
+				t.Setenv("OE_ACCESS_TOKEN", sessionToken())
+			}
+			server := newConsole(t, "accepted", true)
+			server.protectionBypass = new(test.expected)
+			store := credential.NewMemory()
+			server.storeSession(t, store)
+			profile, _ := credential.Profile(server.controlURL())
+			value, err := store.Get(profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value.ProtectionBypass = test.stored
+			if err := store.Set(profile, value); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Set("https://other.example", credential.Credential{AccessToken: "other", ProtectionBypass: "other-bypass"}); err != nil {
+				t.Fatal(err)
+			}
+			for _, mode := range []string{"--json", "--agent=no"} {
+				deps := server.dependencies(store, environment(map[string]string{"OE_PROTECTION_BYPASS": test.env}))
+				exit, stdout, stderr := run(t, deps, "--control-url", server.controlURL(), mode, "auth", "status")
+				if exit != 0 {
+					t.Fatal("auth status failed")
+				}
+				for _, secret := range []string{"stored-bypass", "env-bypass", "other-bypass"} {
+					if strings.Contains(stdout+stderr, secret) {
+						t.Fatal("auth status exposed a bypass")
+					}
+				}
+				if mode == "--json" {
+					bypass, ok := decodeEvent(t, []byte(stdout)).Data["protectionBypass"].(map[string]any)
+					if !ok || bypass["source"] != test.source || len(bypass) != 1 {
+						t.Fatal("auth status reported the wrong bypass source")
+					}
+				} else {
+					count := strings.Count(stdout, "Protection bypass:")
+					if test.source == "none" && count != 0 || test.source != "none" && (count != 1 || !strings.Contains(stdout, "Protection bypass: "+test.source+".")) {
+						t.Fatal("text status reported the wrong bypass source")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRefreshPreservesStoredProtectionBypass(t *testing.T) {
+	for _, env := range []string{"", "override-bypass"} {
+		t.Run("override="+fmt.Sprint(env != ""), func(t *testing.T) {
+			t.Setenv("OE_ACCESS_TOKEN", "")
+			server := newConsole(t, "accepted", true)
+			expected := "stored-bypass"
+			if env != "" {
+				expected = env
+			}
+			server.protectionBypass = new(expected)
+			store := credential.NewMemory()
+			profile, _ := credential.Profile(server.controlURL())
+			if err := store.Set(profile, credential.Credential{
+				AccessToken: "expired", RefreshToken: "old-refresh", ExpiresAt: "2000-01-01T00:00:00Z", ProtectionBypass: "stored-bypass",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			deps := server.dependencies(store, environment(map[string]string{"OE_PROTECTION_BYPASS": env}))
+			exit, _, _ := run(t, deps, "--control-url", server.controlURL(), "--json", "auth", "status")
+			if exit != 0 || len(server.refreshed()) != 1 {
+				t.Fatal("session refresh failed")
+			}
+			stored, err := store.Get(profile)
+			if err != nil || stored.ProtectionBypass != "stored-bypass" || stored.RefreshToken != "refresh" {
+				t.Fatal("refresh did not preserve the stored bypass and rotate the session")
+			}
+		})
 	}
 }

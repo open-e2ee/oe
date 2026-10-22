@@ -34,6 +34,14 @@ document to stdout. It never prompts and never opens a browser.
    [The organization](#the-organization).
 5. If `data.terms` is `required`, follow [The terms](#the-terms).
 
+For a control URL behind Vercel Authentication, set `OE_PROTECTION_BYPASS`
+before login. Login stores the bypass with the session for that control URL.
+The environment value takes precedence over the stored value. The CLI sends
+`x-vercel-protection-bypass` only to the control URL, never to WorkOS or another
+host. The bypass value never appears in output. `oe auth status` reports
+`data.protectionBypass.source` as `environment`, `keychain`, or `none`.
+`oe auth logout` removes the stored session and its bypass.
+
 ## The organization
 
 A person can belong to more than one organization. The session is in one

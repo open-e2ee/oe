@@ -220,6 +220,13 @@ Open https://.../device?user_code=ABCD-EFGH and confirm that it shows the code A
 On another device, go to https://.../device and enter ABCD-EFGH.
 ```
 
+For a control URL behind Vercel Authentication, set `OE_PROTECTION_BYPASS`
+before login. The CLI trims whitespace and sends the value in
+`x-vercel-protection-bypass` only to the control URL. It never sends this header
+to WorkOS or another host. Login stores the value with the session for that
+control URL. Later commands use `OE_PROTECTION_BYPASS` when it is not empty,
+then the stored value, then no bypass. The value never appears in output.
+
 Under an agent, `oe` does not open the browser. It writes a pending event, then
 the result after the person approves, so start the command in the background and
 give the person `action.url` and `data.userCode`. The person opens the URL and
@@ -256,8 +263,8 @@ without a terminal gets no prompt, only `next`.
 
 `oe auth status` shows the person, the organization, the terms state, and where
 the session is, and exits 4 without a session. An agent session names the
-person that the agent works for. The last line names each organization of the
-account, its role, and the current one. The text shows no ID:
+person that the agent works for. The organization line names each organization
+of the account, its role, and the current one. The text shows no ID:
 
 ```text
 Signed in as Jane Doe (jane@example.com) in Acme Inc. (macOS Keychain)
@@ -272,6 +279,11 @@ IDs (`user`, `organization.id`, and `agent.registrationId` for an agent), `role`
 `environment`), and `data.organizations` when the control API lists them. It
 never has a token. Protected CI uses a scoped `OE_ACCESS_TOKEN` instead of a
 login.
+
+`data.protectionBypass` is `{"source":"environment"}`,
+`{"source":"keychain"}`, or `{"source":"none"}`. Text output adds
+`Protection bypass: environment.` or `Protection bypass: keychain.` only when
+a bypass is in use. Neither output format shows the value.
 
 A person can belong to more than one organization. The session is in one
 organization at a time, and each project command reads only the projects of
@@ -378,6 +390,10 @@ later and validates its default export against `schema/config-v2.json`. The
 schema rejects unknown fields so a secret cannot silently remain in the file. Secrets belong in the service secret store. Login
 credentials belong in the operating-system keychain. Protected CI can supply a
 scoped `OE_ACCESS_TOKEN`. The CLI keeps it in memory and never stores it.
+
+If the control URL needs `OE_PROTECTION_BYPASS`, login stores that secret with the
+session in the keychain. The environment value takes precedence. The header
+goes only to the control URL, and the value never appears in output.
 
 Each project has one writer mode:
 
@@ -493,6 +509,12 @@ command does not use an analytics SDK.
 
 See [SECURITY.md](./SECURITY.md). Do not open a public issue for a suspected
 credential, authentication, authorization, or cryptographic defect.
+
+`OE_ACCESS_TOKEN` stays in memory. `OE_PROTECTION_BYPASS` is a secret that login
+stores with the session for the control URL. The environment value takes
+precedence over the stored bypass. The CLI sends the header only to the control
+URL. The bypass value never appears in output. `oe auth logout` removes the
+stored session and its bypass.
 
 ## License
 
