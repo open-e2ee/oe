@@ -4,27 +4,12 @@
   "message": "The data field describes every command. Run oe help <command> for one command.",
   "data": {
     "aliases": {
-      "agent setup": [
-        "oe agent",
-        "oe agent status"
-      ],
-      "auth status": [
-        "oe auth"
-      ],
-      "notifications status": [
-        "oe notifications"
-      ],
-      "org list": [
-        "oe orgs",
-        "oe organizations"
-      ],
-      "org show": [
-        "oe org",
-        "oe org view"
-      ],
-      "project connection": [
-        "oe app connection [PROJECT]"
-      ],
+      "agent setup": ["oe agent", "oe agent status"],
+      "auth status": ["oe auth"],
+      "notifications status": ["oe notifications"],
+      "org list": ["oe orgs", "oe organizations"],
+      "org show": ["oe org", "oe org view"],
+      "project connection": ["oe app connection [PROJECT]"],
       "project list": [
         "oe projects",
         "oe apps",
@@ -39,9 +24,7 @@
         "oe app show [PROJECT]",
         "oe app view [PROJECT]"
       ],
-      "project usage": [
-        "oe app usage [PROJECT]"
-      ]
+      "project usage": ["oe app usage [PROJECT]"]
     },
     "commands": [
       {
@@ -63,11 +46,7 @@
       {
         "name": "org",
         "summary": "Show the organization of the current session, list the organizations of the account, or move the stored session to another organization. ORG is an ID or a unique name. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.",
-        "usage": [
-          "oe org show",
-          "oe org list",
-          "oe org switch [ORG]"
-        ]
+        "usage": ["oe org show", "oe org list", "oe org switch [ORG]"]
       },
       {
         "name": "doctor",

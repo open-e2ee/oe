@@ -100,17 +100,17 @@ oe help [COMMAND]       show every command, or the usage of one command
 
 Aliases keep the canonical command's data, exit status, and JSON `command` value.
 
-| Canonical command | Aliases |
-| --- | --- |
-| `oe project show [PROJECT]` | `oe project`, `oe app`, `oe project view [PROJECT]`, `oe app show [PROJECT]`, `oe app view [PROJECT]` |
-| `oe project list` | `oe projects`, `oe apps`, `oe app list`, `oe projects list`, `oe apps list` |
-| `oe project usage [PROJECT]` | `oe app usage [PROJECT]` |
-| `oe project connection [PROJECT]` | `oe app connection [PROJECT]` |
-| `oe auth status` | `oe auth` |
-| `oe org show` | `oe org`, `oe org view` |
-| `oe org list` | `oe orgs`, `oe organizations` |
-| `oe notifications status` | `oe notifications` |
-| `oe agent setup --check` | `oe agent`, `oe agent status` |
+| Canonical command                 | Aliases                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `oe project show [PROJECT]`       | `oe project`, `oe app`, `oe project view [PROJECT]`, `oe app show [PROJECT]`, `oe app view [PROJECT]` |
+| `oe project list`                 | `oe projects`, `oe apps`, `oe app list`, `oe projects list`, `oe apps list`                           |
+| `oe project usage [PROJECT]`      | `oe app usage [PROJECT]`                                                                              |
+| `oe project connection [PROJECT]` | `oe app connection [PROJECT]`                                                                         |
+| `oe auth status`                  | `oe auth`                                                                                             |
+| `oe org show`                     | `oe org`, `oe org view`                                                                               |
+| `oe org list`                     | `oe orgs`, `oe organizations`                                                                         |
+| `oe notifications status`         | `oe notifications`                                                                                    |
+| `oe agent setup --check`          | `oe agent`, `oe agent status`                                                                         |
 
 A project read without `PROJECT` uses the local config. It never picks another
 project from the account. `oe project my-chat` is invalid. Use
