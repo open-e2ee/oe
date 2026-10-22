@@ -380,6 +380,13 @@ func (c *Client) GetProject(ctx context.Context, credential CredentialRequest, p
 	return response, err
 }
 
+func (c *Client) ProjectUsage(ctx context.Context, credential CredentialRequest, project, environment string) (Usage, error) {
+	var response Usage
+	endpoint := projectPath(project, "usage") + "?environment=" + url.QueryEscape(environment)
+	err := c.do(ctx, http.MethodGet, endpoint, credential, nil, &response)
+	return response, err
+}
+
 func (c *Client) ListProjects(ctx context.Context, credential CredentialRequest) ([]ProjectSummary, error) {
 	response := []ProjectSummary{}
 	err := c.do(ctx, http.MethodGet, "/v1/projects", credential, nil, &response)

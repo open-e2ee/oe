@@ -504,6 +504,7 @@ type fakeAPI struct {
 	plan                   func(context.Context, control.CredentialRequest, control.PlanRequest) (control.Plan, error)
 	deploy                 func(context.Context, control.CredentialRequest, control.DeployRequest) (control.Deployment, error)
 	getProject             func(context.Context, control.CredentialRequest, string) (control.Project, error)
+	projectUsage           func(context.Context, control.CredentialRequest, string, string) (control.Usage, error)
 	listProjects           func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error)
 	notifications          func(context.Context, control.CredentialRequest, string, string) (control.NotificationConfiguration, error)
 	configureNotifications func(context.Context, control.CredentialRequest, string, control.NotificationConfigurationRequest) (control.NotificationConfiguration, error)
@@ -573,6 +574,12 @@ func (f *fakeAPI) GetProject(ctx context.Context, credential control.CredentialR
 		return control.Project{}, errors.New("unexpected GetProject")
 	}
 	return f.getProject(ctx, credential, project)
+}
+func (f *fakeAPI) ProjectUsage(ctx context.Context, credential control.CredentialRequest, project, environment string) (control.Usage, error) {
+	if f.projectUsage == nil {
+		return control.Usage{}, errors.New("unexpected ProjectUsage")
+	}
+	return f.projectUsage(ctx, credential, project, environment)
 }
 func (f *fakeAPI) ListProjects(ctx context.Context, credential control.CredentialRequest) ([]control.ProjectSummary, error) {
 	if f.listProjects == nil {
