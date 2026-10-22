@@ -87,7 +87,7 @@ func TestUsageErrorsExitTwoInTheRequestedMode(t *testing.T) {
 		"unexpected argument":       {"--json", "doctor", "extra"},
 		"missing global flag value": {"--json", "doctor", "--env"},
 		"invalid environment":       {"--json", "--env=stage", "doctor"},
-		"missing subcommand":        {"--json", "project"},
+		"missing subcommand":        {"--json", "config"},
 		"unknown help topic":        {"--json", "help", "bogus"},
 		"new with production":       {"--json", "--env", "production", "new"},
 		"invalid agent mode":        {"--json", "--agent=maybe", "doctor"},
@@ -528,7 +528,7 @@ func TestCommandFieldIsTheCommandPath(t *testing.T) {
 		}
 	}
 	want := []string{
-		"new", "auth login", "auth status", "auth logout", "org list", "org switch", "doctor", "identity check", "link",
+		"new", "auth login", "auth status", "auth logout", "org show", "org list", "org switch", "doctor", "identity check", "link",
 		"project list", "project show", "project usage", "project connection", "config push", "config pull",
 		"notifications status", "notifications setup ios", "notifications add-nse", "notifications verify ios",
 		"notifications apple-filtering-request", "agent setup", "version", "help",

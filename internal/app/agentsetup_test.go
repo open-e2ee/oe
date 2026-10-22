@@ -187,7 +187,7 @@ func TestAgentSetupWritesFourSkills(t *testing.T) {
 	})
 
 	t.Run("usage", func(t *testing.T) {
-		for _, args := range [][]string{{"agent"}, {"agent", "install"}, {"agent", "setup", "--scope", "team"}} {
+		for _, args := range [][]string{{"agent", "install"}, {"agent", "setup", "--scope", "team"}} {
 			exit, stdout, _ := run(t, Dependencies{}, append([]string{"--json"}, args...)...)
 			if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" {
 				t.Errorf("oe %s: exit=%d %s", strings.Join(args, " "), exit, stdout)

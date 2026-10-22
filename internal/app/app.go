@@ -94,13 +94,17 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 		dependencies.Getenv = os.Getenv
 	}
 	global, command, commandArgs, err := parseGlobal(args)
+	command, commandArgs = normalizeCommand(command, commandArgs)
 	harness, underAgent := agent.Resolve(global.agent, dependencies.Getenv)
 	if underAgent && !global.modeExplicit {
 		global.mode = output.JSON
 	}
 	writer := output.New(global.mode, dependencies.Out, dependencies.Err)
 	if err != nil {
-		return fail(writer, cmp.Or(command, "oe"), args, global.environment, err)
+		if issue, ok := errors.AsType[*problem](err); ok && issue.code == "USAGE_ERROR" {
+			err = usageError(command, issue.message)
+		}
+		return fail(writer, cmp.Or(envelopeCommand(command, commandArgs), "oe"), args, global.environment, err)
 	}
 	if command == "" {
 		command = "help"
