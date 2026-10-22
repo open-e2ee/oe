@@ -356,7 +356,7 @@ func loginPrompt(authorization control.Authorization) string {
 
 func (r *runner) project(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usageError("project", "name a project command: list, show, or connection")
+		return usageError("project", "name a project command: list, show, usage, or connection")
 	}
 	switch args[0] {
 	case "list":
@@ -374,6 +374,12 @@ func (r *runner) project(ctx context.Context, args []string) error {
 			return err
 		}
 		return r.out.Success("project show", projectText(project, r.shownEnvironments()), map[string]any{"project": projectSummary(project, r.shownEnvironments())})
+	case "usage":
+		slug, err := r.projectArgument("project usage", args[1:])
+		if err != nil {
+			return err
+		}
+		return r.projectUsage(ctx, slug)
 	case "connection":
 		slug, err := r.projectArgument("project connection", args[1:])
 		if err != nil {

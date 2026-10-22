@@ -46,10 +46,11 @@
       },
       {
         "name": "project",
-        "summary": "List the Relay projects of the organization of the session, read one, or print a Relay connection URL.",
+        "summary": "List the Relay projects of the organization of the session, read one, show usage, or print a Relay connection URL.",
         "usage": [
           "oe project list",
           "oe project show [PROJECT] [--env sandbox|production]",
+          "oe project usage [PROJECT] [--env sandbox|production]",
           "oe project connection [PROJECT] [--env sandbox|production]"
         ]
       },

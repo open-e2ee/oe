@@ -87,6 +87,7 @@ oe identity check       check a public draft identity profile with an optional t
 oe link [PROJECT]       link the directory to a project and write the env file of each active environment
 oe project list         list the projects of the organization of the session, with the state of Production
 oe project show         read a project and the state of each environment
+oe project usage        show the current billing-period Relay usage of one environment
 oe project connection   print the Relay connection URL of one environment
 oe config push          apply the Sandbox section, then the Production section when the config has one; --dry-run changes nothing
 oe config pull          write the Relay policy of each active environment into open-e2ee.config.ts
@@ -341,6 +342,20 @@ shell can capture it:
 oe project connection
 oe project connection my-chat --env production --json
 ```
+
+Read the current UTC billing-period usage. Without `PROJECT`, the command uses
+the project in the current directory's `open-e2ee.config.ts`. It uses the
+current authenticated session or a scoped `OE_ACCESS_TOKEN`, and defaults to
+Sandbox (or `OE_ENV`):
+
+```bash
+oe project usage
+oe project usage my-chat --env production --json
+```
+
+`no_usage` means Relay verified zero activity. Missing or untrusted reporting
+fails with `USAGE_UNAVAILABLE`, exit 6, instead of presenting zero usage.
+`partial` and `stale` results include their status with the reported figures.
 
 In JSON, `data.variable` names the variable that the application reads (see
 [Configuration ownership](#configuration-ownership)). A project with no active

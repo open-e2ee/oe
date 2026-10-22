@@ -61,9 +61,10 @@ var commandSurface = []commandSpec{
 	{"link", "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
 	}},
-	{"project", "List the Relay projects of the organization of the session, read one, or print a Relay connection URL.", []string{
+	{"project", "List the Relay projects of the organization of the session, read one, show usage, or print a Relay connection URL.", []string{
 		"oe project list",
 		"oe project show [PROJECT] [--env sandbox|production]",
+		"oe project usage [PROJECT] [--env sandbox|production]",
 		"oe project connection [PROJECT] [--env sandbox|production]",
 	}},
 	{"config", "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing.", []string{

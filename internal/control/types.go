@@ -16,6 +16,7 @@ type API interface {
 	Plan(context.Context, CredentialRequest, PlanRequest) (Plan, error)
 	Deploy(context.Context, CredentialRequest, DeployRequest) (Deployment, error)
 	GetProject(context.Context, CredentialRequest, string) (Project, error)
+	ProjectUsage(context.Context, CredentialRequest, string, string) (Usage, error)
 	ListProjects(context.Context, CredentialRequest) ([]ProjectSummary, error)
 	Notifications(context.Context, CredentialRequest, string, string) (NotificationConfiguration, error)
 	ConfigureNotifications(context.Context, CredentialRequest, string, NotificationConfigurationRequest) (NotificationConfiguration, error)
@@ -137,6 +138,38 @@ type Project struct {
 	Production *ProjectEnvironment `json:"production,omitempty"`
 	Slug       string              `json:"slug"`
 	Writer     string              `json:"writer"`
+}
+
+// Usage is the current Relay billing-period snapshot. A nil Reported value
+// means the reporting service could not provide trustworthy figures.
+type Usage struct {
+	Project     string         `json:"project"`
+	Environment string         `json:"environment"`
+	Period      string         `json:"period"`
+	Status      string         `json:"status"`
+	Reported    *UsageReported `json:"reported"`
+	Coverage    *UsageCoverage `json:"coverage"`
+	Limits      *UsageLimits   `json:"limits"`
+}
+
+type UsageReported struct {
+	DeliveryUnits        *string `json:"deliveryUnits"`
+	AttachmentOperations *string `json:"attachmentOperations"`
+	RelayMAU             *string `json:"relayMau"`
+	LiveBytes            string  `json:"liveBytes"`
+}
+
+type UsageCoverage struct {
+	Kind              string `json:"kind"`
+	RegisteredSources int    `json:"registeredSources"`
+	ReportedSources   int    `json:"reportedSources"`
+}
+
+type UsageLimits struct {
+	DeliveryUnits        int `json:"deliveryUnits"`
+	AttachmentOperations int `json:"attachmentOperations"`
+	RelayMAU             int `json:"relayMau"`
+	StorageBytes         int `json:"storageBytes"`
 }
 
 // ProjectEnvironment is one environment of a project read. The Production
