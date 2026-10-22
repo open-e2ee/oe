@@ -48,7 +48,8 @@ var commandSurface = []commandSpec{
 		"oe auth status",
 		"oe auth logout",
 	}},
-	{"org", "List the organizations of the account, or move the stored session to another organization. ORG is an ID or a name that only one organization has. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.", []string{
+	{"org", "Show the organization of the current session, list the organizations of the account, or move the stored session to another organization. ORG is an ID or a unique name. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.", []string{
+		"oe org show",
 		"oe org list",
 		"oe org switch [ORG]",
 	}},
@@ -61,7 +62,7 @@ var commandSurface = []commandSpec{
 	{"link", "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
 	}},
-	{"project", "List the Relay projects of the organization of the session, read one, show usage, or print a Relay connection URL.", []string{
+	{"project", "Show the linked Relay project, list the projects of the organization of the session, show usage, or print a Relay connection URL.", []string{
 		"oe project list",
 		"oe project show [PROJECT] [--env sandbox|production]",
 		"oe project usage [PROJECT] [--env sandbox|production]",
@@ -96,6 +97,73 @@ var globalFlagSurface = []globalFlagSpec{
 	{"--env sandbox|production", "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."},
 	{"--control-url URL", "Use another control API. It must use HTTPS except on loopback."},
 	{"-h, --help", "Show help."},
+	{"--version", "Print the CLI version."},
+}
+
+// aliasesByCommand names the human-friendly forms by their command path.
+var aliasesByCommand = map[string][]string{
+	"auth status":          {"oe auth"},
+	"org show":             {"oe org", "oe org view"},
+	"org list":             {"oe orgs", "oe organizations"},
+	"project show":         {"oe project", "oe app", "oe project view [PROJECT]", "oe app show [PROJECT]", "oe app view [PROJECT]"},
+	"project list":         {"oe projects", "oe apps", "oe app list", "oe projects list", "oe apps list"},
+	"project usage":        {"oe app usage [PROJECT]"},
+	"project connection":   {"oe app connection [PROJECT]"},
+	"notifications status": {"oe notifications"},
+	"agent setup":          {"oe agent", "oe agent status"},
+}
+
+// normalizeCommand maps read-only shortcuts and alternate names to the
+// command that owns their behavior and JSON command path.
+func normalizeCommand(command string, args []string) (string, []string) {
+	switch command {
+	case "app":
+		command = "project"
+	case "projects", "apps":
+		command = "project"
+		if len(args) == 0 || args[0] != "list" {
+			args = append([]string{"list"}, args...)
+		}
+	case "orgs", "organizations":
+		command, args = "org", append([]string{"list"}, args...)
+	}
+	switch command {
+	case "project":
+		if len(args) == 0 {
+			args = []string{"show"}
+		} else if args[0] == "view" {
+			args[0] = "show"
+		}
+	case "auth":
+		if len(args) == 0 {
+			args = []string{"status"}
+		}
+	case "org":
+		if len(args) == 0 {
+			args = []string{"show"}
+		} else if args[0] == "view" {
+			args[0] = "show"
+		}
+	case "notifications":
+		if len(args) == 0 {
+			args = []string{"status"}
+		}
+	case "agent":
+		if len(args) == 0 {
+			args = []string{"setup", "--check"}
+		} else if args[0] == "status" {
+			args = append([]string{"setup", "--check"}, args[1:]...)
+		}
+	}
+	return command, args
+}
+
+func commandAliases(spec commandSpec) []string {
+	var aliases []string
+	for _, usage := range spec.Usage {
+		aliases = append(aliases, aliasesByCommand[commandPath(usage)]...)
+	}
+	return aliases
 }
 
 var exitCodeSurface = []exitCodeSpec{
@@ -161,6 +229,9 @@ func (r *runner) help() error {
 	text.WriteString("Usage: oe <command> [arguments] [global flags]\n\nCommands:\n")
 	for _, spec := range commandSurface {
 		fmt.Fprintf(&text, "  %-14s %s\n", spec.Name, spec.Summary)
+		if aliases := commandAliases(spec); len(aliases) > 0 {
+			fmt.Fprintf(&text, "      Also: %s\n", strings.Join(aliases, ", "))
+		}
 	}
 	text.WriteString("\nGlobal flags (before or after the command):\n")
 	for _, flag := range globalFlagSurface {
@@ -181,6 +252,7 @@ func (r *runner) help() error {
 	}
 	return r.out.Success("help", message, map[string]any{
 		"commands":             commandSurface,
+		"aliases":              aliasesByCommand,
 		"globalFlags":          globalFlagSurface,
 		"exitCodes":            exitCodeSurface,
 		"environmentVariables": variableSurface,
@@ -188,6 +260,12 @@ func (r *runner) help() error {
 }
 
 func (r *runner) commandHelp(name string) error {
+	switch name {
+	case "app", "apps", "projects":
+		name = "project"
+	case "orgs", "organizations":
+		name = "org"
+	}
 	spec, ok := lookupCommand(name)
 	if !ok {
 		return unknownCommand(name)
@@ -195,8 +273,13 @@ func (r *runner) commandHelp(name string) error {
 	message := spec.Summary
 	if r.out.Mode() == output.Text {
 		message += "\n\nUsage:\n  " + strings.Join(spec.Usage, "\n  ")
+		if aliases := commandAliases(spec); len(aliases) > 0 {
+			message += "\n\nAlso: " + strings.Join(aliases, ", ")
+		}
 	}
-	return r.out.Success(spec.Name, message, map[string]any{
-		"name": spec.Name, "summary": spec.Summary, "usage": spec.Usage,
-	})
+	data := map[string]any{"name": spec.Name, "summary": spec.Summary, "usage": spec.Usage}
+	if aliases := commandAliases(spec); len(aliases) > 0 {
+		data["aliases"] = aliases
+	}
+	return r.out.Success(spec.Name, message, data)
 }

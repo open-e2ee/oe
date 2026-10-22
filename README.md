@@ -80,6 +80,7 @@ oe new                  create a project and its Sandbox environment, and write 
 oe auth login           log in with a browser, store the session in the OS keychain, and accept the terms; --organization selects the organization
 oe auth status          show the person, the organizations, the terms state, and where the session is
 oe auth logout          remove the stored session
+oe org show             show the organization selected in the current session
 oe org list             list the organizations of the account, and mark the current one
 oe org switch [ORG]     move the stored session to another organization
 oe doctor               check project, environment, connection, credentials, and control-plane health; --wait waits for the first acknowledged Sandbox message
@@ -96,6 +97,25 @@ oe agent setup          install the OpenE2EE skills for coding agents; --check w
 oe version              print the CLI version
 oe help [COMMAND]       show every command, or the usage of one command
 ```
+
+Aliases keep the canonical command's data, exit status, and JSON `command` value.
+
+| Canonical command                 | Aliases                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `oe project show [PROJECT]`       | `oe project`, `oe app`, `oe project view [PROJECT]`, `oe app show [PROJECT]`, `oe app view [PROJECT]` |
+| `oe project list`                 | `oe projects`, `oe apps`, `oe app list`, `oe projects list`, `oe apps list`                           |
+| `oe project usage [PROJECT]`      | `oe app usage [PROJECT]`                                                                              |
+| `oe project connection [PROJECT]` | `oe app connection [PROJECT]`                                                                         |
+| `oe auth status`                  | `oe auth`                                                                                             |
+| `oe org show`                     | `oe org`, `oe org view`                                                                               |
+| `oe org list`                     | `oe orgs`, `oe organizations`                                                                         |
+| `oe notifications status`         | `oe notifications`                                                                                    |
+| `oe agent setup --check`          | `oe agent`, `oe agent status`                                                                         |
+
+A project read without `PROJECT` uses the local config. It never picks another
+project from the account. `oe project my-chat` is invalid. Use
+`oe project show my-chat`. `oe agent` and `oe agent status` write no files. `oe help --json`
+lists aliases in `data.aliases`.
 
 `oe help` lists each command with its usage, the global flags, the exit codes,
 and the environment variables. `oe help --json` returns the same surface as

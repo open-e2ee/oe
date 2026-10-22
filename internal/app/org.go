@@ -17,9 +17,14 @@ import (
 
 func (r *runner) org(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usageError("org", "name an org command: list or switch")
+		return usageError("org", "name an org command: show, list, or switch")
 	}
 	switch args[0] {
+	case "show":
+		if err := parseFlags(newFlags("org show"), "org", args[1:]); err != nil {
+			return err
+		}
+		return r.orgShow(ctx)
 	case "list":
 		if err := parseFlags(newFlags("org list"), "org", args[1:]); err != nil {
 			return err
@@ -37,6 +42,28 @@ func (r *runner) org(ctx context.Context, args []string) error {
 	default:
 		return usageError("org", fmt.Sprintf("unknown org command %q", args[0]))
 	}
+}
+
+// orgShow reads only the organization selected in the current session.
+func (r *runner) orgShow(ctx context.Context) error {
+	value, err := r.access(ctx, "", false)
+	if err != nil {
+		return err
+	}
+	session, err := r.api.Session(ctx, control.CredentialRequest{AccessToken: value.AccessToken})
+	if err != nil {
+		return err
+	}
+	if session.Organization.ID == "" {
+		return &problem{code: "ORGANIZATION_REQUIRED", exit: exitFailure, next: "oe org switch", message: "the session has no selected organization; run oe org switch"}
+	}
+	message := "Organization: " + session.Organization.Name
+	if session.Role != "" {
+		message += " (role: " + session.Role + ")"
+	}
+	return r.out.Success("org show", message, map[string]any{
+		"organization": map[string]any{"id": session.Organization.ID, "name": session.Organization.Name, "role": nullable(session.Role)},
+	})
 }
 
 // orgList prints the organizations of the person, with a marker on the
