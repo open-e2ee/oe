@@ -58,6 +58,7 @@ type runner struct {
 	in          io.Reader
 	interactive func() bool
 	out         *output.Writer
+	plainOut    io.Writer
 	errOut      io.Writer
 	openURL     func(string) error
 	sleep       func(context.Context, time.Duration) error
@@ -178,7 +179,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 	// follows another reads the next line and not the buffer of the first.
 	r := &runner{
 		api: api, http: dependencies.HTTP, store: dependencies.Store, in: bufio.NewReader(dependencies.In),
-		interactive: dependencies.Interactive, out: writer, errOut: dependencies.Err,
+		interactive: dependencies.Interactive, out: writer, plainOut: dependencies.Out, errOut: dependencies.Err,
 		openURL: dependencies.OpenURL, sleep: dependencies.Sleep, now: dependencies.Now,
 		getenv: dependencies.Getenv, symlink: dependencies.Symlink, directory: dependencies.WorkingDir,
 		controlURL: global.controlURL, environment: global.environment,
@@ -206,6 +207,9 @@ func fail(writer *output.Writer, command string, args []string, environment stri
 
 func (r *runner) execute(ctx context.Context, command string, args []string) error {
 	if containsHelp(args) {
+		if r.out.Mode() == output.Text {
+			return r.humanCommandHelp(command, args)
+		}
 		return r.commandHelp(command)
 	}
 	switch command {
@@ -214,6 +218,9 @@ func (r *runner) execute(ctx context.Context, command string, args []string) err
 			return usageError("help", "help takes at most one command")
 		}
 		if len(args) == 1 {
+			if r.out.Mode() == output.Text {
+				return r.humanTopicHelp(args[0])
+			}
 			return r.commandHelp(args[0])
 		}
 		return r.help()
@@ -222,19 +229,31 @@ func (r *runner) execute(ctx context.Context, command string, args []string) err
 			return usageError("version", "version takes no arguments")
 		}
 		return r.out.Success("version", Version, map[string]any{"version": Version})
-	case "new":
-		return r.new(ctx, args)
 	case "init", "setup", "create", "sandbox":
 		return r.retired(command)
-	case "auth":
-		return r.auth(ctx, args)
-	case "config":
-		return r.config(ctx, args)
 	case "plan", "deploy", "diff":
 		return &problem{
 			code: "USAGE_ERROR", exit: exitUsage, next: "oe config push --dry-run",
 			message: "oe " + command + " was replaced by oe config push; oe config push --dry-run shows the changes",
 		}
+	default:
+		if _, known := lookupCommand(command); !known {
+			return unknownCommand(command)
+		}
+		return r.executeCommandTree(ctx, command, args)
+	}
+}
+
+// runCanonical keeps each command's existing local parser and domain handler.
+// Cobra selects the command path before this boundary.
+func (r *runner) runCanonical(ctx context.Context, command string, args []string) error {
+	switch command {
+	case "new":
+		return r.new(ctx, args)
+	case "auth":
+		return r.auth(ctx, args)
+	case "config":
+		return r.config(ctx, args)
 	case "doctor":
 		return r.doctor(ctx, args)
 	case "identity":

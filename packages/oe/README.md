@@ -14,9 +14,10 @@ and `oe config push` to apply the environment sections of the config.
 the file loads without `node_modules`. Run `oe config pull` to write the Relay
 policy of each active environment from the console into the file.
 
-Run `oe help` for every command, its usage, the exit codes, and the environment
-variables. Under a coding agent, or with `--agent yes`, `oe` writes JSON by
-default: each run writes one JSON document to stdout with a stable `code` and,
-when there is one, the `next` command. Run
+Run `oe help` for short command descriptions, exit codes, and environment
+variables. Run `oe help COMMAND` for scoped usage and flags. Under a coding
+agent, or with `--agent yes`, `oe` writes JSON by default. Each run writes one
+JSON document to stdout with a stable `code` and, when there is one, the `next`
+command. Run
 `oe project connection --env sandbox` to print the Relay connection URL of an
 environment.
