@@ -525,7 +525,8 @@ The repository also contains a Homebrew formula for the native command.
 
 ## Development
 
-Development needs Go 1.26 or later, Node 22.18 or later, and npm 11 or later.
+Development needs Go 1.26.10 or later, Node 22.18 or later, and npm 11 or later.
+CI and release builds use Go 1.27.3; CI also tests Go 1.26.10.
 
 ```bash
 go test -race ./...

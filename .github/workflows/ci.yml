@@ -25,7 +25,7 @@ jobs:
       - id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.7
+          go-version: 1.27.3
           cache: false
       - id: go-paths
         shell: bash
@@ -60,6 +60,23 @@ jobs:
             ${{ steps.go-paths.outputs.build }}
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
+  # Keep the documented minimum Go line buildable while release builds use
+  # the current stable patch release.
+  minimum-go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.10
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: go test ./...
+
   # The config loader runs on the node on PATH. It must work on the oldest
   # supported Node.js and on the current release.
   config-node:
@@ -74,7 +91,7 @@ jobs:
       - id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.7
+          go-version: 1.27.3
           cache: false
       - id: go-paths
         run: |
@@ -113,7 +130,7 @@ jobs:
       - id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.7
+          go-version: 1.27.3
           cache: false
       - id: go-paths
         run: |
