@@ -36,17 +36,31 @@ leaf_help=$(COLUMNS=80 "$published_binary" --agent no project usage --help)
 for rendered in "$root_help" "$group_help" "$leaf_help"; do
   printf '%s\n' "$rendered" | awk 'length($0) > 80 { failed = 1 } END { exit failed }'
 done
-[[ "$root_help" == *"Global flags"* && "$root_help" == *"Exit codes"* && "$root_help" == *"Environment variables"* ]]
-[[ "$group_help" == *"oe project"* && "$leaf_help" == *"oe project usage"* ]]
-# Compare machine help with the captured pre-change contract.
+[[ "$root_help" == *"Global flags"* && "$root_help" == *"Exit codes"* && "$root_help" == *"Environment variables"* ]] || {
+  echo "published root help is incomplete" >&2
+  exit 1
+}
+[[ "$group_help" == *"oe project"* && "$leaf_help" == *"oe project usage"* ]] || {
+  echo "published project help is incomplete" >&2
+  exit 1
+}
+# Check the pinned release's machine-help schema without depending on the
+# checkout's evolving command list.
 ruby -rjson -ropen3 -e '
-  rows = JSON.parse(File.read(ARGV[0]))
-  { "bare help" => ["--json", "help"], "project --help" => ["--json", "project", "--help"] }.each do |name, args|
-    expected = rows.find { |row| row["mode"] == "json" && row["name"] == name }.fetch("stdout")
-    output, error, status = Open3.capture3(ARGV[1], *args)
-    abort "unexpected JSON help for #{name}: #{error}" unless status.success? && error.empty? && output == expected
+  { "help" => ["--json", "help"], "project" => ["--json", "project", "--help"] }.each do |name, args|
+    output, error, status = Open3.capture3(ARGV[0], *args)
+    abort "unexpected JSON help for #{name}: #{error}" unless status.success? && error.empty? && !output.include?("\e")
+    event = JSON.parse(output)
+    abort "invalid #{name} envelope" unless event["status"] == "ok" && event["command"] == name && event["message"].is_a?(String)
+    data = event["data"]
+    abort "invalid #{name} data" unless data.is_a?(Hash)
+    if name == "help"
+      abort "incomplete root help" unless data["aliases"].is_a?(Hash) && %w[commands globalFlags exitCodes environmentVariables].all? { |key| data[key].is_a?(Array) }
+    else
+      abort "incomplete project help" unless data["name"] == "project" && data["summary"].is_a?(String) && data["usage"].is_a?(Array) && data["aliases"].is_a?(Array)
+    end
   end
-' "$repository_root/internal/app/testdata/cli_contract.json" "$published_binary"
+' "$published_binary"
 brew uninstall --formula --ignore-dependencies "$tap_name/oe"
 
 tar \
