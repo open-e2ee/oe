@@ -173,8 +173,8 @@ func TestCLIContract(t *testing.T) {
 			})
 			actual = append(actual, cliContract{
 				test.name, mode.name, args, exit,
-				strings.ReplaceAll(stdout.String(), directory, "<WORKDIR>"),
-				strings.ReplaceAll(stderr.String(), directory, "<WORKDIR>"),
+				normalizeContractDirectory(stdout.String(), directory),
+				normalizeContractDirectory(stderr.String(), directory),
 			})
 		}
 	}
@@ -212,6 +212,26 @@ func TestCLIContract(t *testing.T) {
 		}
 		if !reflect.DeepEqual(actual[i], expected[i]) {
 			t.Errorf("%s/%s: got exit=%d stdout=%q stderr=%q; want exit=%d stdout=%q stderr=%q", actual[i].Mode, actual[i].Name, actual[i].Exit, actual[i].Stdout, actual[i].Stderr, expected[i].Exit, expected[i].Stdout, expected[i].Stderr)
+		}
+	}
+}
+
+func normalizeContractDirectory(output, directory string) string {
+	encoded, _ := json.Marshal(directory)
+	output = strings.ReplaceAll(output, string(encoded[1:len(encoded)-1]), "<WORKDIR>")
+	return strings.ReplaceAll(output, directory, "<WORKDIR>")
+}
+
+func TestNormalizeContractDirectory(t *testing.T) {
+	for _, test := range []struct {
+		output, directory, want string
+	}{
+		{`missing in /tmp/oe-test`, `/tmp/oe-test`, `missing in <WORKDIR>`},
+		{`missing in C:\Users\runner\Temp\oe-test`, `C:\Users\runner\Temp\oe-test`, `missing in <WORKDIR>`},
+		{`{"error":"missing in C:\\Users\\runner\\Temp\\oe-test"}`, `C:\Users\runner\Temp\oe-test`, `{"error":"missing in <WORKDIR>"}`},
+	} {
+		if got := normalizeContractDirectory(test.output, test.directory); got != test.want {
+			t.Errorf("normalizeContractDirectory(%q, %q) = %q, want %q", test.output, test.directory, got, test.want)
 		}
 	}
 }
