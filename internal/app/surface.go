@@ -224,6 +224,13 @@ func lookupCommand(name string) (commandSpec, bool) {
 }
 
 func (r *runner) help() error {
+	if r.out.Mode() == output.Text {
+		return r.out.Success("help", r.humanRootHelp(), map[string]any{
+			"commands": commandSurface, "aliases": aliasesByCommand,
+			"globalFlags": globalFlagSurface, "exitCodes": exitCodeSurface,
+			"environmentVariables": variableSurface,
+		})
+	}
 	var text strings.Builder
 	text.WriteString("oe manages OpenE2EE Signal Protocol Relay projects from a repository.\n\n")
 	text.WriteString("Usage: oe <command> [arguments] [global flags]\n\nCommands:\n")
