@@ -117,9 +117,10 @@ project from the account. `oe project my-chat` is invalid. Use
 `oe project show my-chat`. `oe agent` and `oe agent status` write no files. `oe help --json`
 lists aliases in `data.aliases`.
 
-`oe help` lists each command with its usage, the global flags, the exit codes,
-and the environment variables. `oe help --json` returns the same surface as
-data. `oe COMMAND --help` shows one command. `oe login`, `oe logout`, and
+`oe help` lists short command descriptions and global flags. It also shows exit
+codes and environment variables. `oe help COMMAND` and `oe COMMAND --help` show
+scoped usage, flags, and aliases. `oe help --json` returns the unchanged command
+surface as data. `oe login`, `oe logout`, and
 `oe whoami` fail with exit 2, and `next` names the `oe auth` command.
 
 Global flags can come before or after the command. Global `--json` emits one
