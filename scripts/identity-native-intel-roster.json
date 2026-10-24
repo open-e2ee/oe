@@ -1032,9 +1032,7 @@
       "TestStoreUnixCurrentDirectoryAssociationBeforeResolve",
       "TestStoreFullCASAndDetachedRead",
       "TestStoreCurrentNamespaceBetweenConfirmAndBegin",
-      "TestStoreCurrentNamespaceBeforeReceiptResolution"
-    ],
-    [
+      "TestStoreCurrentNamespaceBeforeReceiptResolution",
       "TestStoreCurrentNamespaceBeforeRetentionAndCancellationCAS",
       "TestStoreImmutableCancellationAndLateOriginalReceipt",
       "TestStoreLifecycleDispositionAndActualScope",
@@ -1059,7 +1057,9 @@
       "TestStoreKnownTemporaryBlocksMissingAssociation",
       "TestStoreValidStaleBackupCannotProveFreshness",
       "TestStoreCancellationBeforeNativeDirectoryCreates",
-      "TestAttemptStoreNativeActor",
+      "TestAttemptStoreNativeActor"
+    ],
+    [
       "TestStoreNativeInterruptionMatrix",
       "TestStoreNativeBootstrapAndEnrollmentInterruptions",
       "TestStoreNativeContentionAndWinningOriginal",
