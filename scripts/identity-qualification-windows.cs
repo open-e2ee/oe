@@ -25,6 +25,7 @@ public static class IdentityStoreFixture {
     [StructLayout(LayoutKind.Sequential)] struct LUID { public uint low; public int high; }
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr value);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern uint GetErrorMode();
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateEventW(ref SA security,bool manualReset,bool initialState,string name);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
     [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool LookupPrivilegeValue(string system,string name,out LUID luid);
@@ -441,10 +442,96 @@ public static class IdentityStoreFixture {
             else if(state!=258)throw Error("observe standard startup event");
         }
     }
+    public sealed class StandardChildTokenMetadata {
+        public bool available { get; internal set; }
+        public string code { get; internal set; }
+        public int win32Code { get; internal set; }
+        public string sid { get; internal set; }
+        public bool? elevated { get; internal set; }
+        public uint? elevationType { get; internal set; }
+        public bool tokenClosed { get; internal set; }
+        internal StandardChildTokenMetadata() { code="TOKEN_NOT_QUERIED";tokenClosed=true; }
+    }
+    static StandardChildTokenMetadata ReadStandardChildToken(IntPtr process,List<string> errors) {
+        var result=new StandardChildTokenMetadata();IntPtr token=IntPtr.Zero,memory=IntPtr.Zero;
+        try {
+            if(!OpenProcessToken(process,0x0008,out token)) {
+                result.code="TOKEN_OPEN_FAILED";result.win32Code=Marshal.GetLastWin32Error();return result;
+            }
+            result.tokenClosed=false;
+            using(var identity=new WindowsIdentity(token)) {
+                var user=identity.User;
+                if(user==null||user.BinaryLength>68) {result.code="TOKEN_SID_UNAVAILABLE";return result;}
+                string sid=user.Value;
+                if(sid.Length>184) {result.code="TOKEN_SID_UNAVAILABLE";return result;}
+                result.sid=sid;
+            }
+            // These two native records contain one DWORD each, with no pointers.
+            memory=Marshal.AllocHGlobal(4);int returned;
+            if(!GetTokenInformation(token,20,memory,4,out returned)) {
+                result.code="TOKEN_ELEVATION_FAILED";result.win32Code=Marshal.GetLastWin32Error();return result;
+            }
+            if(returned!=4) {result.code="TOKEN_ELEVATION_LENGTH";return result;}
+            result.elevated=Marshal.ReadInt32(memory)!=0;
+            if(!GetTokenInformation(token,18,memory,4,out returned)) {
+                result.code="TOKEN_ELEVATION_TYPE_FAILED";result.win32Code=Marshal.GetLastWin32Error();return result;
+            }
+            if(returned!=4) {result.code="TOKEN_ELEVATION_TYPE_LENGTH";return result;}
+            uint type=unchecked((uint)Marshal.ReadInt32(memory));
+            if(type<1||type>3) {result.code="TOKEN_ELEVATION_TYPE_UNKNOWN";return result;}
+            result.elevationType=type;result.available=true;result.code="AVAILABLE";
+        } catch {result.available=false;result.code="TOKEN_READ_UNAVAILABLE";}
+        finally {
+            try {if(memory!=IntPtr.Zero)Marshal.FreeHGlobal(memory);}
+            finally {
+                if(token!=IntPtr.Zero) {
+                    try {
+                        if(CloseHandle(token))result.tokenClosed=true;
+                        else {
+                            result.available=false;result.code="TOKEN_CLOSE_FAILED";result.win32Code=Marshal.GetLastWin32Error();
+                            errors.Add("standard child diagnostic token close failed");
+                        }
+                    } catch {
+                        result.available=false;result.code="TOKEN_CLOSE_UNAVAILABLE";
+                        errors.Add("standard child diagnostic token close unavailable");
+                    }
+                }
+            }
+        }
+        return result;
+    }
+    public sealed class StandardProcessStateMetadata {
+        public bool available { get; internal set; }
+        public string code { get; internal set; }
+        public int win32Code { get; internal set; }
+        public uint? waitState { get; internal set; }
+        public uint? exitCode { get; internal set; }
+        internal StandardProcessStateMetadata() {code="PROCESS_NOT_CREATED";}
+    }
+    static StandardProcessStateMetadata ReadStandardProcessState(IntPtr process) {
+        var result=new StandardProcessStateMetadata();
+        if(process==IntPtr.Zero)return result;
+        try {
+            uint wait=WaitForSingleObject(process,0);
+            if(wait==0||wait==258)result.waitState=wait;
+            else {
+                result.code="PROCESS_WAIT_UNAVAILABLE";
+                if(wait==0xffffffff)result.win32Code=Marshal.GetLastWin32Error();
+            }
+            uint exit;
+            if(GetExitCodeProcess(process,out exit))result.exitCode=exit;
+            else {result.code="PROCESS_EXIT_UNAVAILABLE";result.win32Code=Marshal.GetLastWin32Error();}
+            result.available=result.waitState.HasValue&&result.exitCode.HasValue;
+            if(result.available)result.code="AVAILABLE";
+        } catch {result.available=false;result.code="PROCESS_STATE_READ_UNAVAILABLE";}
+        return result;
+    }
     public static object RunAsStandard(string user,string password,string executable,string[] argv,string cwd,int milliseconds,string desktopName,string startupSID=null,string startupNonce=null) {
         IntPtr job=IntPtr.Zero,limits=IntPtr.Zero;
         PI child=new PI(); bool assigned=false,empty=false; uint status=0xffffffff;
         long profileMilliseconds=-1; var errors=new List<string>();
+        uint? resumePreviousSuspendCount=null,brokerErrorModeAtCreate=null;
+        var childToken=new StandardChildTokenMetadata();var processBeforeCleanup=new StandardProcessStateMetadata();
         var startupEvents=new IntPtr[4]; var startupObserved=Enumerable.Repeat(-1L,4).ToArray();
         var startupLabels=Enumerable.Range(0,4).Select(index=>UnavailableMandatoryLabel("LABEL_NOT_QUERIED")).ToArray();
         System.Diagnostics.Stopwatch startupWatch=null; bool startupEventsClosed=true;
@@ -461,6 +548,7 @@ public static class IdentityStoreFixture {
             if(String.IsNullOrEmpty(desktopName)||!desktopName.StartsWith("ca8_station_",StringComparison.Ordinal))throw new Exception("owned desktop locator unavailable");
             IntPtr desktopText=Marshal.StringToHGlobalUni(desktopName);
             var startup=new SI{cb=Marshal.SizeOf<SI>(),desktop=desktopText};
+            try {brokerErrorModeAtCreate=GetErrorMode();}catch {brokerErrorModeAtCreate=null;}
             var profileWatch=System.Diagnostics.Stopwatch.StartNew();
             try {
                 if(!CreateProcessWithLogonW(user,".",password,1,executable,command,0x08000004,IntPtr.Zero,cwd,ref startup,out child))
@@ -470,7 +558,10 @@ public static class IdentityStoreFixture {
             if(profileMilliseconds>60000)throw new Exception("standard profile stage exceeded its logical bound");
             if(!AssignProcessToJobObject(job,child.process))throw Error("assign suspended standard process to owned job");
             assigned=true;
-            if(ResumeThread(child.thread)==0xffffffff)throw Error("resume standard process");
+            childToken=ReadStandardChildToken(child.process,errors);
+            if(!childToken.tokenClosed)throw new Exception("standard child diagnostic token did not close");
+            uint previousSuspendCount=ResumeThread(child.thread);resumePreviousSuspendCount=previousSuspendCount;
+            if(previousSuspendCount==0xffffffff)throw Error("resume standard process");
             var watch=System.Diagnostics.Stopwatch.StartNew(); startupWatch=watch;
             while(true) {
                 uint wait=WaitForSingleObject(child.process,50);
@@ -482,6 +573,7 @@ public static class IdentityStoreFixture {
             if(!GetExitCodeProcess(child.process,out status))throw Error("standard process exit status");
         } catch(Exception error){errors.Add(error.ToString());}
         finally {
+            processBeforeCleanup=ReadStandardProcessState(child.process);
             empty=CloseOwnedProcessJob(job,child,assigned,errors);
             try { ObserveStandardStartup(startupEvents,startupObserved,startupWatch); }
             catch(Exception error){errors.Add(error.ToString());}
@@ -492,6 +584,8 @@ public static class IdentityStoreFixture {
             if(limits!=IntPtr.Zero)Marshal.FreeHGlobal(limits);
         }
         return new {status=status,pid=child.pid,jobEmpty=empty,profileMilliseconds=profileMilliseconds,errors=errors.ToArray(),
+                    launchDiagnostics=new {resumePreviousSuspendCount=resumePreviousSuspendCount,brokerErrorModeAtCreate=brokerErrorModeAtCreate,
+                        childToken=childToken,processBeforeCleanup=processBeforeCleanup},
                     startupEventsClosed=startupEventsClosed,
                     startupPhases=StandardStartupPhases.Select((phase,index)=>new {phase=phase,observedMilliseconds=startupObserved[index],mandatoryLabel=startupLabels[index]}).ToArray()};
     }
