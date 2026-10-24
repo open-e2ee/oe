@@ -62,6 +62,14 @@ for (const [goos, goarch] of targets) {
     version,
   );
 
+  const archiveEntries = [executable];
+  if (goos === "darwin") {
+    await cp(
+      path.join(root, "licenses/purego-v0.11.1.txt"),
+      path.join(binaryDirectory, "THIRD_PARTY_NOTICES.txt"),
+    );
+    archiveEntries.push("THIRD_PARTY_NOTICES.txt");
+  }
   const archive = `oe_${version}_${goos}_${goarch}.tar.gz`;
   const archived = spawnSync(
     "tar",
@@ -70,7 +78,7 @@ for (const [goos, goarch] of targets) {
       path.join(output, "artifacts", archive),
       "-C",
       binaryDirectory,
-      executable,
+      ...archiveEntries,
     ],
     {
       stdio: "inherit",

@@ -19,7 +19,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-26, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: setup-go
@@ -47,7 +47,29 @@ jobs:
           package-manager-cache: false
       - name: Show Node.js version
         run: node --version
-      - run: go test -race ./...
+      - name: Full race suite with owned Unix fixtures
+        id: store-unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/test-identity-store-unix.sh race ${{ runner.os == 'Linux' && 'linux' || 'darwin' }} ${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
+      - name: Full race suite with owned Windows fixtures
+        id: store-windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-identity-store-windows.ps1 -FixtureProfile race -ExpectedArchitecture amd64
+      - name: Preserve identity store evidence
+        if: always() && (steps.store-unix.outputs.evidence-path != '' || steps.store-windows.outputs.evidence-path != '')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: identity-store-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}
+            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/volume/**
+            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/fixture.vhdx
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
       - run: go vet ./...
       - run: go build -trimpath -o bin/oe${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/oe
       - name: Native npm package install
@@ -66,7 +88,7 @@ jobs:
   # the current stable patch release.
   minimum-go:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -79,7 +101,71 @@ jobs:
           package-manager-cache: false
       - name: Show Node.js version
         run: node --version
-      - run: go test ./...
+      - name: Minimum Go full suite and six CGO0 builds
+        id: store-unix
+        shell: bash
+        run: bash scripts/test-identity-store-unix.sh minimum linux amd64
+      - name: Preserve identity store evidence
+        if: always() && (steps.store-unix.outputs.evidence-path != '' || steps.store-windows.outputs.evidence-path != '')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: identity-store-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}
+            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/volume/**
+            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/fixture.vhdx
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each cell runs actual native CGO0 storage code. Windows arm64 has no race cell.
+  identity-store-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux, arch: amd64 }
+          - { os: ubuntu-24.04-arm, target: linux, arch: arm64 }
+          - { os: macos-26, target: darwin, arch: arm64 }
+          - { os: macos-26-intel, target: darwin, arch: amd64 }
+          - { os: windows-2025, target: windows, arch: amd64 }
+          - { os: windows-11-arm, target: windows, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.22.1"
+          package-manager-cache: false
+      - name: Native Unix storage suite
+        id: store-unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/test-identity-store-unix.sh native ${{ matrix.target }} ${{ matrix.arch }}
+      - name: Native Windows storage suite
+        id: store-windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-identity-store-windows.ps1 -FixtureProfile native -ExpectedArchitecture ${{ matrix.arch }}
+      - name: Preserve identity store evidence
+        if: always() && (steps.store-unix.outputs.evidence-path != '' || steps.store-windows.outputs.evidence-path != '')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: identity-store-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}
+            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/volume/**
+            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/fixture.vhdx
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
   # The config loader runs on the node on PATH. It must work on the oldest
   # supported Node.js and on the current release.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -56,6 +57,72 @@ test("stages six native optional packages without a postinstall downloader", asy
       });
       assert.equal(packed.status, 0, packed.stderr);
       tarballs.push(path.join(packageDirectory, packed.stdout.trim()));
+    }
+    const notice = await readFile(
+      path.join(import.meta.dirname, "../licenses/purego-v0.11.1.txt"),
+    );
+    assert.equal(notice.length, 13211);
+    assert.equal(
+      createHash("sha256").update(notice).digest("hex"),
+      "293dc5471fc6bf3e3002e6115e3b9fbea1c2817b7878ab8d8e3dffedbd7bfd04",
+    );
+    for (const [goos, goarch, npmName] of [
+      ["darwin", "arm64", "oe-darwin-arm64"],
+      ["darwin", "amd64", "oe-darwin-x64"],
+      ["linux", "arm64", "oe-linux-arm64"],
+      ["linux", "amd64", "oe-linux-x64"],
+      ["windows", "arm64", "oe-win32-arm64"],
+      ["windows", "amd64", "oe-win32-x64"],
+    ]) {
+      const archive = path.join(
+        directory,
+        "artifacts",
+        `oe_0.1.0-test.1_${goos}_${goarch}.tar.gz`,
+      );
+      const listed = spawnSync("tar", ["-tzf", archive], {
+        encoding: "utf8",
+        timeout: 30000,
+        maxBuffer: 1024 * 1024,
+      });
+      assert.equal(listed.status, 0, listed.stderr);
+      const executable = goos === "windows" ? "oe.exe" : "oe";
+      assert.deepEqual(
+        listed.stdout.trim().split("\n").sort(),
+        (goos === "darwin"
+          ? [executable, "THIRD_PARTY_NOTICES.txt"]
+          : [executable]
+        ).sort(),
+      );
+      if (goos !== "darwin") continue;
+      const archivedNotice = spawnSync(
+        "tar",
+        ["-xOzf", archive, "THIRD_PARTY_NOTICES.txt"],
+        { timeout: 30000, maxBuffer: 1024 * 1024 },
+      );
+      assert.equal(archivedNotice.status, 0, archivedNotice.stderr?.toString());
+      assert.deepEqual(archivedNotice.stdout, notice);
+      const packageDirectory = path.join(directory, "npm", npmName);
+      const packed = spawnSync(
+        "npm",
+        ["pack", "--silent", "--ignore-scripts"],
+        {
+          cwd: packageDirectory,
+          encoding: "utf8",
+          timeout: 30000,
+        },
+      );
+      assert.equal(packed.status, 0, packed.stderr);
+      const packedNotice = spawnSync(
+        "tar",
+        [
+          "-xOzf",
+          path.join(packageDirectory, packed.stdout.trim()),
+          "package/bin/THIRD_PARTY_NOTICES.txt",
+        ],
+        { timeout: 30000, maxBuffer: 1024 * 1024 },
+      );
+      assert.equal(packedNotice.status, 0, packedNotice.stderr?.toString());
+      assert.deepEqual(packedNotice.stdout, notice);
     }
     const install = path.join(directory, "install");
     const installed = spawnSync(
