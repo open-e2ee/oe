@@ -137,14 +137,15 @@ class IdentitySessionController:
         self.save('groups.json',self.groups)
         return session['empty']
 
-    def run(self, argv, limit=30, env=None, capture=False, monitor_volume=True):
+    def run(self, argv, limit=30, env=None, capture=False, monitor_volume=True, *,
+            cwd=None, phase_deadline=None, progress=None):
         if time.monotonic() >= self.outer_deadline: raise RuntimeError('Outer process deadline expired.')
         number = len(self.steps)
         if number >= self.stage_limit: raise RuntimeError('Owned stage count bound reached.')
         executable = pathlib.Path(argv[0]).resolve(strict=True)
         row = {'argv':argv, 'executableSHA256':hashlib.sha256(executable.read_bytes()).hexdigest(), 'limitSeconds':limit, 'startMonotonic':time.monotonic()}
         self.steps.append(row); self.save('stages.json', self.steps)
-        process = subprocess.Popen(argv, cwd=self.root, env=env or self.base_env, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(argv, cwd=self.root if cwd is None else cwd, env=env or self.base_env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         session = {'sid':process.pid,'leaderPID':process.pid,'expectedRootPGID':process.pid,'launchMechanism':'Popen(start_new_session=True)','empty':False}
         self.groups.append(session); self.save('groups.json',self.groups)
@@ -157,6 +158,19 @@ class IdentitySessionController:
             streams[name] = [(self.proof/f'{number:02d}.{name}').open('wb'), 0]
         reason = None
         deadline = min(self.outer_deadline, time.monotonic()+limit)
+        if phase_deadline is not None: deadline = min(deadline,phase_deadline)
+        first_byte, last_byte = None, None
+        next_progress = time.monotonic() if progress is not None else None
+        def report_progress(ended=False):
+            if progress is None: return
+            now = time.monotonic()
+            snapshot = {'atMonotonic':now,'sid':process.pid,'stage':number,
+                'startMonotonic':row['startMonotonic'],'effectiveDeadlineMonotonic':deadline,
+                'firstByteMonotonic':first_byte,'lastByteMonotonic':last_byte,
+                'stdoutBytes':streams['stdout'][1],'stderrBytes':streams['stderr'][1]}
+            if ended:
+                snapshot.update({'endedMonotonic':now,'ownedSessionEmpty':session['empty']})
+            progress(snapshot)
         try:
             while selector.get_map():
                 if time.monotonic() >= deadline: reason = 'PROCESS_DEADLINE'; break
@@ -164,9 +178,15 @@ class IdentitySessionController:
                     reason = 'OWNED_VOLUME_SPACE_FLOOR'; break
                 if sum(v[1] for v in streams.values()) > self.combined_limit:
                     reason = 'OUTPUT_LIMIT'; break
+                if progress is not None and time.monotonic() >= next_progress:
+                    report_progress(); next_progress = time.monotonic()+10
                 for key, _ in selector.select(.1):
                     chunk = os.read(key.fileobj.fileno(), 65536)
                     if not chunk: selector.unregister(key.fileobj); continue
+                    if progress is not None:
+                        now = time.monotonic()
+                        if first_byte is None: first_byte = now
+                        last_byte = now
                     stream = streams[key.data]
                     remaining = self.stream_limit-stream[1]
                     stream[0].write(chunk[:max(0,remaining)]); stream[1] += len(chunk)
@@ -180,6 +200,11 @@ class IdentitySessionController:
                 except subprocess.TimeoutExpired: reason = 'PROCESS_DEADLINE'
         finally:
             empty = self.finish_session(process,session)
+            if progress is not None:
+                try: report_progress(ended=True)
+                except BaseException as error:
+                    reason = reason or 'NATIVE_DIAGNOSTIC_FAILURE'
+                    row['diagnosticFailure'] = str(error)
             selector.close()
             for stream in streams.values(): stream[0].close()
             process.stdout.close(); process.stderr.close()

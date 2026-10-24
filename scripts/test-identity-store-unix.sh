@@ -15,7 +15,7 @@ if [[ $(id -u) != 0 ]]; then
     "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" "CA8_PROOF_PATH=$proof_path" \
     "$python_path" - "$script_path" "$@" <<'PY'
 import ctypes, errno, hashlib, json, os, pathlib, platform, plistlib, pwd
-import re, selectors, shutil, signal, stat, struct, subprocess, sys, time, uuid
+import re, resource, selectors, shutil, signal, stat, struct, subprocess, sys, time, uuid
 
 script, profile, expected_os, expected_arch = sys.argv[1:]
 started = time.monotonic()
@@ -88,7 +88,57 @@ session_spec.loader.exec_module(session_module)
 session_supervisor = session_module.IdentitySessionController(root, proof, base_env, outer_deadline,
     steps=steps, groups=groups, process_observers=process_observers,
     space_floor_reached=lambda: mounted and shutil.disk_usage(mount).free < 128*1024*1024)
-run = session_supervisor.run
+def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=None, phase=None, phase_deadline=None):
+    phases = {'native': ['native-compile','native-tool-prepare','native-build-info','native-execution'],
+              'race': ['full-cli-prewarm','full-race-execution']}
+    if phase is not None and phase not in phases.get(profile, []):
+        raise RuntimeError('Invalid test diagnostic phase.')
+    diagnostic = None
+    if phase is not None:
+        diagnostic = {'phase':phase,'cpuCount':os.cpu_count(),
+                      'usageScope':'Cumulative reaped supervisor children; includes its process observers, not live per-process CPU.',
+                      'maxRSSUnits':'native getrusage units; no cross-platform normalization',
+                      'samples':[],'firstByteMonotonic':None,'lastByteMonotonic':None}
+    def sample_progress(snapshot):
+        if len(diagnostic['samples']) >= 64: raise RuntimeError('Native diagnostic sample bound reached.')
+        now = snapshot['atMonotonic']
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        capacity = shutil.disk_usage(mount)
+        diagnostic.update({key:snapshot[key] for key in ['sid','stage','effectiveDeadlineMonotonic','firstByteMonotonic','lastByteMonotonic']})
+        diagnostic['samples'].append({'atMonotonic':now,'atUnixSeconds':time.time(),
+            'stdoutBytes':snapshot['stdoutBytes'],'stderrBytes':snapshot['stderrBytes'],
+            'silenceSeconds':now-(snapshot['lastByteMonotonic'] or snapshot['startMonotonic']),
+            'globalRemainingSeconds':outer_deadline-now,'loadAverage':list(os.getloadavg()),
+            'capacityBytes':{'total':capacity.total,'used':capacity.used,'free':capacity.free},
+            'reapedChildren':{'userSeconds':usage.ru_utime,'systemSeconds':usage.ru_stime,
+                'maxRSS':usage.ru_maxrss,'inputBlocks':usage.ru_inblock,'outputBlocks':usage.ru_oublock}})
+        if 'endedMonotonic' in snapshot:
+            diagnostic.update({key:snapshot[key] for key in ['endedMonotonic','ownedSessionEmpty']})
+        save(f"native-stage-{snapshot['stage']:02d}-progress.json",diagnostic)
+    return session_supervisor.run(argv,limit,env,capture,monitor_volume,
+        cwd=cwd,phase_deadline=phase_deadline,progress=sample_progress if phase is not None else None)
+
+def native_executable_input(path):
+    path = pathlib.Path(path)
+    if not path.is_absolute(): raise RuntimeError('Native executable input is not absolute.')
+    descriptor = os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= 128*1024*1024:
+            raise RuntimeError('Invalid bounded native executable input.')
+        digest = hashlib.sha256()
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor,min(1024*1024,remaining))
+            if not chunk: raise RuntimeError('Native executable read was incomplete.')
+            digest.update(chunk); remaining -= len(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns) != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns):
+            raise RuntimeError('Native executable changed during input readback.')
+        return {'path':str(path),'device':before.st_dev,'inode':before.st_ino,'bytes':before.st_size,
+                'uid':before.st_uid,'gid':before.st_gid,'mode':oct(stat.S_IMODE(before.st_mode)),
+                'sha256':digest.hexdigest()}
+    finally: os.close(descriptor)
 
 def darwin_acl(fd, private):
     class Request(ctypes.Structure):
@@ -224,10 +274,44 @@ try:
         if actual_os != 'darwin' and not compiler: raise RuntimeError('An installed race compiler is required.')
         if compiler: base_env['CC'] = compiler
         base_env['CGO_ENABLED'] = '1'
-        run([go,'test','-count=1','-json','-race','-timeout=9m','./...'],600)
+        # Acceptance builds the normal CLI inside the race suite. Prepare its
+        # cold dependencies before that existing bounded build runs.
+        warm_deadline = min(time.monotonic()+120,outer_deadline-630)
+        warm_remaining = warm_deadline-time.monotonic()
+        if warm_remaining <= 0: raise RuntimeError('No full-suite cold-build reserve remains.')
+        run([go,'build','-o',str(cache/'acceptance-oe'),'./cmd/oe'],warm_remaining,
+            phase='full-cli-prewarm',phase_deadline=warm_deadline)
+        if outer_deadline-time.monotonic() < 630: raise RuntimeError('Full race execution and cleanup reserve unavailable.')
+        run([go,'test','-count=1','-json','-race','-timeout=9m','./...'],600,phase='full-race-execution')
+    elif profile == 'minimum':
+        base_env['CGO_ENABLED'] = '0'
+        run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
     else:
         base_env['CGO_ENABLED'] = '0'
-        run([go,'test','-count=1','-json','-timeout=9m','./...' if profile == 'minimum' else './internal/identityattempt'],600)
+        cold_deadline = min(time.monotonic()+120,outer_deadline-630)
+        def cold_limit():
+            remaining = cold_deadline-time.monotonic()
+            if remaining <= 0: raise RuntimeError('No cold-phase budget remains before the full native execution reserve.')
+            return remaining
+        test_binary = cache/'identityattempt.test'
+        run([go,'test','-c','-o',str(test_binary),'./internal/identityattempt'],cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
+        tool_output = run([go,'tool','-n','test2json'],cold_limit(),capture=True,phase='native-tool-prepare',phase_deadline=cold_deadline).decode('utf-8',errors='strict').splitlines()
+        if len(tool_output) != 1 or len(tool_output[0]) > 4096: raise RuntimeError('Ambiguous maintained test2json input.')
+        test2json_path = pathlib.Path(tool_output[0])
+        binary_info = run([go,'version','-m',str(test_binary)],cold_limit(),capture=True,phase='native-build-info',phase_deadline=cold_deadline).decode('utf-8',errors='strict')
+        native_inputs = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
+                         'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
+                         'buildInfo':binary_info,'host':host,'CGO_ENABLED':'0',
+                         'sourceHashes':source_files,'coldPhaseSeconds':120,'executionSeconds':600,'globalSeconds':800}
+        save('native-test-inputs-before.json',native_inputs)
+        if native_inputs['binary']['uid'] != 0: raise RuntimeError('Compiled test binary is not owned by the fixture caller.')
+        if any(hashlib.sha256((root/name).read_bytes()).hexdigest() != digest for name,digest in source_files.items()): raise RuntimeError('Native compilation changed frozen source inputs.')
+        if outer_deadline-time.monotonic() < 630: raise RuntimeError('Full native execution and cleanup reserve unavailable.')
+        package_dir = root/'internal/identityattempt'
+        execution_env = dict(base_env,PWD=str(package_dir),PATH=str(pathlib.Path(go).resolve().parent)+os.pathsep+base_env['PATH'])
+        run([go,'tool','test2json','-t','-p','github.com/open-e2ee/oe/internal/identityattempt',str(test_binary),
+             '-test.paniconexit0','-test.v=test2json','-test.count=1','-test.timeout=9m'],600,
+            env=execution_env,cwd=package_dir,phase='native-execution')
     if profile == 'minimum':
         for target_os in ['darwin','linux','windows']:
             for target_arch in ['amd64','arm64']:
@@ -238,6 +322,15 @@ try:
 except BaseException as error:
     failure = str(error)
 finally:
+    if 'native_inputs' in globals():
+        try:
+            after_inputs = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
+                            'sourceHashes':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in source_files}}
+            save('native-test-inputs-after.json',after_inputs)
+            if any(after_inputs[key] != native_inputs[key] for key in ['binary','test2json','sourceHashes']):
+                raise RuntimeError('Native executable or source inputs changed during execution.')
+        except BaseException as error:
+            success = False; failure = (failure or '')+'; native input readback: '+str(error)
     empty = all(row['empty'] for row in groups) and all(row['empty'] for row in process_observers)
     try: mounted = mounted or os.path.ismount(mount)
     except OSError as error: success = False; failure = (failure or '')+'; mount readback: '+str(error)
