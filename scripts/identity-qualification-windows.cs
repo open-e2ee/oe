@@ -248,10 +248,10 @@ public static class IdentityStoreFixture {
         }
         return total;
     }
-    public static object Run(string executable,string[] argv,string cwd,IDictionary<string,string> environment,string prefix,int milliseconds) {
-        return RunBounded(executable,argv,cwd,environment,prefix,milliseconds,67108864);
+    public static object Run(string executable,string[] argv,string cwd,IDictionary<string,string> environment,string prefix,int milliseconds,bool monitorVolume=true) {
+        return RunBounded(executable,argv,cwd,environment,prefix,milliseconds,67108864,monitorVolume);
     }
-    public static object RunBounded(string executable,string[] argv,string cwd,IDictionary<string,string> environment,string prefix,int milliseconds,int outputLimit) {
+    public static object RunBounded(string executable,string[] argv,string cwd,IDictionary<string,string> environment,string prefix,int milliseconds,int outputLimit,bool monitorVolume=true) {
         if(outputLimit<=0||outputLimit>67108864)throw new Exception("invalid native output bound");
         if(milliseconds<=0) throw new Exception("outer fixture deadline expired");
         IntPtr job=IntPtr.Zero,outRead=IntPtr.Zero,outWrite=IntPtr.Zero,errRead=IntPtr.Zero,errWrite=IntPtr.Zero;
@@ -289,7 +289,7 @@ public static class IdentityStoreFixture {
                 if(wait!=258)throw Error("process wait");
                 if(watch.ElapsedMilliseconds>=milliseconds)throw new Exception("bounded process deadline");
                 string cache;
-                if(environment.TryGetValue("GOCACHE",out cache) && new DriveInfo(Path.GetPathRoot(cache)).AvailableFreeSpace<134217728)
+                if(monitorVolume && environment.TryGetValue("GOCACHE",out cache) && new DriveInfo(Path.GetPathRoot(cache)).AvailableFreeSpace<134217728)
                     throw new Exception("owned fixture volume space floor");
                 if(stdout.IsFaulted||stderr.IsFaulted)throw new Exception("bounded output pump failed");
             }
