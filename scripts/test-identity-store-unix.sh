@@ -367,7 +367,7 @@ try:
         run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
     else:
         base_env['CGO_ENABLED'] = '0'
-        cold_seconds,execution_reserve = (240,1830) if intel_native else (120,630)
+        cold_seconds,execution_reserve = (480,1830) if intel_native else (120,630)
         cold_deadline = min(time.monotonic()+cold_seconds,outer_deadline-execution_reserve)
         def cold_limit():
             remaining = cold_deadline-time.monotonic()

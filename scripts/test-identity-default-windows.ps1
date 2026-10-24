@@ -210,12 +210,22 @@ try {
     @'
 param([string]$Binary,[string]$Proof,[string]$Nonce)
 $ErrorActionPreference='Stop'
+function Signal-StandardStartup([string]$Phase) {
+    if ($Phase -notin @('entered','helper-loaded','probe-returned','controller-recorded')) { throw 'Unknown standard startup phase.' }
+    $event=[Threading.EventWaitHandle]::OpenExisting('Global\ca8_standard_'+$Nonce+'_'+$Phase)
+    try { if (-not $event.Set()) { throw 'The owned standard startup event was not signalled.' } }
+    finally { $event.Dispose() }
+}
+Signal-StandardStartup 'entered'
 Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
+Signal-StandardStartup 'helper-loaded'
 $environment=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {$environment[$entry.Key]=$entry.Value}
 $probeArguments=@('-test.run=^TestIdentityDefaultQualification$','-test.timeout=120s','-test.v',"-identity-default-proof=$Proof","-identity-default-nonce=$Nonce")
 $result=[IdentityStoreFixture]::RunBounded($Binary,$probeArguments,$PSScriptRoot,$environment,(Join-Path $Proof 'controller'),125000,16777216)
+Signal-StandardStartup 'probe-returned'
 $result | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Proof 'controller-process.json') -Encoding utf8
+Signal-StandardStartup 'controller-recorded'
 if ($result.status -ne 0 -or -not $result.jobEmpty -or $result.errors.Count -ne 0) {exit 1}
 '@ | Set-Content -LiteralPath $child -Encoding utf8
     $broker=Join-Path $workspace 'broker.ps1'

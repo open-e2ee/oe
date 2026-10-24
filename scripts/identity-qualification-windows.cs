@@ -25,6 +25,7 @@ public static class IdentityStoreFixture {
     [StructLayout(LayoutKind.Sequential)] struct LUID { public uint low; public int high; }
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr value);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateEventW(ref SA security,bool manualReset,bool initialState,string name);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
     [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool LookupPrivilegeValue(string system,string name,out LUID luid);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool AdjustTokenPrivileges(IntPtr token,bool disable,IntPtr state,int size,IntPtr previous,out int returned);
@@ -342,14 +343,115 @@ public static class IdentityStoreFixture {
     [DllImport("userenv.dll",CharSet=CharSet.Unicode,SetLastError=true)]
     static extern bool DeleteProfileW(string sid,string path,string computer);
 
+    public sealed class MandatoryLabelMetadata {
+        public bool available { get; private set; }
+        public string code { get; private set; }
+        public uint win32Code { get; private set; }
+        public string sid { get; private set; }
+        public uint? mask { get; private set; }
+        internal MandatoryLabelMetadata(bool available,string code,uint win32Code,string sid,uint? mask) {
+            this.available=available;this.code=code;this.win32Code=win32Code;this.sid=sid;this.mask=mask;
+        }
+    }
+    static MandatoryLabelMetadata UnavailableMandatoryLabel(string code,uint win32Code=0) {
+        return new MandatoryLabelMetadata(false,code,win32Code,null,null);
+    }
+    static MandatoryLabelMetadata DecodeMandatoryLabel(byte[] bytes) {
+        var security=new RawSecurityDescriptor(bytes,0);
+        if(!security.ControlFlags.HasFlag(ControlFlags.SelfRelative))
+            return UnavailableMandatoryLabel("LABEL_NOT_SELF_RELATIVE");
+        if(!security.ControlFlags.HasFlag(ControlFlags.SystemAclPresent)||security.SystemAcl==null)
+            return UnavailableMandatoryLabel("LABEL_ABSENT");
+        if(security.SystemAcl.Count!=1)return UnavailableMandatoryLabel("LABEL_ACE_COUNT");
+        GenericAce ace=security.SystemAcl[0];
+        if((byte)ace.AceType!=0x11||ace.AceFlags!=AceFlags.None||ace.BinaryLength!=20)
+            return UnavailableMandatoryLabel("LABEL_ACE_UNSUPPORTED");
+        byte[] label=new byte[20];ace.GetBinaryForm(label,0);
+        if(label[8]!=1||label[9]!=1||label[10]!=0||label[11]!=0||label[12]!=0||
+            label[13]!=0||label[14]!=0||label[15]!=16)
+            return UnavailableMandatoryLabel("LABEL_SID_UNSUPPORTED");
+        uint mask=BitConverter.ToUInt32(label,4);
+        if((mask&~7u)!=0)return UnavailableMandatoryLabel("LABEL_MASK_UNSUPPORTED");
+        var sid=new SecurityIdentifier(label,8);
+        if(sid.BinaryLength!=12)return UnavailableMandatoryLabel("LABEL_SID_UNSUPPORTED");
+        return new MandatoryLabelMetadata(true,"AVAILABLE",0,sid.Value,mask);
+    }
+    static MandatoryLabelMetadata ReadMandatoryLabel(IntPtr handle,int objectType) {
+        if(handle==IntPtr.Zero||(objectType!=6&&objectType!=7))
+            return UnavailableMandatoryLabel("LABEL_OBJECT_UNAVAILABLE");
+        IntPtr owner,group,dacl,sacl,descriptor=IntPtr.Zero;
+        var result=UnavailableMandatoryLabel("LABEL_NOT_QUERIED");
+        try {
+            // LABEL_SECURITY_INFORMATION requires READ_CONTROL, not full SACL access.
+            uint code=GetSecurityInfo(handle,objectType,0x10,out owner,out group,out dacl,out sacl,out descriptor);
+            if(code!=0)result=UnavailableMandatoryLabel("LABEL_QUERY_FAILED",code);
+            else if(descriptor==IntPtr.Zero)result=UnavailableMandatoryLabel("LABEL_DESCRIPTOR_ABSENT");
+            else {
+                uint length=GetSecurityDescriptorLength(descriptor);
+                if(length<20||length>65536)result=UnavailableMandatoryLabel("LABEL_DESCRIPTOR_SIZE");
+                else {
+                    byte[] bytes=new byte[(int)length];Marshal.Copy(descriptor,bytes,0,(int)length);
+                    result=DecodeMandatoryLabel(bytes);
+                }
+            }
+        } catch(Exception) { result=UnavailableMandatoryLabel("LABEL_READ_UNAVAILABLE"); }
+        finally {
+            try {
+                if(descriptor!=IntPtr.Zero&&LocalFree(descriptor)!=IntPtr.Zero)
+                    result=UnavailableMandatoryLabel("LABEL_RELEASE_FAILED",unchecked((uint)Marshal.GetLastWin32Error()));
+            } catch(Exception) { result=UnavailableMandatoryLabel("LABEL_RELEASE_UNAVAILABLE"); }
+        }
+        return result;
+    }
     // The ordinary logon receives its actual profile environment from Windows.
     // Its launcher starts suspended and enters the owned Job before any script runs.
-    public static object RunAsStandard(string user,string password,string executable,string[] argv,string cwd,int milliseconds,string desktopName) {
+    static readonly string[] StandardStartupPhases={"entered","helper-loaded","probe-returned","controller-recorded"};
+    static void CreateStandardStartupEvents(IntPtr[] events,MandatoryLabelMetadata[] labels,string user,string nonce) {
+        if(events.Length!=StandardStartupPhases.Length||labels.Length!=events.Length||events.Any(value=>value!=IntPtr.Zero)||
+            nonce.Length!=32||nonce.Any(character=>!"0123456789abcdef".Contains(character)))
+            throw new Exception("invalid standard startup event scope");
+        string owner;
+        using(var identity=WindowsIdentity.GetCurrent()) {
+            owner=identity.User.Value;
+            if(owner==user||owner=="S-1-5-18"||!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                throw new Exception("standard startup events require the isolated admin broker");
+        }
+        const uint trustedMask=0x001f0003,userMask=0x00100002;
+        IntPtr descriptor=NewOwnedObjectDescriptor(owner,user,trustedMask,userMask,true);
+        try {
+            var security=new SA{length=Marshal.SizeOf<SA>(),descriptor=descriptor,inherit=0};
+            for(int index=0;index<events.Length;index++) {
+                events[index]=CreateEventW(ref security,true,false,"Global\\ca8_standard_"+nonce+"_"+StandardStartupPhases[index]);
+                int error=Marshal.GetLastWin32Error();
+                if(events[index]==IntPtr.Zero)throw new Win32Exception(error,"create owned standard startup event");
+                if(error==183)throw new Exception("standard startup event already exists");
+                CheckOwnedObjectSecurity(events[index],6,owner,user,trustedMask,userMask);
+                labels[index]=ReadMandatoryLabel(events[index],6);
+                if(!labels[index].available||labels[index].sid!="S-1-16-8192"||labels[index].mask!=1u)
+                    throw new Exception("owned standard startup event mandatory label differs");
+            }
+        } finally { Free(descriptor); }
+    }
+    static void ObserveStandardStartup(IntPtr[] events,long[] observed,System.Diagnostics.Stopwatch watch) {
+        if(watch==null)return;
+        for(int index=0;index<events.Length;index++) {
+            if(events[index]==IntPtr.Zero||observed[index]>=0)continue;
+            uint state=WaitForSingleObject(events[index],0);
+            if(state==0)observed[index]=watch.ElapsedMilliseconds;
+            else if(state!=258)throw Error("observe standard startup event");
+        }
+    }
+    public static object RunAsStandard(string user,string password,string executable,string[] argv,string cwd,int milliseconds,string desktopName,string startupSID=null,string startupNonce=null) {
         IntPtr job=IntPtr.Zero,limits=IntPtr.Zero;
         PI child=new PI(); bool assigned=false,empty=false; uint status=0xffffffff;
         long profileMilliseconds=-1; var errors=new List<string>();
+        var startupEvents=new IntPtr[4]; var startupObserved=Enumerable.Repeat(-1L,4).ToArray();
+        var startupLabels=Enumerable.Range(0,4).Select(index=>UnavailableMandatoryLabel("LABEL_NOT_QUERIED")).ToArray();
+        System.Diagnostics.Stopwatch startupWatch=null; bool startupEventsClosed=true;
         try {
             if(milliseconds<=0||milliseconds>130000)throw new Exception("invalid standard-process bound");
+            if((startupSID==null)!=(startupNonce==null))throw new Exception("incomplete standard startup event scope");
+            if(startupNonce!=null)CreateStandardStartupEvents(startupEvents,startupLabels,startupSID,startupNonce);
             job=CreateJobObjectW(IntPtr.Zero,null);
             if(job==IntPtr.Zero)throw Error("standard process job");
             limits=Marshal.AllocHGlobal(144); Marshal.Copy(new byte[144],0,limits,144); Marshal.WriteInt32(limits,16,0x2000);
@@ -369,9 +471,10 @@ public static class IdentityStoreFixture {
             if(!AssignProcessToJobObject(job,child.process))throw Error("assign suspended standard process to owned job");
             assigned=true;
             if(ResumeThread(child.thread)==0xffffffff)throw Error("resume standard process");
-            var watch=System.Diagnostics.Stopwatch.StartNew();
+            var watch=System.Diagnostics.Stopwatch.StartNew(); startupWatch=watch;
             while(true) {
                 uint wait=WaitForSingleObject(child.process,50);
+                ObserveStandardStartup(startupEvents,startupObserved,startupWatch);
                 if(wait==0)break;
                 if(wait!=258)throw Error("standard process wait");
                 if(watch.ElapsedMilliseconds>=milliseconds)throw new Exception("standard controller logical bound exceeded");
@@ -380,11 +483,17 @@ public static class IdentityStoreFixture {
         } catch(Exception error){errors.Add(error.ToString());}
         finally {
             empty=CloseOwnedProcessJob(job,child,assigned,errors);
+            try { ObserveStandardStartup(startupEvents,startupObserved,startupWatch); }
+            catch(Exception error){errors.Add(error.ToString());}
+            foreach(IntPtr handle in startupEvents)
+                try{Close(handle);}catch(Exception error){startupEventsClosed=false;errors.Add(error.ToString());}
             foreach(IntPtr handle in new[]{child.thread,child.process,job})
                 try{Close(handle);}catch(Exception error){errors.Add(error.ToString());}
             if(limits!=IntPtr.Zero)Marshal.FreeHGlobal(limits);
         }
-        return new {status=status,pid=child.pid,jobEmpty=empty,profileMilliseconds=profileMilliseconds,errors=errors.ToArray()};
+        return new {status=status,pid=child.pid,jobEmpty=empty,profileMilliseconds=profileMilliseconds,errors=errors.ToArray(),
+                    startupEventsClosed=startupEventsClosed,
+                    startupPhases=StandardStartupPhases.Select((phase,index)=>new {phase=phase,observedMilliseconds=startupObserved[index],mandatoryLabel=startupLabels[index]}).ToArray()};
     }
 
     public static void DeleteOwnedProfile(string sid,string path) {
@@ -421,33 +530,40 @@ public static class IdentityStoreFixture {
         } finally { Array.Clear(bytes,0,bytes.Length); }
     }
 
-    static IntPtr NewGuiDescriptor(string owner,string user,uint trustedMask,uint userMask) {
+    static IntPtr NewOwnedObjectDescriptor(string owner,string user,uint trustedMask,uint userMask,bool mediumStartupEvents=false) {
         new SecurityIdentifier(owner); new SecurityIdentifier(user);
+        if(mediumStartupEvents&&(trustedMask!=0x001f0003||userMask!=0x00100002))
+            throw new Exception("mandatory event label requires the fixed event grants");
         string text="O:"+owner+"D:P(A;;0x"+trustedMask.ToString("x8")+";;;"+owner+")(A;;0x"+trustedMask.ToString("x8")+";;;SY)(A;;0x"+userMask.ToString("x8")+";;;"+user+")";
+        if(mediumStartupEvents)text+="S:(ML;;NW;;;ME)";
         IntPtr descriptor;uint size;
-        if(!ConvertStringSecurityDescriptorToSecurityDescriptor(text,1,out descriptor,out size))throw Error("owned GUI security descriptor");
+        if(!ConvertStringSecurityDescriptorToSecurityDescriptor(text,1,out descriptor,out size))throw Error("owned object security descriptor");
         return descriptor;
     }
     static void CheckGuiSecurity(IntPtr handle,string owner,string user,uint trustedMask,uint userMask) {
+        CheckOwnedObjectSecurity(handle,7,owner,user,trustedMask,userMask);
+    }
+    static void CheckOwnedObjectSecurity(IntPtr handle,int objectType,string owner,string user,uint trustedMask,uint userMask) {
+        if(objectType!=6&&objectType!=7)throw new Exception("unsupported owned object type");
         IntPtr actualOwner,group,dacl,sacl,descriptor;
-        uint code=GetSecurityInfo(handle,7,5,out actualOwner,out group,out dacl,out sacl,out descriptor);
-        if(code!=0)throw new Win32Exception((int)code,"owned GUI security readback");
+        uint code=GetSecurityInfo(handle,objectType,5,out actualOwner,out group,out dacl,out sacl,out descriptor);
+        if(code!=0)throw new Win32Exception((int)code,"owned object security readback");
         try {
             uint length=GetSecurityDescriptorLength(descriptor);
-            if(length<20||length>65536)throw new Exception("owned GUI descriptor size");
+            if(length<20||length>65536)throw new Exception("owned object descriptor size");
             byte[] bytes=new byte[length];Marshal.Copy(descriptor,bytes,0,(int)length);
             var security=new RawSecurityDescriptor(bytes,0);
-            if(security.Owner.Value!=owner||!security.ControlFlags.HasFlag(ControlFlags.DiscretionaryAclProtected)||security.DiscretionaryAcl==null||security.DiscretionaryAcl.Count!=3)
-                throw new Exception("owned GUI security mismatch");
+            if(security.Owner.Value!=owner||(objectType==7&&!security.ControlFlags.HasFlag(ControlFlags.DiscretionaryAclProtected))||security.DiscretionaryAcl==null||security.DiscretionaryAcl.Count!=3)
+                throw new Exception("owned object security mismatch");
             var expected=new Dictionary<string,uint>{{owner,trustedMask},{"S-1-5-18",trustedMask},{user,userMask}};
             foreach(GenericAce generic in security.DiscretionaryAcl) {
                 var ace=generic as CommonAce;uint mask;
                 if(ace==null||ace.IsCallback||ace.AceQualifier!=AceQualifier.AccessAllowed||ace.AceFlags!=0||
                     !expected.TryGetValue(ace.SecurityIdentifier.Value,out mask)||unchecked((uint)ace.AccessMask)!=mask)
-                    throw new Exception("owned GUI ACE mismatch");
+                    throw new Exception("owned object ACE mismatch");
                 expected.Remove(ace.SecurityIdentifier.Value);
             }
-            if(expected.Count!=0)throw new Exception("owned GUI trustee mismatch");
+            if(expected.Count!=0)throw new Exception("owned object trustee mismatch");
         } finally { Free(descriptor); }
     }
 
@@ -470,10 +586,12 @@ public static class IdentityStoreFixture {
         string originalStationName=null,originalDesktopName=null,restoredStationName=null,restoredDesktopName=null;
         string stationNameReadback=null,desktopNameReadback=null,creationStationName=null,creatorCurrentDesktopName=null;
         object child=null;var errors=new List<string>();
+        var stationMandatoryLabel=UnavailableMandatoryLabel("LABEL_NOT_QUERIED");
+        var desktopMandatoryLabel=UnavailableMandatoryLabel("LABEL_NOT_QUERIED");
         try {
             originalStationName=GuiObjectName(previousStation);
             originalDesktopName=GuiObjectName(previousDesktop);
-            stationSD=NewGuiDescriptor(owner,sid,0x000f037f,0x00020123);
+            stationSD=NewOwnedObjectDescriptor(owner,sid,0x000f037f,0x00020123);
             var stationSecurity=new SA{length=Marshal.SizeOf<SA>(),descriptor=stationSD,inherit=0};
             station=CreateWindowStationW(stationName,1,0x000f037f,ref stationSecurity);
             if(station==IntPtr.Zero)throw Error("create-only owned noninteractive station");
@@ -481,6 +599,7 @@ public static class IdentityStoreFixture {
             stationNameBound=String.Equals(stationNameReadback,stationName,StringComparison.Ordinal);
             if(!stationNameBound)throw new Exception("created station name differs");
             CheckGuiSecurity(station,owner,sid,0x000f037f,0x00020123);
+            stationMandatoryLabel=ReadMandatoryLabel(station,7);
             if(!SetProcessWindowStation(station))throw Error("isolated broker station association");
             creationStationName=GuiObjectName(GetProcessWindowStation());
             if(!String.Equals(creationStationName,stationName,StringComparison.Ordinal))throw new Exception("desktop creation station name differs");
@@ -490,7 +609,7 @@ public static class IdentityStoreFixture {
                 throw new Exception("owned desktop name already exists");
             }
             if(Marshal.GetLastWin32Error()!=2)throw Error("owned desktop absence prerequisite");
-            desktopSD=NewGuiDescriptor(owner,sid,0x000f01ff,0x000200c3);
+            desktopSD=NewOwnedObjectDescriptor(owner,sid,0x000f01ff,0x000200c3);
             Exception creatorError=null;
             // CreateDesktop assigns its desktop to the calling thread. Keep
             // that association on a new thread that exits before restoration.
@@ -511,6 +630,7 @@ public static class IdentityStoreFixture {
             desktopNameBound=String.Equals(desktopNameReadback,desktopName,StringComparison.Ordinal);
             if(!desktopNameBound)throw new Exception("created desktop name differs");
             CheckGuiSecurity(desktop,owner,sid,0x000f01ff,0x000200c3);
+            desktopMandatoryLabel=ReadMandatoryLabel(desktop,7);
             if(!SetProcessWindowStation(previousStation))throw Error("restore isolated broker station before child launch");
             restoredStationName=GuiObjectName(GetProcessWindowStation());
             restoredDesktopName=GuiObjectName(GetThreadDesktop(GetCurrentThreadId()));
@@ -519,7 +639,7 @@ public static class IdentityStoreFixture {
                 throw new Exception("restored broker GUI names differ before child launch");
             restored=true;
             childLaunchAttempted=true;
-            child=RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName);
+            child=RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName,sid,nonce);
         } catch(Exception error){errors.Add(error.ToString());}
         finally {
             if(desktopCreatorExited) {
@@ -552,7 +672,7 @@ public static class IdentityStoreFixture {
             creatorCurrentDesktopName=creatorCurrentDesktopName,originalStationName=originalStationName,originalDesktopName=originalDesktopName,
             restoredStationName=restoredStationName,restoredDesktopName=restoredDesktopName,
             errors=errors.ToArray(),restored=restored,stationClosed=stationClosed,desktopClosed=desktopClosed,
-            stationAbsent=stationAbsent,station=stationName,desktop=desktopName,stationUserMask=0x00020123,desktopUserMask=0x000200c3};
+            stationAbsent=stationAbsent,station=stationName,desktop=desktopName,stationUserMask=0x00020123,desktopUserMask=0x000200c3,stationMandatoryLabel=stationMandatoryLabel,desktopMandatoryLabel=desktopMandatoryLabel};
     }
 
     public static string ReadBrokerPassword(string pipeName) {
