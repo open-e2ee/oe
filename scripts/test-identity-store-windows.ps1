@@ -285,7 +285,7 @@ public static class IdentityStoreFixture {
         }
         return total;
     }
-    public static object Run(string executable,string[] argv,string cwd,IDictionary<string,string> environment,string prefix,int milliseconds) {
+    public static object Run(string executable,string[] argv,string cwd,IDictionary<string,string> environment,string prefix,int milliseconds,bool monitorVolume=true) {
         if(milliseconds<=0) throw new Exception("outer fixture deadline expired");
         IntPtr job=IntPtr.Zero,outRead=IntPtr.Zero,outWrite=IntPtr.Zero,errRead=IntPtr.Zero,errWrite=IntPtr.Zero;
         IntPtr input=new IntPtr(-1),attributes=IntPtr.Zero,handles=IntPtr.Zero,block=IntPtr.Zero,limits=IntPtr.Zero;
@@ -322,7 +322,7 @@ public static class IdentityStoreFixture {
                 if(wait!=258)throw Error("process wait");
                 if(watch.ElapsedMilliseconds>=milliseconds)throw new Exception("bounded process deadline");
                 string cache;
-                if(environment.TryGetValue("GOCACHE",out cache) && new DriveInfo(Path.GetPathRoot(cache)).AvailableFreeSpace<134217728)
+                if(monitorVolume && environment.TryGetValue("GOCACHE",out cache) && new DriveInfo(Path.GetPathRoot(cache)).AvailableFreeSpace<134217728)
                     throw new Exception("owned fixture volume space floor");
                 if(stdout.IsFaulted||stderr.IsFaulted)throw new Exception("bounded output pump failed");
             }
@@ -432,14 +432,14 @@ function Resolve-NativeExecutable([string]$Name) {
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The selected native executable is a reparse point.' }
     return $item.FullName
 }
-function Run-Stage([string]$Executable,[string[]]$Arguments,[int]$Seconds=30) {
+function Run-Stage([string]$Executable,[string[]]$Arguments,[int]$Seconds=30,[bool]$MonitorVolume=$true) {
     Assert-Phase
     if ($stages.Count -ge 24) { throw 'Owned stage count bound reached.' }
     $limit = [Math]::Min($Seconds*1000,[int]((800-$timer.Elapsed.TotalSeconds)*1000))
     $prefix = Join-Path $proof ('{0:d2}' -f $stages.Count)
-    $row = [ordered]@{ executable=$Executable; executableSHA256=(Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash; argv=$Arguments; limitMilliseconds=$limit }
+    $row = [ordered]@{ executable=$Executable; executableSHA256=(Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash; argv=$Arguments; limitMilliseconds=$limit; monitorVolume=$MonitorVolume }
     $stages.Add($row); Save-Proof 'stages.json' $stages
-    $result = [IdentityStoreFixture]::Run($Executable,$Arguments,$root,$childEnvironment,$prefix,$limit)
+    $result = [IdentityStoreFixture]::Run($Executable,$Arguments,$root,$childEnvironment,$prefix,$limit,$MonitorVolume)
     $row.result=$result; Save-Proof 'stages.json' $stages
     if ($result.status -ne 0 -or -not $result.jobEmpty -or $result.errors.Count -ne 0) { throw 'A bounded native stage failed. Preserve its raw evidence.' }
     return Get-Content -LiteralPath ($prefix+'.stdout') -Raw
@@ -559,7 +559,7 @@ finally {
                 if (-not $current.Attached -or @($current | Get-Disk)[0].Number -ne $diskNumber) { throw 'The cleanup disk association changed.' }
                 $detach=Join-Path $proof 'detach-owned-volume.txt'
                 @("select vdisk file=`"$image`"",'detach vdisk') | Set-Content -LiteralPath $detach -Encoding ascii
-                Run-Stage $diskpart @('/s',$detach) 20 | Out-Null
+                Run-Stage $diskpart @('/s',$detach) 20 -MonitorVolume $false | Out-Null
                 if ((Get-DiskImage -ImagePath $image).Attached) { throw 'The owned image remains attached.' }
                 $attached=$false; $attachmentState='detached'
                 Remove-Item -LiteralPath $image
