@@ -20,14 +20,15 @@ import (
 )
 
 type unixStoreActorGroup struct {
-	command      *exec.Cmd
-	mu           sync.Mutex
-	pid          int
-	pending      bool
-	waiting      bool
-	sealed       bool
-	waitComplete bool
-	releaseErr   error
+	command             *exec.Cmd
+	mu                  sync.Mutex
+	pid                 int
+	pending             bool
+	terminationComplete bool
+	waiting             bool
+	sealed              bool
+	waitComplete        bool
+	releaseErr          error
 }
 
 func storeDamageStableLock(t *testing.T, path string, _ *os.File) {
@@ -61,12 +62,17 @@ func (g *unixStoreActorGroup) terminateLocked() error {
 		g.pending = true
 		return nil
 	}
+	if g.terminationComplete {
+		return nil
+	}
 	needed, err := storeActorGroupNeedsSignal(g.pid)
 	if err == nil && needed {
 		err = unix.Kill(-g.pid, unix.SIGKILL)
 	}
 	if err != nil {
 		g.releaseErr = combine(g.releaseErr, fmt.Errorf("actor group termination: %w", err))
+	} else {
+		g.terminationComplete = true
 	}
 	return err
 }

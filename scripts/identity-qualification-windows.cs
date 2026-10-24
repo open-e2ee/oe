@@ -792,6 +792,214 @@ public static class IdentityStoreFixture {
                     startupPhases=StandardStartupPhases.Select((phase,index)=>new {phase=phase,observedMilliseconds=startupObserved[index],mandatoryLabel=startupLabels[index]}).ToArray()};
     }
 
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetHandleInformation(IntPtr handle,out uint flags);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GetStdHandle(int kind);
+
+    static uint CheckedInheritance(IntPtr handle,uint expected) {
+        uint flags;
+        if(handle==IntPtr.Zero||handle==new IntPtr(-1))throw new Exception("controller handle unavailable");
+        if(!GetHandleInformation(handle,out flags))throw Error("controller handle flags");
+        if((flags&1)!=expected)throw new Exception("controller handle inheritance differs");
+        return flags;
+    }
+    sealed class ControllerBorrowedHandle {
+        internal IntPtr handle;
+        internal int index;
+        internal uint flags;
+        internal string code="FLAGS_UNAVAILABLE";
+        internal bool clearAttempted,cleared,restored;
+    }
+    sealed class ControllerPipe {
+        IntPtr reader=IntPtr.Zero,writer=IntPtr.Zero;
+        bool created,readerClosed,writerClosed,fileClosed,eof;
+        long observedBytes;
+        internal Task<long> task;
+        internal IntPtr Writer { get { return writer; } }
+        internal void Create() {
+            var security=new SA{length=Marshal.SizeOf<SA>(),inherit=1};
+            if(!CreatePipe(out reader,out writer,ref security,0))throw Error("controller output pipe");
+            if(!SetHandleInformation(reader,1,0))throw Error("controller noninherited reader");
+            CheckedInheritance(reader,0);CheckedInheritance(writer,1);
+            if(GetFileType(reader)!=3||GetFileType(writer)!=3)throw new Exception("controller output is not a pipe");
+            created=true;
+        }
+        internal void CloseWriter() {
+            if(writer==IntPtr.Zero)return;
+            IntPtr value=writer;writer=IntPtr.Zero;Close(value);writerClosed=true;
+        }
+        internal void Start(string path) {
+            if(task!=null||!created)throw new Exception("controller output pump ownership differs");
+            task=Task.Run(()=>{
+                FileStream output=null;Exception failure=null;
+                try {
+                    output=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.Read);
+                    byte[] buffer=new byte[65536];
+                    while(true) {
+                        uint count;
+                        if(!ReadFile(reader,buffer,(uint)buffer.Length,out count,IntPtr.Zero)) {
+                            int code=Marshal.GetLastWin32Error();
+                            if(code==109){eof=true;break;}
+                            throw new Win32Exception(code,"controller pipe read");
+                        }
+                        if(count>(uint)buffer.Length)throw new Exception("controller pipe read span differs");
+                        if(count==0)continue;
+                        int retained=(int)Math.Min((long)count,Math.Max(0,16777216L-observedBytes));
+                        observedBytes+=count;
+                        if(retained>0)output.Write(buffer,0,retained);
+                        if(observedBytes>16777216)throw new Exception("controller output exceeded16MiB");
+                    }
+                    return observedBytes;
+                } catch(Exception error){failure=error;throw;}
+                finally {
+                    ReleaseNativeResources(failure,
+                        ()=>{if(output!=null){output.Dispose();fileClosed=true;}},
+                        ()=>{Close(reader);readerClosed=true;});
+                }
+            });
+        }
+        internal void CloseUnusedReader() {
+            // Once started, only the pump may close its reader, including on failure.
+            if(task!=null||reader==IntPtr.Zero)return;
+            IntPtr value=reader;reader=IntPtr.Zero;Close(value);readerClosed=true;
+        }
+        internal bool Complete {
+            get {return task!=null&&task.Status==TaskStatus.RanToCompletion&&eof&&readerClosed&&writerClosed&&fileClosed;}
+        }
+        internal object Record() {
+            bool joined=task!=null&&task.IsCompleted;bool complete=joined&&Complete;
+            return new {created=created,pumpStarted=task!=null,pumpJoined=joined,
+                eof=joined&&eof,readerClosed=(task==null||joined)&&readerClosed,writerClosed=writerClosed,
+                fileClosed=joined&&fileClosed,complete=complete,
+                observedBytes=joined?observedBytes:-1,retainedBytes=complete?task.Result:-1};
+        }
+    }
+
+    static object RunStandardController(string user,string sid,string password,string executable,string[] argv,string cwd,string nonce,string desktopName,string prefix) {
+        IntPtr job=IntPtr.Zero,limits=IntPtr.Zero,input=IntPtr.Zero;
+        var stdout=new ControllerPipe();var stderr=new ControllerPipe();
+        var borrowed=new Dictionary<IntPtr,ControllerBorrowedHandle>();
+        int[] slotKinds={-10,-11,-12};string[] slotStates={"NOT_QUERIED","NOT_QUERIED","NOT_QUERIED"};
+        var slotGroups=new ControllerBorrowedHandle[3];
+        bool borrowedRestored=false,inputClosed=false,stdioPrepared=false;
+        PI child=new PI();bool assigned=false,empty=false;uint status=0xffffffff;uint? resumeCount=null;
+        long profileMilliseconds=-1;var errors=new List<string>();
+        var token=new StandardChildTokenMetadata();var beforeCleanup=new StandardProcessStateMetadata();
+        var createdContext=new StandardChildContextMetadata();var finalContext=new StandardChildContextMetadata();
+        try {
+            if(Marshal.SizeOf<SI>()!=104||Marshal.SizeOf<PI>()!=24||Marshal.SizeOf<SA>()!=24)throw new Exception("controller native layout differs");
+            if(!String.Equals(Path.GetFullPath(prefix),Path.Combine(cwd,"ca8-default-proof-"+nonce,"controller"),StringComparison.OrdinalIgnoreCase))
+                throw new Exception("controller output prefix differs from the owned proof");
+            if(String.IsNullOrEmpty(desktopName)||!desktopName.StartsWith("ca8_station_",StringComparison.Ordinal))throw new Exception("owned controller desktop unavailable");
+            job=CreateJobObjectW(IntPtr.Zero,null);if(job==IntPtr.Zero)throw Error("controller Job");
+            CheckedInheritance(job,0);
+            limits=Marshal.AllocHGlobal(144);Marshal.Copy(new byte[144],0,limits,144);Marshal.WriteInt32(limits,16,0x2000);
+            if(!SetInformationJobObject(job,9,limits,144))throw Error("controller kill-on-close Job limit");
+            stdout.Create();stderr.Create();
+            input=CreateFileW("NUL",0x80000000,3,IntPtr.Zero,3,0,IntPtr.Zero);
+            if(input==new IntPtr(-1)||!SetHandleInformation(input,1,1))throw Error("controller null input");
+            CheckedInheritance(input,1);
+            if(GetFileType(input)!=2)throw new Exception("controller input is not the null character device");
+            // Observe all three slots before mutation. NULL is legal; aliases share one saved flag set.
+            for(int i=0;i<slotKinds.Length;i++) {
+                IntPtr handle=GetStdHandle(slotKinds[i]);
+                if(handle==new IntPtr(-1)) {
+                    var error=Error("broker standard handle slot "+slotKinds[i]);
+                    slotStates[i]="GET_FAILED";errors.Add(error.ToString());continue;
+                }
+                if(handle==IntPtr.Zero){slotStates[i]="ABSENT";continue;}
+                ControllerBorrowedHandle group;
+                if(!borrowed.TryGetValue(handle,out group)) {
+                    group=new ControllerBorrowedHandle{handle=handle,index=borrowed.Count};borrowed.Add(handle,group);
+                    if(!GetHandleInformation(handle,out group.flags))errors.Add(Error("broker standard handle inheritance").ToString());
+                    else if((group.flags&~3u)!=0) {
+                        group.code="UNKNOWN_FLAGS";errors.Add("broker standard handle has unknown flags");
+                    } else group.code="PRESENT";
+                }
+                slotGroups[i]=group;slotStates[i]=group.code;
+            }
+            if(slotStates.Any(state=>state!="ABSENT"&&state!="PRESENT"))throw new Exception("broker standard slots incomplete or invalid");
+            foreach(var group in borrowed.Values) {
+                group.clearAttempted=true;
+                if(!SetHandleInformation(group.handle,1,0))throw Error("exclude borrowed broker standard handle");
+                if(CheckedInheritance(group.handle,0)!=(group.flags&~1u))throw new Exception("borrowed broker handle flags changed");
+                group.cleared=true;
+            }
+            stdioPrepared=true;
+            var command=new StringBuilder(String.Join(" ",new[]{executable}.Concat(argv).Select(Quote)));
+            if(command.Length>=1024)throw new Exception("controller logon command exceeds its native bound");
+            IntPtr desktopText=Marshal.StringToHGlobalUni(desktopName);
+            var startup=new SI{cb=Marshal.SizeOf<SI>(),desktop=desktopText,flags=0x100,input=input,output=stdout.Writer,error=stderr.Writer};
+            var profileWatch=System.Diagnostics.Stopwatch.StartNew();
+            try {
+                if(!CreateProcessWithLogonW(user,".",password,1,executable,command,0x08000004,IntPtr.Zero,cwd,ref startup,out child))
+                    throw Error("controller suspended profile logon");
+            } finally {Marshal.FreeHGlobal(desktopText);}
+            profileMilliseconds=profileWatch.ElapsedMilliseconds;
+            if(profileMilliseconds>60000)throw new Exception("controller profile stage exceeded its logical bound");
+            if(!AssignProcessToJobObject(job,child.process))throw Error("assign suspended controller to Job");
+            assigned=true;
+            token=ReadStandardChildToken(child.process,errors);
+            if(!token.available||!token.tokenClosed||token.sid!=sid||token.elevated!=false||token.elevationType!=1u)
+                throw new Exception("controller ordinary token differs or is unavailable");
+            createdContext=ReadStandardChildContext(child);
+            if(createdContext.lifetimeCode!="AVAILABLE"||createdContext.pid!=child.pid||createdContext.sessionCode!="AVAILABLE"||
+                createdContext.childSession!=createdContext.brokerSession)throw new Exception("controller creation/session association unavailable");
+            stdout.CloseWriter();stderr.CloseWriter();
+            IntPtr inputValue=input;input=IntPtr.Zero;Close(inputValue);inputClosed=true;
+            stdout.Start(prefix+".stdout");stderr.Start(prefix+".stderr");
+            uint previous=ResumeThread(child.thread);resumeCount=previous;
+            if(previous==0xffffffff)throw Error("resume controller");
+            if(previous!=1)throw new Exception("controller initial suspend count differs");
+            var watch=System.Diagnostics.Stopwatch.StartNew();
+            while(true) {
+                uint wait=WaitForSingleObject(child.process,50);
+                if(stdout.task.IsFaulted||stderr.task.IsFaulted)throw new Exception("controller output pump failed");
+                if(wait==0)break;
+                if(wait!=258)throw Error("controller wait");
+                // Retain the original tighter Go supervision bound within the 130-second child maximum.
+                if(watch.ElapsedMilliseconds>=125000)throw new Exception("controller125second logical bound exceeded");
+            }
+            if(!GetExitCodeProcess(child.process,out status))throw Error("controller exit status");
+        } catch(Exception error){errors.Add(error.ToString());}
+        finally {
+            beforeCleanup=ReadStandardProcessState(child.process);
+            finalContext=ReadStandardChildContext(child);
+            if(child.process!=IntPtr.Zero&&(!beforeCleanup.available||finalContext.lifetimeCode!="AVAILABLE"))errors.Add("controller final native state unavailable");
+            foreach(var pipe in new[]{stdout,stderr})try{pipe.CloseWriter();}catch(Exception error){errors.Add(error.ToString());}
+            if(input!=IntPtr.Zero&&input!=new IntPtr(-1)) {
+                IntPtr value=input;input=IntPtr.Zero;try{Close(value);inputClosed=true;}catch(Exception error){errors.Add(error.ToString());}
+            }
+            empty=CloseOwnedProcessJob(job,child,assigned,errors);
+            var tasks=new Task[]{stdout.task,stderr.task}.Where(task=>task!=null).ToArray();
+            try {if(tasks.Length>0&&!Task.WaitAll(tasks,1000))errors.Add("controller output pumps did not join within1second");}
+            catch(Exception error){errors.Add(error.ToString());}
+            foreach(Task task in tasks)if(task.IsFaulted)errors.Add(task.Exception.ToString());
+            foreach(var pipe in new[]{stdout,stderr})try{pipe.CloseUnusedReader();}catch(Exception error){errors.Add(error.ToString());}
+            if(!stdout.Complete||!stderr.Complete)errors.Add("controller output EOF/file/reader closure incomplete; retain pump ownership until broker exit");
+            foreach(var group in borrowed.Values)if(group.clearAttempted)try {
+                if(!SetHandleInformation(group.handle,1,group.flags&1))throw Error("restore borrowed broker handle inheritance");
+                if(CheckedInheritance(group.handle,group.flags&1)!=group.flags)throw new Exception("borrowed broker handle restoration differs");
+                group.restored=true;
+            } catch(Exception error){errors.Add(error.ToString());}
+            borrowedRestored=slotStates.All(state=>state=="ABSENT"||state=="PRESENT")&&
+                borrowed.Values.All(group=>group.cleared&&group.restored);
+            foreach(IntPtr handle in new[]{child.thread,child.process,job})try{Close(handle);}catch(Exception error){errors.Add(error.ToString());}
+            if(limits!=IntPtr.Zero)Marshal.FreeHGlobal(limits);
+        }
+        return new {kind="direct-standard-go-controller",topology="one-controller-child-one-controller-Job",
+            status=status,pid=child.pid,jobEmpty=empty,profileMilliseconds=profileMilliseconds,errors=errors.ToArray(),
+            executable=executable,arguments=argv,workingDirectory=cwd,goSupervisionMilliseconds=125000,standardChildMaximumMilliseconds=130000,
+            io=new {stdioPrepared=stdioPrepared,inputClosed=inputClosed,borrowedBrokerHandles=borrowed.Count,
+                borrowedInheritanceRestored=borrowedRestored,inheritanceScope="known-owned-handles; no CPW handle-list guarantee",
+                borrowedSlots=slotKinds.Select((kind,i)=>new {kind=kind,state=slotStates[i],
+                    group=slotGroups[i]==null?(int?)null:slotGroups[i].index,
+                    originalFlags=slotStates[i]=="PRESENT"?(uint?)slotGroups[i].flags:null,
+                    cleared=slotGroups[i]!=null&&slotGroups[i].cleared,restored=slotGroups[i]!=null&&slotGroups[i].restored}).ToArray(),
+                stdout=stdout.Record(),stderr=stderr.Record()},
+            launchDiagnostics=new {resumePreviousSuspendCount=resumeCount,childToken=token,createdContext=createdContext,
+                processBeforeCleanup=beforeCleanup,contextBeforeCleanup=finalContext}};
+    }
+
     public static void DeleteOwnedProfile(string sid,string path) {
         if(String.IsNullOrEmpty(sid)||String.IsNullOrEmpty(path)||!Path.IsPathFullyQualified(path))
             throw new Exception("owned profile locator is invalid");
@@ -865,7 +1073,7 @@ public static class IdentityStoreFixture {
 
     // Only the isolated broker script calls this entry. The long-lived parent
     // never changes its process window station or its thread desktop.
-    public static object RunInOwnedDesktop(string user,string sid,string password,string executable,string[] argv,string cwd,string nonce) {
+    public static object RunInOwnedDesktop(string user,string sid,string password,string executable,string[] argv,string cwd,string nonce,string controllerPrefix=null) {
         if(nonce.Length!=32||nonce.Any(character=>!"0123456789abcdef".Contains(character)))throw new Exception("owned GUI nonce unavailable");
         string owner;
         using(var identity=WindowsIdentity.GetCurrent()) {
@@ -935,7 +1143,9 @@ public static class IdentityStoreFixture {
                 throw new Exception("restored broker GUI names differ before child launch");
             restored=true;
             childLaunchAttempted=true;
-            child=RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName,sid,nonce);
+            child=controllerPrefix==null
+                ? RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName,sid,nonce)
+                : RunStandardController(user,sid,password,executable,argv,cwd,nonce,stationName+"\\"+desktopName,controllerPrefix);
         } catch(Exception error){errors.Add(error.ToString());}
         finally {
             if(desktopCreatorExited) {

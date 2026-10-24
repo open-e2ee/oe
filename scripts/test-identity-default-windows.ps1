@@ -79,6 +79,43 @@ function Observe-OwnedClosure {
         $gui.restoredStationName -cne $gui.originalStationName -or $gui.restoredDesktopName -cne $gui.originalDesktopName -or
         -not $gui.stationClosed -or -not $gui.desktopClosed -or -not $gui.stationAbsent -or -not $gui.childLaunchAttempted -or
         $gui.station -ne ('ca8_station_'+$nonce) -or $gui.desktop -ne ('ca8_desktop_'+$nonce) -or -not (Test-NativeClosure $gui.child)) { return $false }
+    if (-not $DiagnosticFileSentinel -and -not $DiagnosticGoSentinel) {
+        $controller=$gui.child
+        if ($controller.kind -cne 'direct-standard-go-controller' -or $controller.topology -cne 'one-controller-child-one-controller-Job' -or
+            $controller.executable -cne $binary -or $controller.workingDirectory -cne $workspace -or
+            $controller.goSupervisionMilliseconds -ne 125000 -or $controller.standardChildMaximumMilliseconds -ne 130000 -or
+            -not $controller.io.stdioPrepared -or -not $controller.io.inputClosed -or
+            -not $controller.io.borrowedInheritanceRestored -or
+            -not $controller.io.stdout.complete -or -not $controller.io.stderr.complete -or
+            $controller.io.stdout.retainedBytes -le 0 -or $controller.io.stdout.retainedBytes -gt 16777216 -or
+            $controller.io.stderr.retainedBytes -lt 0 -or $controller.io.stderr.retainedBytes -gt 16777216) { return $false }
+        $slots=@($controller.io.borrowedSlots);$kinds=@(-10,-11,-12);$groups=@{}
+        $groupCount=Read-ExactU64 $controller.io.borrowedBrokerHandles
+        if ($slots.Count -ne 3 -or $groupCount -gt 3) { return $false }
+        for ($i=0;$i -lt 3;$i++) {
+            $slot=$slots[$i]
+            if ($slot.kind -ne $kinds[$i]) { return $false }
+            if ($slot.state -ceq 'ABSENT') {
+                if ($null -ne $slot.group -or $null -ne $slot.originalFlags -or $slot.cleared -ne $false -or $slot.restored -ne $false) { return $false }
+            } elseif ($slot.state -ceq 'PRESENT') {
+                $group=Read-ExactU64 $slot.group;$flags=Read-ExactU64 $slot.originalFlags
+                if ($group -ge $groupCount -or $flags -gt 3 -or $slot.cleared -ne $true -or $slot.restored -ne $true) { return $false }
+                if ($groups.ContainsKey($group) -and $groups[$group] -ne $flags) { return $false }
+                $groups[$group]=$flags
+            } else { return $false }
+        }
+        if ($groups.Count -ne $groupCount) { return $false }
+        $launch=$controller.launchDiagnostics
+        if ($launch.resumePreviousSuspendCount -ne 1 -or -not $launch.childToken.available -or -not $launch.childToken.tokenClosed -or
+            $launch.childToken.sid -cne $sid -or $launch.childToken.elevated -ne $false -or $launch.childToken.elevationType -ne 1 -or
+            $launch.createdContext.lifetimeCode -cne 'AVAILABLE' -or $launch.createdContext.pid -ne $controller.pid -or
+            $launch.createdContext.sessionCode -cne 'AVAILABLE' -or $launch.createdContext.childSession -ne $launch.createdContext.brokerSession -or
+            -not $launch.processBeforeCleanup.available -or $launch.processBeforeCleanup.waitState -ne 0 -or
+            $launch.processBeforeCleanup.exitCode -ne $controller.status -or $launch.contextBeforeCleanup.lifetimeCode -cne 'AVAILABLE') { return $false }
+        # This reference identifies the same native child/Job already checked above.
+        $script:nativeControllerReadback=@{record='broker-process.json#child';pid=$controller.pid;distinctControllerJobs=1}
+        return $true
+    }
     $controller=Read-OwnedJSON (Join-Path $evidence 'controller-process.json')
     $script:nativeControllerReadback=$controller
     return Test-NativeClosure $controller
@@ -284,7 +321,7 @@ try {
         $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
 } finally {$password=$null}
 '@ | Set-Content -LiteralPath $broker -Encoding utf8
-    } else {
+    } elseif ($DiagnosticFileSentinel) {
     @'
 param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
 $ErrorActionPreference='Stop'
@@ -293,6 +330,20 @@ $password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
 try {
     $standardArguments=@('-NoLogo','-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'standard.ps1'),$Binary,$Proof,$Nonce)
     $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Pwsh,$standardArguments,$PSScriptRoot,$Nonce)
+    $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
+    if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
+        $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
+} finally {$password=$null}
+'@ | Set-Content -LiteralPath $broker -Encoding utf8
+    } else {
+    @'
+param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
+$ErrorActionPreference='Stop'
+Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
+$password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
+try {
+    $probeArguments=@('-test.run=^TestIdentityDefaultQualification$','-test.timeout=120s','-test.v',"-identity-default-proof=$Proof","-identity-default-nonce=$Nonce")
+    $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Binary,$probeArguments,$PSScriptRoot,$Nonce,(Join-Path $Proof 'controller'))
     $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
     if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
         $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
