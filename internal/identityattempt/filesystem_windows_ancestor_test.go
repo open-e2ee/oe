@@ -198,6 +198,28 @@ func TestStoreWindowsAncestorEffectiveAndInheritOnlyGrants(t *testing.T) {
 				storeWindowsInheritFixtureACL(t, child, parentACE, "(A;;FA;;;"+principals.user.String()+")(A;;FA;;;SY)")
 				location.anchor = child
 				descriptor = "O:" + principals.user.String() + "D:(A;;FA;;;" + principals.user.String() + ")(A;;FA;;;SY)" + childACE
+			} else if vector.name == "effective-creator-owner" {
+				storeWindowsApplyDescriptor(t, location.anchor, base, true)
+				storeWindowsAncestorACEEstablished(t, location.anchor, base)
+				sd, err := windows.SecurityDescriptorFromString(descriptor)
+				if err != nil || sd == nil || !sd.IsValid() {
+					t.Fatal("raw Creator Owner descriptor fixture did not parse", err)
+				}
+				wide, err := windows.UTF16PtrFromString(location.anchor)
+				if err != nil {
+					t.Fatal("raw Creator Owner fixture path failed", err)
+				}
+				setFileSecurity := windows.NewLazySystemDLL("advapi32.dll").NewProc("SetFileSecurityW")
+				if err := setFileSecurity.Find(); err != nil {
+					t.Fatal("native file security fixture API unavailable", err)
+				}
+				changed, _, callErr := setFileSecurity.Call(uintptr(unsafe.Pointer(wide)),
+					uintptr(windows.DACL_SECURITY_INFORMATION), uintptr(unsafe.Pointer(sd)))
+				runtime.KeepAlive(sd)
+				runtime.KeepAlive(wide)
+				if changed == 0 {
+					t.Fatal("raw Creator Owner DACL fixture update failed", callErr)
+				}
 			} else {
 				storeWindowsApplyDescriptor(t, location.anchor, descriptor, true)
 			}
