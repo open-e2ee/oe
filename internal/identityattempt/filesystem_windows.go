@@ -123,11 +123,18 @@ func windowsCheckSecurity(handle windows.Handle, managed bool) error {
 				return ErrUnsafe
 			}
 		} else {
-			// Unknown ACE flag semantics refuse. Broad mutation grants are never inferred safe.
+			// Unknown ACE flags refuse. Inherit-only ACEs do not authorize this directory.
 			if ace.Header.AceFlags & ^uint8(0x1f) != 0 {
 				return ErrUnsafe
 			}
-			if ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE && uint32(ace.Mask)&^windowsAncestorRead != 0 && !trusted(sid) {
+			if ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
+				continue
+			}
+			// Every existing child is qualified and pinned without share-delete.
+			// Creation can occupy a new name, but cannot replace a qualified child.
+			// FILE_APPEND_DATA aliases FILE_ADD_SUBDIRECTORY on directories.
+			allowed := windowsAncestorRead | windows.FILE_APPEND_DATA
+			if ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE && uint32(ace.Mask)&^allowed != 0 && !trusted(sid) {
 				return ErrUnsafe
 			}
 		}
