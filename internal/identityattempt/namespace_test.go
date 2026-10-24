@@ -81,10 +81,7 @@ func storeDamageCurrentNamespace(t *testing.T, fixture storeReadyFixture, proble
 			t.Fatal("nonregular manifest fixture failed")
 		}
 	case "canonical-replacement":
-		before, err := os.Stat(manifest)
-		if err != nil {
-			t.Fatal(err)
-		}
+		before := storeFixtureObjectStamp(t, manifest, true)
 		if os.Rename(manifest, filepath.Join(fixture.location.anchor, "former-ready-marker")) != nil {
 			t.Fatal("manifest displacement fixture failed")
 		}
@@ -97,8 +94,8 @@ func storeDamageCurrentNamespace(t *testing.T, fixture storeReadyFixture, proble
 		if writeErr != nil || n != len(readyManifest) || closeErr != nil {
 			t.Fatal("canonical replacement fixture failed")
 		}
-		after, err := os.Stat(manifest)
-		if err != nil || os.SameFile(before, after) {
+		after := storeFixtureObjectStamp(t, manifest, true)
+		if before.device == after.device && before.object == after.object {
 			t.Fatal("replacement fixture did not change the actual object")
 		}
 	case "root-orphan":
@@ -106,13 +103,9 @@ func storeDamageCurrentNamespace(t *testing.T, fixture storeReadyFixture, proble
 			t.Fatal("root orphan fixture failed")
 		}
 	case "root-lock-content":
-		if os.WriteFile(filepath.Join(fixture.location.path(), "root.lock"), []byte("changed"), 0o600) != nil {
-			t.Fatal("root lock fixture failed")
-		}
+		storeDamageStableLock(t, filepath.Join(fixture.location.path(), "root.lock"), fixture.lease.namespace.rootLock)
 	case "slot-lock-content":
-		if os.WriteFile(lock, []byte("changed"), 0o600) != nil {
-			t.Fatal("slot lock fixture failed")
-		}
+		storeDamageStableLock(t, lock, fixture.lease.lock)
 	case "record-orphan":
 		if os.WriteFile(filepath.Join(fixture.location.path(), "v1", "."+fixture.lease.stem+".uncertain.tmp"), []byte("partial"), 0o600) != nil {
 			t.Fatal("record orphan fixture failed")
@@ -122,8 +115,55 @@ func storeDamageCurrentNamespace(t *testing.T, fixture storeReadyFixture, proble
 	}
 }
 
-func storeCurrentTree(t *testing.T, location Location) string {
+// The observation handle closes before a fixture mutation can start.
+func storeFixtureObjectStamp(t *testing.T, path string, managed bool) fileStamp {
 	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal("owned object observation open failed", err)
+	}
+	stamp, check := nativeFileStamp(file, false, managed)
+	closed := file.Close()
+	if check != nil || closed != nil {
+		t.Fatal("owned object observation or close failed", check, closed)
+	}
+	t.Logf("owned object device=%d object=%d size=%d", stamp.device, stamp.object, stamp.size)
+	return stamp
+}
+
+// Read through the actual lock owner; Windows blocks a second handle's byte read.
+func storeCurrentLockBytes(t *testing.T, path string, held *os.File) []byte {
+	t.Helper()
+	current, err := os.Open(path)
+	if err != nil {
+		t.Fatal("current lock observation open failed", err)
+	}
+	defer func() {
+		if err := current.Close(); err != nil {
+			t.Fatal("current lock observation close failed", err)
+		}
+	}()
+	before, heldErr := held.Stat()
+	named, namedErr := current.Stat()
+	if heldErr != nil || namedErr != nil || !before.Mode().IsRegular() || !os.SameFile(before, named) || before.Size() < 0 || before.Size() > 2<<20 {
+		t.Fatal("current lock observation is not the bounded held object")
+	}
+	data := make([]byte, int(before.Size()))
+	if count, err := held.ReadAt(data, 0); err != nil || count != len(data) {
+		t.Fatal("held lock snapshot read failed", err)
+	}
+	after, heldErr := held.Stat()
+	named, namedErr = current.Stat()
+	if heldErr != nil || namedErr != nil || !os.SameFile(before, after) || !os.SameFile(before, named) || before.Size() != after.Size() || before.Size() != named.Size() {
+		t.Fatal("current lock changed during snapshot")
+	}
+	return data
+}
+
+func storeCurrentTree(t *testing.T, fixture storeReadyFixture) string {
+	t.Helper()
+	location := fixture.location
+	lockPath, _ := storePaths(t, location, fixture.expected.Slot())
 	var entries []string
 	err := filepath.WalkDir(location.path(), func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -139,9 +179,17 @@ func storeCurrentTree(t *testing.T, location Location) string {
 		}
 		value := relative + "\x00" + info.Mode().String()
 		if info.Mode().IsRegular() {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
+			var data []byte
+			switch path {
+			case filepath.Join(location.path(), "root.lock"):
+				data = storeCurrentLockBytes(t, path, fixture.lease.namespace.rootLock)
+			case lockPath:
+				data = storeCurrentLockBytes(t, path, fixture.lease.lock)
+			default:
+				data, err = os.ReadFile(path)
+				if err != nil {
+					return err
+				}
 			}
 			value += "\x00" + string(data)
 		}
@@ -162,7 +210,7 @@ func storeAssertCurrentRefusal(t *testing.T, fixture storeReadyFixture, before s
 	if fixture.lease.active {
 		t.Fatal("refused namespace created an active call")
 	}
-	if storeCurrentTree(t, fixture.location) != before {
+	if storeCurrentTree(t, fixture) != before {
 		t.Fatal("current namespace refusal changed visible fixture evidence")
 	}
 	_, record := storePaths(t, fixture.location, fixture.expected.Slot())

@@ -23,6 +23,13 @@ type unixStoreActorGroup struct {
 	pid     int
 }
 
+func storeDamageStableLock(t *testing.T, path string, _ *os.File) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
+		t.Fatal("stable lock content fixture failed", err)
+	}
+}
+
 func newStoreActorGroup(command *exec.Cmd) (storeActorGroup, error) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return &unixStoreActorGroup{command: command}, nil
@@ -489,7 +496,7 @@ func TestStoreUnixCurrentDirectoriesBeforeBegin(t *testing.T) {
 			if os.Chmod(path, 0o777) != nil {
 				t.Fatal("owned directory security fixture failed")
 			}
-			before := storeCurrentTree(t, fixture.location)
+			before := storeCurrentTree(t, fixture)
 			call, err := permit.Begin(storeContext(t), SelectionCancelAction)
 			if call != nil {
 				t.Fatal("unsafe managed directory returned a call")
@@ -509,7 +516,7 @@ func TestStoreUnixCurrentDirectoryAssociationBeforeResolve(t *testing.T) {
 			if os.Rename(path, former) != nil || os.Mkdir(path, 0o700) != nil {
 				t.Fatal("owned directory association fixture failed")
 			}
-			before := storeCurrentTree(t, fixture.location)
+			before := storeCurrentTree(t, fixture)
 			result, err := fixture.lease.ResolveSelection(storeContext(t), fixture.expected, receipt)
 			if err == nil || errors.Is(err, ErrRelease) {
 				t.Fatal("changed directory association was accepted or hid release failure", err)
@@ -517,7 +524,7 @@ func TestStoreUnixCurrentDirectoryAssociationBeforeResolve(t *testing.T) {
 			if _, cloneErr := result.Envelope(); cloneErr == nil {
 				t.Fatal("changed directory returned a resolution envelope")
 			}
-			if storeCurrentTree(t, fixture.location) != before {
+			if storeCurrentTree(t, fixture) != before {
 				t.Fatal("changed directory was repaired")
 			}
 			_, record := storePaths(t, fixture.location, fixture.expected.Slot())

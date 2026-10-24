@@ -53,6 +53,8 @@ mounted = False
 volume_device = None
 success = False
 failure = None
+index_before = None
+index_owner_mode_preserved = False
 source_hashes = {p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['go.mod','go.sum']}
 base_env = {k:v for k,v in os.environ.items() if k in ['PATH','HOME','LANG','LC_ALL','TZ']}
 base_env.update({'GOTOOLCHAIN':'local', 'GOENV':'off', 'GOWORK':'off',
@@ -61,10 +63,20 @@ base_env.update({'GOTOOLCHAIN':'local', 'GOENV':'off', 'GOWORK':'off',
                  'GIT_TERMINAL_PROMPT':'0', 'GIT_CONFIG_NOSYSTEM':'1',
                  'GIT_CONFIG_GLOBAL':'/dev/null',
                  'GIT_CONFIG_COUNT':'1', 'GIT_CONFIG_KEY_0':'safe.directory',
-                 'GIT_CONFIG_VALUE_0':str(root)})
+                 'GIT_CONFIG_VALUE_0':str(root), 'GIT_OPTIONAL_LOCKS':'0'})
 
 def save(name, value):
     (proof/name).write_text(json.dumps(value, indent=2)+'\n')
+
+def checkout_index_metadata():
+    directory = root / '.git'
+    if not stat.S_ISDIR(directory.lstat().st_mode): raise RuntimeError('Exact checkout Git directory required.')
+    index = directory / 'index'
+    info = index.lstat()
+    if not stat.S_ISREG(info.st_mode): raise RuntimeError('Exact regular checkout index required.')
+    return {'path':str(index),'uid':info.st_uid,'gid':info.st_gid,'mode':oct(stat.S_IMODE(info.st_mode)),
+            'device':info.st_dev,'inode':info.st_ino,'links':info.st_nlink,'bytes':info.st_size,
+            'mtimeNs':info.st_mtime_ns,'ctimeNs':info.st_ctime_ns}
 
 def group_alive(pgid):
     try: os.killpg(pgid, 0); return True
@@ -187,7 +199,7 @@ def finish_session(process, session):
     save('groups.json',groups)
     return session['empty']
 
-def run(argv, limit=30, env=None, capture=False):
+def run(argv, limit=30, env=None, capture=False, monitor_volume=True):
     if time.monotonic() >= outer_deadline: raise RuntimeError('Outer process deadline expired.')
     number = len(steps)
     if number >= 24: raise RuntimeError('Owned stage count bound reached.')
@@ -210,7 +222,7 @@ def run(argv, limit=30, env=None, capture=False):
     try:
         while selector.get_map():
             if time.monotonic() >= deadline: reason = 'PROCESS_DEADLINE'; break
-            if mounted and shutil.disk_usage(mount).free < 128*1024*1024:
+            if mounted and monitor_volume and shutil.disk_usage(mount).free < 128*1024*1024:
                 reason = 'OWNED_VOLUME_SPACE_FLOOR'; break
             if sum(v[1] for v in streams.values()) > 128*1024*1024:
                 reason = 'OUTPUT_LIMIT'; break
@@ -307,6 +319,8 @@ def inspect_chain(path, private=False):
     finally: os.close(fd)
 
 try:
+    index_before = checkout_index_metadata()
+    save('checkout-index-before.json',index_before)
     inspect_chain(mount.parent)
     mount.mkdir(mode=0o700)
     if actual_os == 'linux':
@@ -402,16 +416,30 @@ finally:
                     target = snapshot/path.relative_to(fixture); target.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(path,target,follow_symlinks=False)
             if success:
-                run((['/bin/umount',str(mount)] if actual_os == 'linux' else ['/usr/bin/hdiutil','detach',volume_device]),20)
+                run((['/bin/umount',str(mount)] if actual_os == 'linux' else ['/usr/bin/hdiutil','detach',volume_device]),20,monitor_volume=False)
+                if os.path.ismount(mount): raise RuntimeError('Owned mount remains after successful detach.')
                 mounted = False
                 if actual_os == 'linux': run(['/usr/sbin/losetup','--detach',volume_device],20)
-                mount.rmdir(); shutil.rmtree(backing)
+                try: mount.rmdir()
+                except FileNotFoundError:
+                    if actual_os != 'darwin': raise
+                shutil.rmtree(backing)
         except BaseException as error:
             success = False; failure = (failure or '')+'; cleanup: '+str(error)
+    try:
+        index_after = checkout_index_metadata()
+        save('checkout-index-after.json',index_after)
+        index_owner_mode_preserved = index_before is not None and all(index_before[key] == index_after[key] for key in ['uid','gid','mode'])
+        save('checkout-index-preservation.json',{'ownerModePreserved':index_owner_mode_preserved,
+             'changedFields':[] if index_before is None else [key for key in index_before if index_before[key] != index_after[key]]})
+        if not index_owner_mode_preserved: raise RuntimeError('Checkout index owner or mode changed.')
+    except BaseException as error:
+        success = False; failure = (failure or '')+'; checkout index readback: '+str(error)
     empty = all(row['empty'] for row in groups) and all(row['empty'] for row in process_observers)
     success = success and empty
     save('result.json',{'success':success,'failure':failure,'groups':groups,'processObservers':process_observers,'ownedSessionsEmpty':empty,'mountedOwnedVolumePreserved':mounted,
                         'volumeDevice':volume_device,'mount':str(mount),'elapsedSeconds':time.monotonic()-started,
+                        'checkoutIndexOwnerModePreserved':index_owner_mode_preserved,
                         'limits':'No ordinary-user/default-root, ENOSPC, hosted caller or hard-kernel-deadline qualification.'})
     # All files are new proof objects. Their final owner permits the runner's artifact step.
     for path in sorted(proof.rglob('*'),reverse=True):

@@ -154,7 +154,7 @@ func TestStoreCurrentNamespaceBetweenConfirmAndBegin(t *testing.T) {
 					t.Fatal("positive permit fixture failed", err)
 				}
 				storeDamageCurrentNamespace(t, fixture, problem)
-				before := storeCurrentTree(t, fixture.location)
+				before := storeCurrentTree(t, fixture)
 				if preparation != nil {
 					call, beginErr := preparation.Begin(storeContext(t))
 					if call != nil {
@@ -232,7 +232,7 @@ func TestStoreCurrentNamespaceBeforeReceiptResolution(t *testing.T) {
 					t.Fatal("unknown receipt fixture kind")
 				}
 				storeDamageCurrentNamespace(t, fixture, problem)
-				before := storeCurrentTree(t, fixture.location)
+				before := storeCurrentTree(t, fixture)
 				result, err := resolve()
 				if _, cloneErr := result.Envelope(); cloneErr == nil {
 					t.Fatal("uncertain namespace returned a resolution envelope")
@@ -295,7 +295,7 @@ func TestStoreCurrentNamespaceBeforeRetentionAndCancellationCAS(t *testing.T) {
 				}
 				fixture := storeReadyFixture{store: store, location: location, lease: lease, expected: value}
 				storeDamageCurrentNamespace(t, fixture, problem)
-				before := storeCurrentTree(t, fixture.location)
+				before := storeCurrentTree(t, fixture)
 				if cancel {
 					_, err = lease.AppendCancellation(storeContext(t), value, "cancel_001")
 				} else {

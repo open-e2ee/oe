@@ -98,6 +98,50 @@ func storeActorAlive(pid int) bool {
 	return query == nil && closed == nil && code == 259
 }
 
+func storeDamageStableLock(t *testing.T, path string, held *os.File) {
+	t.Helper()
+	before, err := nativeFileStamp(held, false, true)
+	if err != nil || before.size != 0 {
+		t.Fatal("stable lock mutation lacks its empty held object", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal("stable lock mutation open failed", err)
+	}
+	closed := false
+	defer func() {
+		if !closed && file.Close() != nil {
+			t.Error("stable lock mutation cleanup failed")
+		}
+	}()
+	opened, err := nativeFileStamp(file, false, true)
+	if err != nil || opened != before {
+		t.Fatal("stable lock mutation opened another object", err)
+	}
+	count, blocked := file.WriteAt([]byte("changed"), 0)
+	after, err := nativeFileStamp(held, false, true)
+	if count != 0 || !errors.Is(blocked, windows.ERROR_LOCK_VIOLATION) || err != nil || after != before {
+		t.Fatal("native stable lock did not prevent the protected-range write", blocked, err)
+	}
+	t.Log("native protected-range write refusal:", blocked)
+	// Offset one lies outside the live [0,1) lock. No lock is released.
+	count, writeErr := file.WriteAt([]byte("changed"), 1)
+	closeErr := file.Close()
+	closed = true
+	if writeErr != nil || count != len("changed") || closeErr != nil {
+		t.Fatal("nonempty stable lock corruption was not established", writeErr, closeErr)
+	}
+	after, err = nativeFileStamp(held, false, true)
+	if err != nil || after.device != before.device || after.object != before.object || after.size != 8 {
+		t.Fatal("stable lock corruption changed its object or missed its size", err)
+	}
+	data := make([]byte, 8)
+	if count, err := held.ReadAt(data, 0); err != nil || count != len(data) || string(data) != "\x00changed" {
+		t.Fatal("stable lock corruption bytes differ", err)
+	}
+	t.Logf("owned stable lock device=%d object=%d size=%d", after.device, after.object, after.size)
+}
+
 func storeWindowsApplyDescriptor(t *testing.T, path, value string, protected bool) {
 	t.Helper()
 	sd, err := windows.SecurityDescriptorFromString(value)
@@ -186,9 +230,17 @@ func TestStoreWindowsUnsafeDACLRefusal(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, path := storePaths(t, location, value.Slot())
-			storeWindowsApplyDescriptor(t, path, "O:"+owner+vector.dacl, vector.protected)
+			if vector.name == "inherited-owner" {
+				storeWindowsInheritedOwnerRecord(t, location, path, owner)
+			} else {
+				storeWindowsApplyDescriptor(t, path, "O:"+owner+vector.dacl, vector.protected)
+			}
+			before := storeWindowsAncestorDescriptor(t, path)
 			_, err := store.BeginExisting(storeContext(t), value.Slot())
 			requireStoreError(t, err, ErrUnsafe)
+			if storeWindowsAncestorDescriptor(t, path) != before {
+				t.Fatal("unsafe DACL refusal repaired its fixture")
+			}
 			// Only the owned fixture restores access for cleanup after the refusal.
 			storeWindowsApplyDescriptor(t, path, "O:"+owner+"D:P(A;;FA;;;"+owner+")(A;;FA;;;SY)", true)
 		})
@@ -477,7 +529,7 @@ func TestStoreWindowsCurrentDirectorySecurityAtCallAndResolve(t *testing.T) {
 				}
 				owner := principals.user.String()
 				storeWindowsApplyDescriptor(t, path, "O:"+owner+"D:P(A;;FA;;;"+owner+")(A;;FA;;;SY)(A;;FR;;;WD)", true)
-				before := storeCurrentTree(t, fixture.location)
+				before := storeCurrentTree(t, fixture)
 				if operation == "begin" {
 					call, beginErr := permit.Begin(storeContext(t), SelectionCancelAction)
 					if call != nil {
