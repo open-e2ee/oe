@@ -52,6 +52,7 @@ func (r *runner) config(ctx context.Context, args []string) error {
 // that a person must make.
 func (r *runner) configPull(ctx context.Context, args []string) error {
 	flags := newFlags("config pull")
+	includeIdentity := flags.Bool("identity", false, "also add public identity to active environment sections")
 	yes := flags.Bool("yes", false, "replace values without a prompt")
 	dryRun := flags.Bool("dry-run", false, "show the changes and write nothing")
 	if err := parseFlags(flags, "config", args); err != nil {
@@ -73,6 +74,9 @@ func (r *runner) configPull(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := r.planIdentityPull(ctx, value, &plan, *includeIdentity); err != nil {
+		return err
+	}
 	if len(plan.changes) == 0 {
 		return r.out.Success("config pull", config.Filename+" matches the console.", plan.data("", false))
 	}
@@ -90,6 +94,9 @@ func (r *runner) configPull(ctx context.Context, args []string) error {
 	}
 	if plan.replaced > 0 && !*yes {
 		next := "oe config pull --yes"
+		if *includeIdentity {
+			next += " --identity"
+		}
 		if r.environmentSelected {
 			next += " --env " + r.environment
 		}
@@ -290,6 +297,8 @@ type pusher struct {
 // it did not apply to Sandbox.
 func (r *runner) configPush(ctx context.Context, args []string) error {
 	flags := newFlags("config push")
+	namespaceFirstUse := flags.Bool("confirm-state-never-used", false, "declare that the selected local namespace never existed")
+	slotFirstUse := flags.Bool("confirm-slot-never-used", false, "declare that the addressed kind slot never existed")
 	yes := flags.Bool("yes", false, "consent to the Production changes")
 	dryRun := flags.Bool("dry-run", false, "report the plan and change nothing")
 	if err := parseFlags(flags, "config", args); err != nil {
@@ -305,6 +314,13 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 	}
 	if r.environmentSelected {
 		environments = []string{r.environment}
+	}
+	if configManagesIdentity(value, environments) {
+		return r.configPushIdentity(ctx, path, value, identityCommandOptions{yes: *yes, dryRun: *dryRun,
+			namespaceFirstUse: *namespaceFirstUse, slotFirstUse: *slotFirstUse})
+	}
+	if *namespaceFirstUse || *slotFirstUse {
+		return identityInputFailure()
 	}
 	policies := map[string]control.RelayPolicyRequest{}
 	for _, environment := range environments {

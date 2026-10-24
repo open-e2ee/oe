@@ -125,3 +125,21 @@ func TestCommandPathDoesNotMoveWordsPastFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestHumanRootHelpKeepsGenericTemporaryFailureGuidance(t *testing.T) {
+	exit, stdout, stderr := run(t, Dependencies{Getenv: func(string) string { return "" }}, "--agent", "no", "--help")
+	if exit != 0 || stderr != "" {
+		t.Fatal("human help failed", exit, stderr)
+	}
+	_, after, found := strings.Cut(stdout, "Exit codes:\n")
+	if !found {
+		t.Fatal("human help omitted the exit-code section")
+	}
+	after, _, found = strings.Cut(after, "\nEnvironment variables:")
+	if !found || !strings.Contains(after, "6  Temporary failure; it is safe to retry next later.") {
+		t.Fatal("nonidentity temporary failure lost its generic retry guidance", stdout)
+	}
+	if strings.Contains(after, "same retained identity operation") {
+		t.Fatal("root help made nonidentity retries depend on an identity operation")
+	}
+}

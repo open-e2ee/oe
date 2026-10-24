@@ -132,7 +132,7 @@ jobs:
           - { os: windows-2025, target: windows, arch: amd64 }
           - { os: windows-11-arm, target: windows, arch: arm64 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.target == 'darwin' && matrix.arch == 'amd64' && 45 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

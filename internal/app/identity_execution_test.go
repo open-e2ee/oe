@@ -265,3 +265,199 @@ func TestIdentityExecutionControlledLogicalDeadlinePrecedesAllAuthorityWork(t *t
 		t.Fatal("logical expiration reached credentials, authority, transport or retained state")
 	}
 }
+
+func TestIdentityNewTargetRequiresApprovedContextBeforeAuthority(t *testing.T) {
+	for _, kind := range []identityattempt.Kind{identityattempt.Selection, identityattempt.KeysOnly, identityattempt.Lifecycle} {
+		t.Run(string(kind), func(t *testing.T) {
+			r, _, factory, attempts := identityContextRunner(t)
+			input := identityExecutionInput{Project: "sample", Kind: kind, Consent: true}
+			switch kind {
+			case identityattempt.Selection:
+				target := executionDecode[identity.SelectionTarget](t, `{"mode":"device-owned"}`)
+				input.Action, input.Target = identityattempt.SelectionApplyAction, &target
+			case identityattempt.KeysOnly:
+				keys := executionDecode[identity.ReplacementKeys](t, `[`+keyExecutionWire+`]`)
+				input.Action, input.Keys = identityattempt.KeysReplaceAction, &keys
+			case identityattempt.Lifecycle:
+				target := executionDecode[identity.LifecycleInputTarget](t, publicTargetWire)
+				input.Action, input.LifecycleTarget, input.LifecycleState = identityattempt.LifecycleApplyAction, &target, "suspended"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if _, err := r.executeIdentity(ctx, input); !errors.Is(err, errIdentityExecution) {
+				t.Fatal("new target recaptured consent", err)
+			}
+			if len(factory.slots) != 0 || attempts.opens != 0 || attempts.bootstraps != 0 {
+				t.Fatal("missing approval reached authority or retained state")
+			}
+		})
+	}
+}
+
+func TestIdentityApprovedCurrentComparesFullFreshContextBeforeStore(t *testing.T) {
+	for _, name := range []string{"same", "publishable-key", "recovery-generation", "scope-project", "configuration-version", "inventory", "refreshed-check-time", "admission-state", "admission-source-generation", "admission-evidence-state", "profile"} {
+		t.Run(name, func(t *testing.T) {
+			r, _, _, attempts := identityContextRunner(t)
+			approved := executionDecode[identity.CurrentContext](t, currentExecutionWire)
+			observed, _ := approved.Clone()
+			switch name {
+			case "publishable-key":
+				observed.Precondition.PublishableKey = "other_public_key"
+			case "recovery-generation":
+				observed.Precondition.RecoveryGeneration = 2
+			case "scope-project":
+				observed.Precondition.Scope.ProjectID = identity.TextFromUnits([]uint16{'o', 't', 'h', 'e', 'r'})
+			case "configuration-version":
+				observed.Configuration.ConfigurationVersion = 2
+			case "inventory":
+				observed.Configuration.Inventory.HistoryCount = 1
+			case "refreshed-check-time":
+				observed.Configuration.AdmissionReadiness.Evidence.CheckedAtSeconds = 1
+			case "admission-state":
+				reason := "not_ready"
+				observed.Configuration.AdmissionReadiness.State = "unready"
+				observed.Configuration.AdmissionReadiness.Reason = &reason
+			case "admission-source-generation":
+				epoch := identity.SafeInteger(1)
+				observed.Configuration.AdmissionReadiness.SourceGeneration.Kind = "cutover"
+				observed.Configuration.AdmissionReadiness.SourceGeneration.ReceiptEpoch = &epoch
+			case "admission-evidence-state":
+				reason := "evidence_unavailable"
+				observed.Configuration.AdmissionReadiness.State = "unknown"
+				observed.Configuration.AdmissionReadiness.Evidence.State = "unknown"
+				observed.Configuration.AdmissionReadiness.SourceGeneration = nil
+				observed.Configuration.AdmissionReadiness.Reason = &reason
+			case "profile":
+				observed.Configuration.IdentityProfile = executionDecode[identity.InstalledProfile](t, publicFirebaseWire)
+			}
+			calls := 0
+			actual, err := control.New(defaultControlURL, &http.Client{Transport: executionRoundTrip(func(request *http.Request) (*http.Response, error) {
+				calls++
+				if request.URL.Query().Get("action") != "current" {
+					t.Error("approved-context refusal dispatched work")
+				}
+				data, err := json.Marshal(observed)
+				if err != nil {
+					t.Fatal("invalid current mutation", err)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header)}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.identities = actual
+			target := executionDecode[identity.SelectionTarget](t, `{"mode":"device-owned"}`)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, err = r.executeIdentity(ctx, identityExecutionInput{Project: "sample", Kind: identityattempt.Selection, Action: identityattempt.SelectionApplyAction,
+				Target: &target, Approved: &approved, Consent: true})
+			if name == "same" || name == "refreshed-check-time" {
+				if !errors.Is(err, identityattempt.ErrLocation) || attempts.opens != 1 {
+					t.Fatal("equal approved context failed before actual owned factory", err)
+				}
+			} else if !errors.Is(err, errIdentityExecution) || attempts.opens != 0 {
+				t.Fatal("changed approved context reached retained state", err)
+			}
+			if calls != 1 || attempts.bootstraps != 0 {
+				t.Fatal("approved-context comparison caused extra effects")
+			}
+		})
+	}
+}
+
+func TestIdentityApprovalContextIgnoresOnlyCheckTimeWithoutChangingInputs(t *testing.T) {
+	approved := executionDecode[identity.CurrentContext](t, currentExecutionWire)
+	fresh, err := approved.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.Configuration.AdmissionReadiness.Evidence.CheckedAtSeconds = 7
+	oldApproved, err := json.Marshal(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFresh, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Equal(fresh) || !sameIdentityApprovalContext(approved, fresh) {
+		t.Fatal("fresh check time changed approval authority")
+	}
+	afterApproved, err := json.Marshal(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterFresh, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldApproved, afterApproved) || !bytes.Equal(oldFresh, afterFresh) {
+		t.Fatal("approval comparison changed original context")
+	}
+	fresh.Configuration.AdmissionReadiness.Evidence.CheckedAtSeconds = identity.SafeInteger(identity.MaximumSafeInteger + 1)
+	if sameIdentityApprovalContext(approved, fresh) {
+		t.Fatal("comparison accepted an invalid observation timestamp")
+	}
+}
+
+func TestIdentityApprovedLifecycleEvidenceRefusesBeforeEnrollmentOrPreparation(t *testing.T) {
+	for _, name := range []string{"fresh-correlation", "scope", "version", "state", "head-presence", "application"} {
+		t.Run(name, func(t *testing.T) {
+			r, _, _, attempts := identityContextRunner(t)
+			approved := executionDecode[identity.CurrentContext](t, currentExecutionWire)
+			target := executionDecode[identity.LifecycleInputTarget](t, publicTargetWire)
+			old := executionDecode[identity.TargetObservation](t, publicObservationWire)
+			fresh, _ := old.Clone()
+			fresh.OperationID = identity.TextFromUnits([]uint16{'f', 'r', 'e', 's', 'h'})
+			switch name {
+			case "scope":
+				fresh.Scope.ProjectID = identity.TextFromUnits([]uint16{'o', 't', 'h', 'e', 'r'})
+			case "version":
+				fresh.ObservedVersion = 1
+			case "state":
+				fresh.ObservedState = "suspended"
+			case "head-presence":
+				fresh.CurrentHead = &identity.LifecycleHead{Scope: fresh.Scope, Target: fresh.Target, OperationID: identity.TextFromUnits([]uint16{'o', 'l', 'd'}), Version: 1, State: "active"}
+			case "application":
+				fresh.Application, _ = identity.BoundLifecycleApplication("active", nil)
+			}
+			calls := []string{}
+			actual, err := control.New(defaultControlURL, &http.Client{Transport: executionRoundTrip(func(request *http.Request) (*http.Response, error) {
+				action := request.URL.Query().Get("action")
+				calls = append(calls, action)
+				var data []byte
+				var err error
+				if action == "current" {
+					data, err = json.Marshal(approved)
+				} else if action == "target" {
+					data, err = json.Marshal(fresh)
+				} else {
+					t.Error("stale target evidence prepared or dispatched")
+					return nil, errors.New("unexpected action")
+				}
+				if err != nil {
+					t.Fatal("invalid target mutation", err)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header)}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.identities = actual
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, err = r.executeIdentity(ctx, identityExecutionInput{Project: "sample", Kind: identityattempt.Lifecycle, Action: identityattempt.LifecycleApplyAction,
+				LifecycleTarget: &target, LifecycleState: "suspended", Approved: &approved, ApprovedTarget: &old, Consent: true, NamespaceFirstUse: true, SlotFirstUse: true})
+			if name == "fresh-correlation" {
+				if !errors.Is(err, identityattempt.ErrLocation) || attempts.opens != 1 {
+					t.Fatal("fresh read ID incorrectly changed target authority", err)
+				}
+			} else if !errors.Is(err, errIdentityExecution) || attempts.opens != 0 {
+				t.Fatal("changed lifecycle evidence reached local state", err)
+			}
+			if len(calls) != 2 || calls[0] != "current" || calls[1] != "target" || attempts.bootstraps != 0 {
+				t.Fatal("stale target caused preparation, retention or dispatch")
+			}
+		})
+	}
+}

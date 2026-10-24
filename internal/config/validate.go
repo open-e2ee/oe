@@ -53,7 +53,7 @@ func validate(value any) (Config, error) {
 			return Config{}, err
 		}
 		if err := json.Unmarshal(encoded, &result); err != nil {
-			return Config{}, err
+			return Config{}, identityConfigError("environments")
 		}
 		for _, environment := range []string{"sandbox", "production"} {
 			policy, err := result.RelayPolicyFor(environment)
@@ -95,6 +95,11 @@ func validate(value any) (Config, error) {
 // A missing or unknown property is reported at its own path, not at the
 // object that holds it.
 func schemaErrors(failure *jsonschema.ValidationError, printer *message.Printer) []FieldError {
+	locationParts := failure.InstanceLocation
+	if len(locationParts) >= 3 && locationParts[0] == "environments" &&
+		(locationParts[1] == "sandbox" || locationParts[1] == "production") && locationParts[2] == "identity" {
+		return []FieldError{{Path: strings.Join(locationParts[:3], "."), Message: "must match a supported public identity policy"}}
+	}
 	if len(failure.Causes) > 0 {
 		var fields []FieldError
 		for _, cause := range failure.Causes {

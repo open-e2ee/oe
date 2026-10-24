@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/open-e2ee/oe/internal/identity"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -42,7 +43,8 @@ type Environments struct {
 }
 
 type Environment struct {
-	Relay *RelayOverride `json:"relay,omitempty"`
+	Identity *identity.SelectionTarget `json:"identity,omitempty"`
+	Relay    *RelayOverride            `json:"relay,omitempty"`
 }
 
 // RelayOverride holds the fields of the shared policy that one environment
@@ -238,7 +240,10 @@ func writeSource(source *strings.Builder, value any, indent string) {
 func sourceOrder(object map[string]any) []string {
 	order := []string{
 		"product", "project", "relay", "environments", "sandbox", "production",
-		"deliveryRetention", "attachmentRetention", "relayReceipts",
+		"deliveryRetention", "attachmentRetention", "relayReceipts", "identity",
+		"mode", "provider", "algorithms", "issuer", "audience", "subjectClaim",
+		"authorizedParties", "allowMissingAuthorizedParty", "keys",
+		"kid", "kty", "crv", "x", "y", "alg", "use", "key_ops", "ext",
 	}
 	keys := make([]string, 0, len(object))
 	for key := range object {

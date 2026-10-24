@@ -12,6 +12,12 @@ import (
 )
 
 func (r *runner) identity(ctx context.Context, args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "current", "select", "keys", "lifecycle", "operation":
+			return r.identityCommands(ctx, args)
+		}
+	}
 	invalid := func(message string) error { return usageError("identity", message) }
 	if len(args) == 0 || args[0] != "check" {
 		return invalid("use oe identity check with a public profile file")

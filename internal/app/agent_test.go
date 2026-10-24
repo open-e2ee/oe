@@ -528,7 +528,9 @@ func TestCommandFieldIsTheCommandPath(t *testing.T) {
 		}
 	}
 	want := []string{
-		"new", "auth login", "auth status", "auth logout", "org show", "org list", "org switch", "doctor", "identity check", "link",
+		"new", "auth login", "auth status", "auth logout", "org show", "org list", "org switch", "doctor", "identity check",
+		"identity current", "identity select", "identity keys rotate", "identity lifecycle target", "identity lifecycle suspend", "identity lifecycle activate",
+		"identity operation status", "identity operation retry", "identity operation resume", "identity operation cancel", "link",
 		"project list", "project show", "project usage", "project connection", "config push", "config pull",
 		"notifications status", "notifications setup ios", "notifications add-nse", "notifications verify ios",
 		"notifications apple-filtering-request", "agent setup", "version", "help",

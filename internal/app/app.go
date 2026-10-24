@@ -74,6 +74,7 @@ type runner struct {
 	environment      string
 	// environmentSelected is true when --env or OE_ENV names the environment.
 	environmentSelected bool
+	environmentExplicit bool
 	mode                output.Mode
 	// underAgent is true when a coding agent runs the CLI. Then the CLI never
 	// prompts and never opens a browser.
@@ -145,6 +146,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 			return fail(writer, command, args, global.environment, fmt.Errorf("determine working directory: %w", err))
 		}
 	}
+	environmentExplicit := global.environmentSelected
 	if !global.environmentSelected {
 		global.environment, global.environmentSelected, err = defaultEnvironment(command, dependencies.Getenv)
 		if err != nil {
@@ -198,7 +200,8 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 		getenv: dependencies.Getenv, symlink: dependencies.Symlink, directory: dependencies.WorkingDir,
 		controlURL: global.controlURL, environment: global.environment,
 		environmentSelected: global.environmentSelected, mode: global.mode,
-		underAgent: underAgent, harness: harness,
+		environmentExplicit: environmentExplicit,
+		underAgent:          underAgent, harness: harness,
 		protectionBypass: protectionBypass, protectionBypassSource: protectionBypassSource,
 	}
 	if err := r.execute(ctx, command, commandArgs); err != nil {
