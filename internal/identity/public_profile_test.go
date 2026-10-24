@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -113,7 +114,12 @@ func TestProfileURLConstraintVectors(t *testing.T) {
 		wire := strings.Replace(configuredWire, "https://members.example", issuer, 1)
 		mustDecode[SelectionTarget](t, wire)
 	}
-	for _, issuer := range []string{"http://members.example", "https://user:pass@members.example", "https://members.example/#fragment", "https://members.example:65536", "https://"} {
+	credentialIssuer := (&url.URL{
+		Scheme: "https",
+		Host:   "members.example",
+		User:   url.UserPassword("user", "pass"),
+	}).String()
+	for _, issuer := range []string{"http://members.example", credentialIssuer, "https://members.example/#fragment", "https://members.example:65536", "https://"} {
 		rejectJSON[SelectionTarget](t, []byte(strings.Replace(configuredWire, "https://members.example", issuer, 1)))
 	}
 }
