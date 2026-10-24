@@ -26,11 +26,16 @@ type identityExecutionInput struct {
 	Consent           bool
 	NamespaceFirstUse bool
 	SlotFirstUse      bool
+	Approved          *identity.CurrentContext
+	ApprovedTarget    *identity.TargetObservation
 }
 
 type identityExecutionResult struct {
 	Disposition identity.ReceiptDisposition
 	Envelope    identityattempt.Envelope
+	Selection   *identity.SelectionResult
+	Keys        *identity.KeysResult
+	Lifecycle   *identity.LifecycleStatus
 }
 
 func identityActionKind(action identityattempt.Action) identityattempt.Kind {
@@ -124,14 +129,35 @@ func confirmIdentityEnvironment(value string, attempt *identityattempt.Attempt, 
 	return nil
 }
 
-// executeIdentity has no command route yet. Its successful app.Run composition
-// requires the later command grant; local store/control integration is separate.
+// executeIdentity retains the exact command before one mutation dispatch.
+// New targets require the complete context that the caller approved.
 func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInput) (result identityExecutionResult, err error) {
 	if input.validate() != nil || ctx == nil {
 		return result, errIdentityExecution
 	}
 	if deadline, bounded := ctx.Deadline(); !bounded || ctx.Err() != nil || !time.Now().Before(deadline) {
 		return result, identityattempt.ErrTimeout
+	}
+	newTarget := input.Target != nil || input.Keys != nil || input.LifecycleTarget != nil
+	if newTarget {
+		if input.Approved == nil || input.Approved.Validate() != nil {
+			return result, errIdentityExecution
+		}
+		approved, cloneErr := input.Approved.Clone()
+		if cloneErr != nil {
+			return result, errIdentityExecution
+		}
+		input.Approved = &approved
+		if input.LifecycleTarget != nil {
+			if input.ApprovedTarget == nil || input.ApprovedTarget.Validate() != nil {
+				return result, errIdentityExecution
+			}
+			target, cloneErr := input.ApprovedTarget.Clone()
+			if cloneErr != nil {
+				return result, errIdentityExecution
+			}
+			input.ApprovedTarget = &target
+		}
 	}
 	address, err := r.identityContext(ctx, input.Project, input.Kind)
 	if err != nil {
@@ -143,8 +169,23 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 	if err != nil {
 		return result, err
 	}
-	if _, err := current.Context(); err != nil {
+	contextValue, err := current.Context()
+	if err != nil {
 		return result, err
+	}
+	if newTarget && !sameIdentityApprovalContext(*input.Approved, contextValue) {
+		return result, errIdentityExecution
+	}
+	var targetObservation *identity.TargetObservation
+	if input.LifecycleTarget != nil {
+		observed, observationErr := address.transport.LifecycleTarget(ctx, address.credential, *input.LifecycleTarget)
+		if observationErr != nil {
+			return result, observationErr
+		}
+		if !sameIdentityTargetEvidence(*input.ApprovedTarget, observed) || !observed.Scope.Equal(contextValue.Precondition.Scope) {
+			return result, errIdentityExecution
+		}
+		targetObservation = &observed
 	}
 	status := input.Action == identityattempt.SelectionStatusAction || input.Action == identityattempt.KeysStatusAction || input.Action == identityattempt.LifecycleStatusAction
 	if (!status || input.NamespaceFirstUse || input.SlotFirstUse) && !input.Consent {
@@ -176,7 +217,7 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 			return result, identityattempt.ErrOperationIDUnretained
 		}
 		var retained identityattempt.Attempt
-		retained, err = r.newIdentityAttempt(ctx, address, current, lease, envelope, input)
+		retained, err = r.newIdentityAttempt(ctx, address, current, lease, envelope, input, targetObservation)
 		if err != nil {
 			return result, err
 		}
@@ -185,6 +226,8 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 			return result, err
 		}
 		attempt = &retained
+	} else if newTarget {
+		return result, identityattempt.ErrChanged
 	} else if err := retainedIdentityInput(*attempt, input); err != nil {
 		return result, err
 	}
@@ -204,10 +247,11 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 	if err != nil {
 		return result, err
 	}
-	resolution, err := dispatchIdentity(ctx, address, current, lease, envelope, permit, input)
+	resolution, receipt, err := dispatchIdentity(ctx, address, current, lease, envelope, permit, input)
 	if err != nil {
 		return result, err
 	}
+	result = receipt
 	result.Envelope, err = resolution.Envelope()
 	result.Disposition = resolution.Disposition()
 	return result, err
@@ -236,7 +280,7 @@ func retainedIdentityInput(attempt identityattempt.Attempt, input identityExecut
 }
 
 func (r *runner) newIdentityAttempt(ctx context.Context, address identityExecutionContext, current control.AddressedCurrent,
-	lease *identityattempt.Lease, envelope identityattempt.Envelope, input identityExecutionInput) (identityattempt.Attempt, error) {
+	lease *identityattempt.Lease, envelope identityattempt.Envelope, input identityExecutionInput, targetObservation *identity.TargetObservation) (identityattempt.Attempt, error) {
 	contextValue, err := current.Context()
 	if err != nil {
 		return identityattempt.Attempt{}, err
@@ -245,13 +289,10 @@ func (r *runner) newIdentityAttempt(ctx context.Context, address identityExecuti
 		if input.LifecycleTarget == nil || input.LifecycleState == "" {
 			return identityattempt.Attempt{}, errIdentityExecution
 		}
-		observation, err := address.transport.LifecycleTarget(ctx, address.credential, *input.LifecycleTarget)
-		if err != nil {
-			return identityattempt.Attempt{}, err
-		}
-		if !observation.Scope.Equal(contextValue.Precondition.Scope) || observation.Target.Kind != input.LifecycleTarget.Kind {
+		if targetObservation == nil || input.ApprovedTarget == nil || !sameIdentityTargetEvidence(*input.ApprovedTarget, *targetObservation) {
 			return identityattempt.Attempt{}, errIdentityExecution
 		}
+		observation := *targetObservation
 		nonce, err := identityNonce()
 		if err != nil {
 			return identityattempt.Attempt{}, err
@@ -281,7 +322,7 @@ func (r *runner) newIdentityAttempt(ctx context.Context, address identityExecuti
 	if err != nil {
 		return identityattempt.Attempt{}, err
 	}
-	if !observed.Current.Precondition.Equal(contextValue.Precondition) {
+	if !sameIdentityApprovalContext(observed.Current, contextValue) || input.Approved == nil || !sameIdentityApprovalContext(observed.Current, *input.Approved) || !identityNativeAvailable(input.Target, observed) {
 		return identityattempt.Attempt{}, errIdentityExecution
 	}
 	id, err := identityNewID()
@@ -297,7 +338,7 @@ func (r *runner) newIdentityAttempt(ctx context.Context, address identityExecuti
 }
 
 func dispatchIdentity(ctx context.Context, address identityExecutionContext, current control.AddressedCurrent, lease *identityattempt.Lease,
-	envelope identityattempt.Envelope, permit *identityattempt.DispatchPermit, input identityExecutionInput) (identityattempt.Resolution, error) {
+	envelope identityattempt.Envelope, permit *identityattempt.DispatchPermit, input identityExecutionInput) (identityattempt.Resolution, identityExecutionResult, error) {
 	switch input.Action {
 	case identityattempt.SelectionApplyAction, identityattempt.SelectionStatusAction, identityattempt.SelectionCancelAction:
 		var receipt identity.SelectionReceipt
@@ -311,9 +352,14 @@ func dispatchIdentity(ctx context.Context, address identityExecutionContext, cur
 			receipt, err = address.transport.SelectionCancel(ctx, address.credential, permit)
 		}
 		if err != nil {
-			return identityattempt.Resolution{}, err
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
 		}
-		return lease.ResolveSelection(ctx, envelope, receipt)
+		value, err := receipt.Result()
+		if err != nil {
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
+		}
+		resolution, err := lease.ResolveSelection(ctx, envelope, receipt)
+		return resolution, identityExecutionResult{Selection: &value}, err
 	case identityattempt.KeysReplaceAction, identityattempt.KeysStatusAction, identityattempt.KeysCancelAction:
 		var receipt identity.KeysReceipt
 		var err error
@@ -326,9 +372,14 @@ func dispatchIdentity(ctx context.Context, address identityExecutionContext, cur
 			receipt, err = address.transport.KeysCancel(ctx, address.credential, permit)
 		}
 		if err != nil {
-			return identityattempt.Resolution{}, err
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
 		}
-		return lease.ResolveKeys(ctx, envelope, receipt)
+		value, err := receipt.Result()
+		if err != nil {
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
+		}
+		resolution, err := lease.ResolveKeys(ctx, envelope, receipt)
+		return resolution, identityExecutionResult{Keys: &value}, err
 	default:
 		var reply control.LifecycleReply
 		var err error
@@ -339,23 +390,61 @@ func dispatchIdentity(ctx context.Context, address identityExecutionContext, cur
 			reply, err = address.transport.LifecycleResume(ctx, address.credential, current, permit)
 		case identityattempt.LifecycleApplyAction:
 			if input.LifecycleTarget == nil {
-				return identityattempt.Resolution{}, errIdentityExecution
+				return identityattempt.Resolution{}, identityExecutionResult{}, errIdentityExecution
 			}
 			reply, err = address.transport.LifecycleApply(ctx, address.credential, current, permit, *input.LifecycleTarget)
 		default:
-			return identityattempt.Resolution{}, errIdentityExecution
+			return identityattempt.Resolution{}, identityExecutionResult{}, errIdentityExecution
 		}
 		if err != nil {
-			return identityattempt.Resolution{}, err
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
 		}
 		receipt, err := reply.Receipt()
 		if err != nil {
-			return identityattempt.Resolution{}, err
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
 		}
 		scope, err := reply.Scope()
 		if err != nil {
-			return identityattempt.Resolution{}, err
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
 		}
-		return lease.ResolveLifecycle(ctx, envelope, scope, receipt)
+		value, err := receipt.Result()
+		if err != nil {
+			return identityattempt.Resolution{}, identityExecutionResult{}, err
+		}
+		resolution, err := lease.ResolveLifecycle(ctx, envelope, scope, receipt)
+		return resolution, identityExecutionResult{Lifecycle: &value}, err
 	}
+}
+
+// Each target read has an independent correlation ID. It grants no continuation.
+// All remaining fields, including optional presence, must match the approval.
+func sameIdentityTargetEvidence(approved, current identity.TargetObservation) bool {
+	if approved.Validate() != nil || current.Validate() != nil {
+		return false
+	}
+	detached, err := current.Clone()
+	if err != nil {
+		return false
+	}
+	detached.OperationID = approved.OperationID
+	return approved.Equal(detached)
+}
+
+// Admission evidence receives a new check time on every maintained Relay read.
+// All authority fields and optional presence remain part of the approval.
+func sameIdentityApprovalContext(approved, current identity.CurrentContext) bool {
+	if approved.Validate() != nil || current.Validate() != nil {
+		return false
+	}
+	left, err := approved.Clone()
+	if err != nil {
+		return false
+	}
+	right, err := current.Clone()
+	if err != nil {
+		return false
+	}
+	left.Configuration.AdmissionReadiness.Evidence.CheckedAtSeconds = 0
+	right.Configuration.AdmissionReadiness.Evidence.CheckedAtSeconds = 0
+	return left.Equal(right)
 }

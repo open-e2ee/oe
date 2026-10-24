@@ -56,8 +56,18 @@ var commandSurface = []commandSpec{
 	{"doctor", "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
 		"oe doctor [--env sandbox|production] [--wait] [--timeout DURATION]",
 	}},
-	{"identity", "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle.", []string{
+	{"identity", "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle. Current and dry-run read installed authority. Selection, keys rotation and lifecycle use exact retained operations. Production changes need explicit consent. First-use declarations need literal --env.", []string{
 		"oe identity check --profile PATH [--assertion-stdin] [--env sandbox|production]",
+		"oe identity current [--env sandbox|production]",
+		"oe identity select [--dry-run] [--yes] [--confirm-state-never-used] [--confirm-slot-never-used] [--env sandbox|production]",
+		"oe identity keys rotate --keys PATH [--dry-run] [--yes] [--confirm-state-never-used] [--confirm-slot-never-used] [--env sandbox|production]",
+		"oe identity lifecycle target --target-stdin [--env sandbox|production]",
+		"oe identity lifecycle suspend --target-stdin [--dry-run] [--yes] [--confirm-state-never-used] [--confirm-slot-never-used] [--env sandbox|production]",
+		"oe identity lifecycle activate --target-stdin [--dry-run] [--yes] [--confirm-state-never-used] [--confirm-slot-never-used] [--env sandbox|production]",
+		"oe identity operation status --kind selection|keys-only|lifecycle [--env sandbox|production]",
+		"oe identity operation retry --kind selection|keys-only [--yes] [--env sandbox|production]",
+		"oe identity operation resume --kind lifecycle [--yes] [--env sandbox|production]",
+		"oe identity operation cancel --kind selection|keys-only [--yes] [--env sandbox|production]",
 	}},
 	{"link", "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
@@ -68,9 +78,9 @@ var commandSurface = []commandSpec{
 		"oe project usage [PROJECT] [--env sandbox|production]",
 		"oe project connection [PROJECT] [--env sandbox|production]",
 	}},
-	{"config", "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing.", []string{
-		"oe config push [--env sandbox|production] [--yes] [--dry-run]",
-		"oe config pull [--env sandbox|production] [--yes] [--dry-run]",
+	{"config", "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing. Optional identity fields apply only to their environment. Pull --identity adds those fields explicitly. Identity push needs literal --env. Inactive Production activates before a later identity preview.", []string{
+		"oe config push [--env sandbox|production] [--yes] [--dry-run] [--confirm-state-never-used] [--confirm-slot-never-used]",
+		"oe config pull [--identity] [--env sandbox|production] [--yes] [--dry-run]",
 	}},
 	{"notifications", "Stage and verify best-effort iOS notification profiles.", []string{
 		"oe notifications status [--env sandbox|production]",
@@ -172,7 +182,7 @@ var exitCodeSurface = []exitCodeSpec{
 	{exitUsage, "The command line is invalid or a required input is missing."},
 	{exitAuthentication, "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."},
 	{exitPersonAction, "A person must act before the command can continue. The error tells what to do. When action.url is present, it is the page that the person opens."},
-	{exitTemporary, "The failure is temporary. It is safe to run the same command again later. next is that command."},
+	{exitTemporary, "The failure is temporary. Run next later. Identity next preserves the exact retained operation and never creates a replacement."},
 }
 
 var variableSurface = []variableSpec{
@@ -180,7 +190,7 @@ var variableSurface = []variableSpec{
 	{"OE_ACCESS_TOKEN_SCOPES", "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."},
 	{"OE_PROTECTION_BYPASS", "A protection bypass secret for the control URL. Login stores it with that session. It takes precedence over the stored bypass and never appears in output."},
 	{"OE_ENV", "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
-	{"OE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to retry one mutation."},
+	{"OE_OPERATION_ID", "The idempotency key for each nonidentity remote mutation of one run. For identity, it confirms only an exact retained original or cancellation. It cannot create or replace an operation."},
 }
 
 // commandPath gives the words of usage that name the command: the words
