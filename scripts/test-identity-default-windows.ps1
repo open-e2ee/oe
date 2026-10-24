@@ -1,4 +1,5 @@
-param([Parameter(Mandatory=$true)][ValidateSet('amd64','arm64')][string]$ExpectedArchitecture)
+param([Parameter(Mandatory=$true)][ValidateSet('amd64','arm64')][string]$ExpectedArchitecture,
+    [switch]$DiagnosticFileSentinel)
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'A fresh disposable GitHub-hosted VM is required.' }
 if (-not $IsWindows -or [IntPtr]::Size -ne 8) { throw 'A native 64-bit Windows process is required.' }
@@ -13,6 +14,7 @@ if ($launcherSID -eq 'S-1-5-18' -or -not $launcherIsAdmin) { throw 'A non-SYSTEM
 $root=Split-Path -Parent $PSScriptRoot
 $nonce=[Guid]::NewGuid().ToString('N')
 $proof=Join-Path $env:RUNNER_TEMP "ca8-default-proof-$nonce"
+if ($DiagnosticFileSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-file-sentinel-proof-$nonce" }
 $artifact=Join-Path $proof 'artifact'
 $workspace=Join-Path ($env:SystemDrive+'\') "ca8-default-$nonce"
 if (-not [IO.Path]::IsPathFullyQualified($workspace)) { throw 'The new fixture workspace requires an actual drive root.' }
@@ -222,6 +224,9 @@ try {
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'disposable.json') -Encoding utf8
     Copy-Item -LiteralPath $module -Destination (Join-Path $workspace 'native.cs')
     $child=Join-Path $workspace 'standard.ps1'
+    if ($DiagnosticFileSentinel) {
+        'exit 73' | Set-Content -LiteralPath $child -Encoding utf8
+    } else {
     @'
 param([string]$Binary,[string]$Proof,[string]$Nonce)
 $ErrorActionPreference='Stop'
@@ -243,6 +248,7 @@ $result | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Proof 
 Signal-StandardStartup 'controller-recorded'
 if ($result.status -ne 0 -or -not $result.jobEmpty -or $result.errors.Count -ne 0) {exit 1}
 '@ | Set-Content -LiteralPath $child -Encoding utf8
+    }
     $broker=Join-Path $workspace 'broker.ps1'
     @'
 param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
@@ -344,7 +350,7 @@ finally {
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
         newAccount=$userName;newSID=$sid;originalProfilePath=if($profileRecord){$profileRecord.LocalPath}else{$null};
         profileDeleted=$profileDeleted;accountDeleted=$accountDeleted;
-        scope='D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}
+        scope=if($DiagnosticFileSentinel){'Diagnostic-only PowerShell -File exit 73. No D01-D06, Go/default-store, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}else{'D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}}
     $terminalText=$terminal | ConvertTo-Json -Depth 12
     if ([Text.Encoding]::UTF8.GetByteCount($terminalText) -gt 1048576) { throw 'The reserved terminal evidence bound was reached.' }
     [IO.File]::WriteAllText((Join-Path $artifact 'result.json'),$terminalText,[Text.UTF8Encoding]::new($false))
