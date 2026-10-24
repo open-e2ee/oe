@@ -20,6 +20,7 @@ $userName='ca8d_'+$nonce.Substring(0,12)
 $timer=[Diagnostics.Stopwatch]::StartNew()
 $stages=[Collections.Generic.List[object]]::new()
 $created=$false; $accountCreationAttempted=$false; $sid=$null; $profileRecord=$null; $runResult=$null
+$nativeGuiReadback=$null; $nativeControllerReadback=$null
 $brokerStarted=$false; $allJobsEmpty=$false; $evidence=$null; $copied=$false; $collectionComplete=$false; $success=$false; $failure=$null
 $artifactBytes=0L; $artifactEntries=0; $profileDeleted=$false; $accountDeleted=$false
 $module=Join-Path $PSScriptRoot 'identity-qualification-windows.cs'
@@ -61,10 +62,12 @@ function Observe-OwnedClosure {
     if (-not $brokerStarted) { return $true }
     if ($null -eq $runResult -or -not (Test-NativeClosure $runResult.process) -or -not $runResult.secretTransferClosed -or $runResult.errors.Count -ne 0) { return $false }
     $gui=Read-OwnedJSON (Join-Path $evidence 'broker-process.json')
+    $script:nativeGuiReadback=$gui
     if ($gui.errors.Count -ne 0 -or -not $gui.restored -or -not $gui.stationCreated -or -not $gui.desktopCreated -or
         -not $gui.stationClosed -or -not $gui.desktopClosed -or -not $gui.stationAbsent -or -not $gui.childLaunchAttempted -or
         $gui.station -ne ('ca8_station_'+$nonce) -or $gui.desktop -ne ('ca8_desktop_'+$nonce) -or -not (Test-NativeClosure $gui.child)) { return $false }
     $controller=Read-OwnedJSON (Join-Path $evidence 'controller-process.json')
+    $script:nativeControllerReadback=$controller
     return Test-NativeClosure $controller
 }
 function Read-ExactU64($Value) {
@@ -305,6 +308,7 @@ finally {
         }
     } catch { $success=$false; $failure+="`nCleanup: $_" }
     $terminal=@{success=$success;failure=$failure;elapsedSeconds=$timer.Elapsed.TotalSeconds;allJobsEmpty=$allJobsEmpty;
+        nativeBroker=$runResult;nativeGui=$nativeGuiReadback;nativeController=$nativeControllerReadback;preparationStages=$stages;
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
         newAccount=$userName;newSID=$sid;originalProfilePath=if($profileRecord){$profileRecord.LocalPath}else{$null};
         profileDeleted=$profileDeleted;accountDeleted=$accountDeleted;
