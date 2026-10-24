@@ -21,6 +21,7 @@ $timer=[Diagnostics.Stopwatch]::StartNew()
 $stages=[Collections.Generic.List[object]]::new()
 $created=$false; $accountCreationAttempted=$false; $sid=$null; $profileRecord=$null; $runResult=$null
 $nativeGuiReadback=$null; $nativeControllerReadback=$null
+$nativeLauncherReceipt=$null; $hostVersionReceipt=@{available=$false;code='HOST_VERSION_NOT_CAPTURED';childLoadedVersionMeasured=$false}
 $brokerStarted=$false; $allJobsEmpty=$false; $evidence=$null; $copied=$false; $collectionComplete=$false; $success=$false; $failure=$null
 $artifactBytes=0L; $artifactEntries=0; $profileDeleted=$false; $accountDeleted=$false
 $module=Join-Path $PSScriptRoot 'identity-qualification-windows.cs'
@@ -192,7 +193,21 @@ try {
     foreach ($entry in @{GOTOOLCHAIN='local';GOENV='off';GOWORK='off';CGO_ENABLED='0';GOPRIVATE='';GONOPROXY='';GONOSUMDB='';GOVCS='off';GOPROXY='https://proxy.golang.org';GOSUMDB='sum.golang.org';OE_OPERATION_ID='';GIT_CONFIG_COUNT='1';GIT_CONFIG_KEY_0='safe.directory';GIT_CONFIG_VALUE_0=$root}.GetEnumerator()) {$buildEnvironment[$entry.Key]=$entry.Value}
     foreach ($entry in @{GOPATH='cache\go';GOMODCACHE='cache\modules';GOCACHE='cache\build';GOTMPDIR='temporary';TMP='temporary';TEMP='temporary'}.GetEnumerator()) {$buildEnvironment[$entry.Key]=Join-Path $workspace $entry.Value}
     $go=Tool 'go.exe';$pwsh=Join-Path $PSHOME 'pwsh.exe';$git=Tool 'git.exe'
-    Save-Proof 'native-launcher.json' @{path=$pwsh;sha256=(Get-FileHash -LiteralPath $pwsh -Algorithm SHA256).Hash;architecture=$architecture}
+    $nativeLauncherReceipt=@{path=$pwsh;sha256=(Get-FileHash -LiteralPath $pwsh -Algorithm SHA256).Hash;architecture=$architecture}
+    Save-Proof 'native-launcher.json' $nativeLauncherReceipt
+    try {
+        $hostPowerShellVersion=[string]$PSVersionTable.PSVersion
+        $hostGitCommitId=[string]$PSVersionTable.GitCommitId
+        $hostRuntimeVersion=[Environment]::Version.ToString()
+        $hostProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+        $hostOSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+        foreach ($value in @($hostPowerShellVersion,$hostGitCommitId,$hostRuntimeVersion,$hostProcessArchitecture,$hostOSArchitecture)) {
+            if ($value.Length -gt 128 -or $value -cnotmatch '^[0-9A-Za-z][0-9A-Za-z.+_-]{0,127}$') { throw 'Host version metadata is unavailable.' }
+        }
+        $hostVersionReceipt=@{available=$true;code='AVAILABLE';powerShellVersion=$hostPowerShellVersion;
+            gitCommitId=$hostGitCommitId;runtimeVersion=$hostRuntimeVersion;processArchitecture=$hostProcessArchitecture;
+            osArchitecture=$hostOSArchitecture;childLoadedVersionMeasured=$false}
+    } catch { $hostVersionReceipt=@{available=$false;code='HOST_VERSION_UNAVAILABLE';childLoadedVersionMeasured=$false} }
     $goHost=(Run-Stage $go @('env','-json','GOHOSTOS','GOHOSTARCH','GOVERSION')) | ConvertFrom-Json
     if ($goHost.GOHOSTOS -ne 'windows' -or $goHost.GOHOSTARCH -ne $architecture -or $goHost.GOVERSION -ne 'go1.27.3') {throw 'The Go host differs from the native target.'}
     $modules=@{};foreach ($name in @('go.mod','go.sum')) {$modules[$name]=(Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash}
@@ -325,6 +340,7 @@ finally {
     } catch { $success=$false; $failure+="`nCleanup: $_" }
     $terminal=@{success=$success;failure=$failure;elapsedSeconds=$timer.Elapsed.TotalSeconds;allJobsEmpty=$allJobsEmpty;
         nativeBroker=$runResult;nativeGui=$nativeGuiReadback;nativeController=$nativeControllerReadback;preparationStages=$stages;
+        nativeLauncher=$nativeLauncherReceipt;hostVersions=$hostVersionReceipt;
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
         newAccount=$userName;newSID=$sid;originalProfilePath=if($profileRecord){$profileRecord.LocalPath}else{$null};
         profileDeleted=$profileDeleted;accountDeleted=$accountDeleted;
