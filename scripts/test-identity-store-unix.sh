@@ -43,6 +43,8 @@ if actual_os == 'darwin':
     if queried != 0 and ctypes.get_errno() != errno.ENOENT: raise SystemExit('Native architecture could not be checked.')
 if (actual_os, actual_arch) != (expected_os, expected_arch):
     raise SystemExit('The actual native OS/architecture differs from the job target.')
+intel_native = profile == 'native' and actual_os == 'darwin' and actual_arch == 'amd64'
+if intel_native: outer_deadline = started + 2400
 nonce = uuid.uuid4().hex
 mount = pathlib.Path('/Volumes' if actual_os == 'darwin' else '/') / ('ca8-store-run-' + nonce)
 backing = proof / 'volume'
@@ -203,6 +205,7 @@ def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=Non
     if time.monotonic() >= outer_deadline: raise RuntimeError('Outer process deadline expired.')
     phases = {'native': ['native-compile','native-tool-prepare','native-build-info','native-execution'],
               'race': ['full-cli-prewarm','full-race-execution']}
+    if intel_native: phases['native'] += ['native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
     if phase is not None and phase not in phases.get(profile, []):
         raise RuntimeError('Invalid test diagnostic phase.')
     cpu_count = os.cpu_count() if phase is not None else None
@@ -316,6 +319,81 @@ def native_executable_input(path):
                 'sha256':digest.hexdigest()}
     finally: os.close(descriptor)
 
+def prepare_intel_contract():
+    import importlib.util
+    sys.dont_write_bytecode = True
+    path = root/'scripts/identity-native-intel.py'
+    spec = importlib.util.spec_from_file_location('identity_native_intel',path)
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    raw = (root/'scripts/identity-native-intel-roster.json').read_bytes()
+    if len(raw) > 1024*1024: raise RuntimeError('Intel roster input exceeds its fixed bound.')
+    roster = module.checked_roster(json.loads(raw))
+    save('native-intel-coverage.json',{'schemaVersion':1,'success':False,'listed':False,
+        'phase':'preparation','admittedParents':[],'unrunParents':roster['parents'],'unrunNodes':roster['nodes']})
+    return module,roster
+
+def run_intel_partitions(module,roster,cold_deadline,execution_env,package_dir):
+    def current_inputs():
+        actual = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
+            'sourceHashes':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in source_files}}
+        if any(actual[key] != native_inputs[key] for key in actual):
+            raise RuntimeError('Intel native executable or source inputs changed.')
+        return actual
+    def identity():
+        actual = current_inputs()
+        return {'binarySHA256':actual['binary']['sha256'],'test2jsonSHA256':actual['test2json']['sha256'],
+            'sourceSHA256':hashlib.sha256(json.dumps(actual['sourceHashes'],sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+    def group(stage):
+        if stage >= len(steps) or stage >= len(groups): raise RuntimeError('Intel native stage ownership is incomplete.')
+        native = groups[stage]
+        return {'stage':stage,'sid':native['sid'],'leaderPID':native['leaderPID'],
+            'expectedRootPGID':native['expectedRootPGID'],'leaderStatus':native['leaderStatus'],
+            'empty':native.get('empty') is True and steps[stage].get('ownedSessionEmpty') is True
+                and all(observer.get('empty') is True for observer in process_observers)}
+    def bounded_output(stage,maximum):
+        path = proof/f'{stage:02d}.stdout'
+        with path.open('rb') as reader: raw = reader.read(maximum+1)
+        if len(raw) > maximum: raise RuntimeError('Intel native event evidence exceeds its bound.')
+        return raw
+    coverage = module.IntelNativeCoverage(roster,identity())
+    try:
+        stage = len(steps)
+        remaining = cold_deadline-time.monotonic()
+        if remaining <= 0: raise RuntimeError('Intel roster discovery has no cold-phase budget.')
+        run([str(test_binary),'-test.list=.'],min(30,remaining),env=execution_env,cwd=package_dir,
+            capture=True,phase='native-roster-discovery',phase_deadline=cold_deadline)
+        coverage.accept_listing(bounded_output(stage,65536),identity(),group(stage))
+        save('native-intel-coverage.json',coverage.snapshot())
+        if time.monotonic() > cold_deadline: raise RuntimeError('Intel cold preparation deadline expired.')
+        if outer_deadline-time.monotonic() < 1830: raise RuntimeError('Intel execution and cleanup reserve unavailable.')
+        for partition in range(1,4):
+            source = identity()
+            if partition == 1 and time.monotonic() > cold_deadline: raise RuntimeError('Intel cold preparation deadline expired.')
+            if outer_deadline-time.monotonic() < (4-partition)*600+30:
+                raise RuntimeError('Intel remaining partition reserve unavailable.')
+            stage = len(steps)
+            selector = coverage.admit(partition,source,group(stage-1),stage)
+            save('native-intel-coverage.json',coverage.snapshot())
+            stage_failure = None
+            try:
+                run([go,'tool','test2json','-t','-p','github.com/open-e2ee/oe/internal/identityattempt',str(test_binary),
+                    '-test.paniconexit0','-test.v=test2json','-test.count=1','-test.timeout=9m','-test.run='+selector],600,
+                    env=execution_env,cwd=package_dir,phase='native-partition-'+str(partition))
+            except BaseException as error:
+                stage_failure = str(error)
+            after = current_inputs()
+            save(f'native-intel-inputs-{partition}.json',after)
+            receipt = coverage.record(partition,identity(),group(stage),steps[stage]['status'],bounded_output(stage,64*1024*1024),stage_failure is None)
+            save('native-intel-coverage.json',coverage.snapshot())
+            if stage_failure:
+                save(f'native-intel-stage-{partition}-failure.json',{'stage':stage,'failure':stage_failure})
+                # A deadline or monitor failure cannot become a successful partition.
+                if receipt['success']: raise RuntimeError('Intel stage and coverage results disagree.')
+            if not receipt['closed']: raise RuntimeError('Intel predecessor native closure is uncertain.')
+        if not coverage.snapshot()['success']: raise RuntimeError('Intel exact test coverage failed.')
+    finally:
+        save('native-intel-coverage.json',coverage.snapshot())
+
 def darwin_acl(fd, private):
     class Request(ctypes.Structure):
         _fields_ = [('maps',ctypes.c_uint16),('reserved',ctypes.c_uint16),
@@ -384,6 +462,7 @@ def inspect_chain(path, private=False):
     finally: os.close(fd)
 
 try:
+    if intel_native: intel_module,intel_roster = prepare_intel_contract()
     index_before = checkout_index_metadata()
     save('checkout-index-before.json',index_before)
     inspect_chain(mount.parent)
@@ -464,7 +543,8 @@ try:
         run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
     else:
         base_env['CGO_ENABLED'] = '0'
-        cold_deadline = min(time.monotonic()+120,outer_deadline-630)
+        cold_seconds,execution_reserve = (240,1830) if intel_native else (120,630)
+        cold_deadline = min(time.monotonic()+cold_seconds,outer_deadline-execution_reserve)
         def cold_limit():
             remaining = cold_deadline-time.monotonic()
             if remaining <= 0: raise RuntimeError('No cold-phase budget remains before the full native execution reserve.')
@@ -478,16 +558,20 @@ try:
         native_inputs = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
                          'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
                          'buildInfo':binary_info,'host':host,'CGO_ENABLED':'0',
-                         'sourceHashes':source_files,'coldPhaseSeconds':120,'executionSeconds':600,'globalSeconds':800}
+                         'sourceHashes':source_files,'coldPhaseSeconds':cold_seconds,'executionSeconds':600,
+                         'globalSeconds':2400 if intel_native else 800}
         save('native-test-inputs-before.json',native_inputs)
         if native_inputs['binary']['uid'] != 0: raise RuntimeError('Compiled test binary is not owned by the fixture caller.')
         if any(hashlib.sha256((root/name).read_bytes()).hexdigest() != digest for name,digest in source_files.items()): raise RuntimeError('Native compilation changed frozen source inputs.')
-        if outer_deadline-time.monotonic() < 630: raise RuntimeError('Full native execution and cleanup reserve unavailable.')
+        if outer_deadline-time.monotonic() < execution_reserve: raise RuntimeError('Full native execution and cleanup reserve unavailable.')
         package_dir = root/'internal/identityattempt'
         execution_env = dict(base_env,PWD=str(package_dir),PATH=str(pathlib.Path(go).resolve().parent)+os.pathsep+base_env['PATH'])
-        run([go,'tool','test2json','-t','-p','github.com/open-e2ee/oe/internal/identityattempt',str(test_binary),
-             '-test.paniconexit0','-test.v=test2json','-test.count=1','-test.timeout=9m'],600,
-            env=execution_env,cwd=package_dir,phase='native-execution')
+        if intel_native:
+            run_intel_partitions(intel_module,intel_roster,cold_deadline,execution_env,package_dir)
+        else:
+            run([go,'tool','test2json','-t','-p','github.com/open-e2ee/oe/internal/identityattempt',str(test_binary),
+                 '-test.paniconexit0','-test.v=test2json','-test.count=1','-test.timeout=9m'],600,
+                env=execution_env,cwd=package_dir,phase='native-execution')
     if profile == 'minimum':
         for target_os in ['darwin','linux','windows']:
             for target_arch in ['amd64','arm64']:
