@@ -59,7 +59,9 @@ base_env.update({'GOTOOLCHAIN':'local', 'GOENV':'off', 'GOWORK':'off',
                  'GOPRIVATE':'', 'GONOPROXY':'', 'GONOSUMDB':'',
                  'GOPROXY':'https://proxy.golang.org', 'GOSUMDB':'sum.golang.org',
                  'GIT_TERMINAL_PROMPT':'0', 'GIT_CONFIG_NOSYSTEM':'1',
-                 'GIT_CONFIG_GLOBAL':'/dev/null'})
+                 'GIT_CONFIG_GLOBAL':'/dev/null',
+                 'GIT_CONFIG_COUNT':'1', 'GIT_CONFIG_KEY_0':'safe.directory',
+                 'GIT_CONFIG_VALUE_0':str(root)})
 
 def save(name, value):
     (proof/name).write_text(json.dumps(value, indent=2)+'\n')
@@ -320,12 +322,15 @@ try:
         run(['/usr/bin/hdiutil','create','-size','4g','-fs','APFS','-type','SPARSE','-volname','ca8-store-'+nonce,str(image)])
         attached = plistlib.loads(run(['/usr/bin/hdiutil','attach','-nobrowse','-owners','on','-mountpoint',str(mount),'-plist',str(image)],capture=True))
         entities = attached['system-entities']
-        volume_device = entities[0]['dev-entry']
-        if not re.fullmatch(r'/dev/disk[0-9]+',volume_device): raise RuntimeError('Invalid owned image device.')
+        whole_devices = [entity['dev-entry'] for entity in entities if entity.get('content-hint') == 'GUID_partition_scheme']
+        mounted_devices = [entity['dev-entry'] for entity in entities if entity.get('mount-point') == str(mount) and entity.get('volume-kind') == 'apfs']
+        if len(whole_devices) != 1 or len(mounted_devices) != 1: raise RuntimeError('Ambiguous owned image attachment.')
+        volume_device, mounted_device = whole_devices[0], mounted_devices[0]
+        if not re.fullmatch(r'/dev/disk[0-9]+',volume_device) or not re.fullmatch(r'/dev/disk[0-9]+s[0-9]+',mounted_device): raise RuntimeError('Invalid owned image device.')
         mounted = True
         filesystem = plistlib.loads(run(['/usr/sbin/diskutil','info','-plist',str(mount)],capture=True))
-        if filesystem.get('FilesystemType') != 'apfs' or filesystem.get('GlobalPermissionsEnabled') is not True or filesystem.get('MountPoint') != str(mount): raise RuntimeError('Owned APFS mount mismatch.')
-    fixture = mount/('ca8-store-fixtures-'+nonce); fixture.mkdir(mode=0o700)
+        if filesystem.get('FilesystemType') != 'apfs' or filesystem.get('GlobalPermissionsEnabled') is not True or filesystem.get('MountPoint') != str(mount) or filesystem.get('DeviceNode') != mounted_device: raise RuntimeError('Owned APFS mount mismatch.')
+    fixture = mount/('ca8-store-fixtures-'+nonce[:8]); fixture.mkdir(mode=0o700)
     evidence = mount/('ca8-store-evidence-'+nonce); evidence.mkdir(mode=0o700)
     temporary = mount/'tmp'; temporary.mkdir(mode=0o700)
     for directory in [fixture,evidence,temporary]: inspect_chain(directory,True)

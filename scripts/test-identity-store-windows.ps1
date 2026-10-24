@@ -424,6 +424,14 @@ $childEnvironment['GOTOOLCHAIN']='local'; $childEnvironment['GOENV']='off'; $chi
 $childEnvironment['GOPRIVATE']=''; $childEnvironment['GONOPROXY']=''; $childEnvironment['GONOSUMDB']=''
 $childEnvironment['GOPROXY']='https://proxy.golang.org'; $childEnvironment['GOSUMDB']='sum.golang.org'
 $childEnvironment['GIT_TERMINAL_PROMPT']='0'; $childEnvironment['GIT_CONFIG_NOSYSTEM']='1'; $childEnvironment['GIT_CONFIG_GLOBAL']='NUL'
+function Resolve-NativeExecutable([string]$Name) {
+    $found = Get-Command -Name $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $path = [string]$found.Source
+    if (-not [IO.Path]::IsPathFullyQualified($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'The selected native executable is not an absolute file.' }
+    $item = Get-Item -LiteralPath $path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The selected native executable is a reparse point.' }
+    return $item.FullName
+}
 function Run-Stage([string]$Executable,[string[]]$Arguments,[int]$Seconds=30) {
     Assert-Phase
     if ($stages.Count -ge 24) { throw 'Owned stage count bound reached.' }
@@ -449,7 +457,7 @@ try {
     $used = @((Get-Volume).DriveLetter)
     $driveLetter = @('T','U','V','W','X','Y','Z' | Where-Object { $_ -notin $used -and -not (Test-Path ($_+':\')) })[0]
     if (-not $driveLetter) { throw 'No fresh drive letter is available.' }
-    $diskpart = (Get-Command diskpart.exe -CommandType Application).Source
+    $diskpart = (Resolve-NativeExecutable 'diskpart.exe')
     $recipe = Join-Path $proof 'create-owned-volume.txt'
     @("create vdisk file=`"$image`" maximum=4096 type=expandable", "select vdisk file=`"$image`"", 'attach vdisk',
       'create partition primary', "format fs=ntfs label=CA8-$($token.Substring(0,12)) quick", "assign letter=$driveLetter") |
@@ -478,7 +486,7 @@ try {
     $inspection = [Collections.Generic.List[object]]::new()
     $inspection.Add([IdentityStoreFixture]::InspectDirectory($volumeRoot,$caller.sid,$true))
     foreach ($path in $directories.Values) { $inspection.Add([IdentityStoreFixture]::InspectDirectory($path,$caller.sid,$true)) }
-    $go = (Get-Command go.exe -CommandType Application).Source
+    $go = (Resolve-NativeExecutable 'go.exe')
     Save-Proof 'native.json' @{ caller=$caller; architecture=$actualArchitecture; os=[Environment]::OSVersion.VersionString;
         volume=$volume; diskNumber=$diskNumber; image=$image; directories=$inspection; profile=$FixtureProfile;
         go=$go; goSHA256=(Get-FileHash -LiteralPath $go -Algorithm SHA256).Hash; moduleHashes=$originalModules; volumeMaximumBytes=4294967296 }
@@ -498,9 +506,9 @@ try {
     $hostInfo = (Run-Stage $go @('env','-json','GOHOSTOS','GOHOSTARCH','GOVERSION')) | ConvertFrom-Json
     if ($hostInfo.GOHOSTOS -ne 'windows' -or $hostInfo.GOHOSTARCH -ne $ExpectedArchitecture -or $hostInfo.GOVERSION -ne 'go1.27.3') { throw 'The Go host differs from the actual target.' }
     Save-Proof 'go-host.json' $hostInfo
-    $node=(Get-Command node.exe -CommandType Application).Source
+    $node=(Resolve-NativeExecutable 'node.exe')
     if ((Run-Stage $node @('--version')).Trim() -ne 'v24.22.1') { throw 'The maintained Node version is required.' }
-    $git=(Get-Command git.exe -CommandType Application).Source
+    $git=(Resolve-NativeExecutable 'git.exe')
     $tracked=(Run-Stage $git @('ls-files','-z')).Split([char]0)
     $sourceInputs=@{}
     foreach ($name in $tracked) {
@@ -516,7 +524,7 @@ try {
     }
     $childEnvironment['GOPROXY']='off'; $childEnvironment['GOSUMDB']='off'; $childEnvironment['GOFLAGS']='-mod=readonly'
     if ($FixtureProfile -eq 'race') {
-        $compiler = (Get-Command gcc.exe -CommandType Application -ErrorAction Stop).Source
+        $compiler = (Resolve-NativeExecutable 'gcc.exe')
         $library = (Run-Stage $compiler @('--print-file-name','libsynchronization.a')).Trim()
         if (-not [IO.Path]::IsPathFullyQualified($library) -or -not (Test-Path -LiteralPath $library -PathType Leaf)) { throw 'The installed race compiler runtime prerequisite failed.' }
         Save-Proof 'race-compiler.json' @{ path=$compiler; sha256=(Get-FileHash -LiteralPath $compiler -Algorithm SHA256).Hash; synchronizationLibrary=$library }
