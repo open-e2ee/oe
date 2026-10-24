@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -19,8 +20,14 @@ import (
 )
 
 type unixStoreActorGroup struct {
-	command *exec.Cmd
-	pid     int
+	command      *exec.Cmd
+	mu           sync.Mutex
+	pid          int
+	pending      bool
+	waiting      bool
+	sealed       bool
+	waitComplete bool
+	releaseErr   error
 }
 
 func storeDamageStableLock(t *testing.T, path string, _ *os.File) {
@@ -34,35 +41,115 @@ func newStoreActorGroup(command *exec.Cmd) (storeActorGroup, error) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return &unixStoreActorGroup{command: command}, nil
 }
-func (g *unixStoreActorGroup) Attach(process *os.Process) error { g.pid = process.Pid; return nil }
-func (g *unixStoreActorGroup) Terminate() error {
-	if g.pid == 0 {
-		return nil
+func (g *unixStoreActorGroup) Attach(process *os.Process) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if process == nil || process.Pid <= 0 || g.pid != 0 || g.sealed {
+		return ErrUnsafe
 	}
-	if err := unix.Kill(-g.pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
-		return ErrRelease
+	g.pid = process.Pid
+	if g.pending {
+		return g.terminateLocked()
 	}
 	return nil
 }
-func (g *unixStoreActorGroup) Close() error {
-	if err := g.Terminate(); err != nil {
-		return err
+func (g *unixStoreActorGroup) terminateLocked() error {
+	if g.sealed {
+		return os.ErrProcessDone
 	}
 	if g.pid == 0 {
+		g.pending = true
 		return nil
+	}
+	needed, err := storeActorGroupNeedsSignal(g.pid)
+	if err == nil && needed {
+		err = unix.Kill(-g.pid, unix.SIGKILL)
+	}
+	if err != nil {
+		g.releaseErr = combine(g.releaseErr, fmt.Errorf("actor group termination: %w", err))
+	}
+	return err
+}
+func (g *unixStoreActorGroup) Terminate() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.terminateLocked()
+}
+func (g *unixStoreActorGroup) Wait(ctx context.Context) (error, error) {
+	g.mu.Lock()
+	if g.pid == 0 || g.waiting || g.sealed {
+		g.releaseErr = combine(g.releaseErr, ErrRelease)
+		g.mu.Unlock()
+		return nil, ErrRelease
+	}
+	g.waiting = true
+	pid := g.pid
+	g.mu.Unlock()
+	deadline, bounded := ctx.Deadline()
+	deadline = deadline.Add(g.command.WaitDelay)
+	terminal := false
+	var observationErr error
+	if bounded {
+		for time.Now().Before(deadline) {
+			var err error
+			terminal, err = storeActorTerminal(pid)
+			if err != nil {
+				observationErr = err
+				break
+			}
+			if terminal {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	g.mu.Lock()
+	// A successful terminal observation has not reaped the owned leader.
+	// On observation failure, refuse any further group mutation.
+	if terminal {
+		_ = g.terminateLocked() // The error is retained in releaseErr.
+	}
+	g.sealed = true
+	if !terminal {
+		g.releaseErr = combine(g.releaseErr, combine(ErrRelease, observationErr))
+		result := g.releaseErr
+		g.mu.Unlock()
+		// No unbounded reap after an unavailable or incomplete terminal observation.
+		return nil, result
+	}
+	g.mu.Unlock()
+	waitErr := g.command.Wait()
+	g.mu.Lock()
+	g.waitComplete = g.command.ProcessState != nil
+	if !g.waitComplete {
+		g.releaseErr = combine(g.releaseErr, combine(ErrRelease, waitErr))
+	}
+	result := g.releaseErr
+	g.mu.Unlock()
+	return waitErr, result
+}
+func (g *unixStoreActorGroup) Close() error {
+	g.mu.Lock()
+	pid, sealed, waited, result := g.pid, g.sealed, g.waitComplete, g.releaseErr
+	g.mu.Unlock()
+	if pid == 0 {
+		return result
+	}
+	if !sealed || !waited {
+		return combine(result, ErrRelease)
 	}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		err := unix.Kill(-g.pid, 0)
-		if errors.Is(err, unix.ESRCH) {
-			return nil
-		}
+		empty, err := storeActorGroupEmpty(pid)
 		if err != nil {
-			return ErrRelease
+			return combine(result, fmt.Errorf("actor group closure census: %w", err))
+		}
+		if empty {
+			return result
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return ErrRelease
+	return combine(result, ErrRelease)
 }
 func storeActorAlive(pid int) bool { return unix.Kill(pid, 0) == nil }
 

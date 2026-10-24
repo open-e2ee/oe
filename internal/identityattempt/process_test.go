@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/open-e2ee/oe/internal/identity"
@@ -33,6 +34,7 @@ type storeActorEvent struct {
 type storeActorGroup interface {
 	Attach(*os.Process) error
 	Terminate() error
+	Wait(context.Context) (error, error)
 	Close() error
 }
 type storeActorProcess struct {
@@ -40,6 +42,7 @@ type storeActorProcess struct {
 	input           io.WriteCloser
 	output          *json.Decoder
 	group           storeActorGroup
+	ctx             context.Context
 	cancel          context.CancelFunc
 	finished        bool
 	stream          io.Reader
@@ -50,6 +53,7 @@ type storeActorProcess struct {
 type storeActorCapture struct {
 	bytes.Buffer
 	truncated bool
+	drained   bool
 	limit     int
 }
 
@@ -66,6 +70,45 @@ func (c *storeActorCapture) Write(data []byte) (int, error) {
 	}
 	_, err := c.Buffer.Write(data)
 	return count, err
+}
+
+func (c *storeActorCapture) ReadFrom(reader io.Reader) (int64, error) {
+	c.drained = false
+	// Hide ReaderFrom so every byte passes through the bounded Write method.
+	count, err := io.Copy(struct{ io.Writer }{c}, reader)
+	c.drained = err == nil
+	return count, err
+}
+
+func TestStoreActorCaptureReadFrom(t *testing.T) {
+	for _, test := range []struct {
+		name                   string
+		limit, count, retained int
+		truncated              bool
+	}{
+		{"default ceiling", 0, 1048577, 1048576, true},
+		{"ACL ceiling", 65536, 65537, 65536, true},
+		{"exact ceiling", 65536, 65536, 65536, false},
+		{"empty EOF", 0, 0, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			capture := &storeActorCapture{limit: test.limit}
+			reader := struct{ io.Reader }{strings.NewReader(strings.Repeat("x", test.count))}
+			count, err := io.Copy(capture, reader)
+			if err != nil || count != int64(test.count) || capture.Len() != test.retained || capture.truncated != test.truncated || !capture.drained {
+				t.Fatal("capture lost its ceiling or EOF receipt", count, err, capture.Len(), capture.truncated, capture.drained)
+			}
+		})
+	}
+	t.Run("reader error is incomplete", func(t *testing.T) {
+		failure := errors.New("capture reader failure")
+		capture := &storeActorCapture{}
+		reader := struct{ io.Reader }{io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(failure))}
+		count, err := io.Copy(capture, reader)
+		if !errors.Is(err, failure) || count != 3 || capture.String() != "abc" || capture.truncated || capture.drained {
+			t.Fatal("capture converted a reader error to completed EOF", count, err, capture.drained)
+		}
+	})
 }
 
 func storeActorEvidenceRoot(t *testing.T) string {
@@ -164,7 +207,7 @@ func startStoreActor(t *testing.T, location Location, request storeActorRequest)
 	stdout, stderr := &storeActorCapture{}, &storeActorCapture{}
 	stream := bufio.NewReader(io.TeeReader(output, stdout))
 	command.Stderr = stderr
-	actor := &storeActorProcess{command: command, input: input, output: json.NewDecoder(stream), group: group, cancel: cancel, stream: stream, stdout: stdout, stderr: stderr, evidence: evidence, nonce: request.Nonce}
+	actor := &storeActorProcess{command: command, input: input, output: json.NewDecoder(stream), group: group, ctx: ctx, cancel: cancel, stream: stream, stdout: stdout, stderr: stderr, evidence: evidence, nonce: request.Nonce}
 	if err := command.Start(); err != nil {
 		cancel()
 		cleanup := combine(releaseFile(input), group.Close())
@@ -172,10 +215,10 @@ func startStoreActor(t *testing.T, location Location, request storeActorRequest)
 	}
 	if err := group.Attach(command.Process); err != nil {
 		killErr := command.Process.Kill()
-		waitErr := command.Wait()
+		waitErr, custodyErr := group.Wait(ctx)
 		cancel()
 		cleanup := combine(releaseFile(input), group.Close())
-		t.Fatal("native process group attachment failed; checked cleanup:", killErr, waitErr, cleanup)
+		t.Fatal("native process group attachment failed; checked cleanup:", killErr, waitErr, custodyErr, cleanup)
 	}
 	t.Cleanup(func() { actor.finish(t, true) })
 	if json.NewEncoder(input).Encode(request) != nil {
@@ -213,7 +256,10 @@ func (p *storeActorProcess) finish(t *testing.T, killed bool) {
 		t.Error("owned actor input close failed")
 	}
 	_, drainErr := io.Copy(io.Discard, p.stream)
-	err := p.command.Wait()
+	err, custodyErr := p.group.Wait(p.ctx)
+	if custodyErr != nil {
+		t.Error("owned actor wait custody failed:", custodyErr)
+	}
 	if drainErr != nil {
 		t.Error("owned actor stdout drain failed")
 	}
@@ -222,9 +268,16 @@ func (p *storeActorProcess) finish(t *testing.T, killed bool) {
 	}
 	cleanup := p.group.Close()
 	if cleanup != nil {
-		t.Error("owned native group close/zero-process check failed")
+		t.Error("owned native group close/zero-process check failed:", cleanup)
 	}
 	p.cancel()
+	if p.command.ProcessState == nil {
+		t.Error("owned actor has no completed reap; output receipt unavailable")
+		return
+	}
+	if !p.stderr.drained {
+		t.Error("owned actor stderr did not complete its drain")
+	}
 	if p.stdout.truncated || p.stderr.truncated {
 		t.Error("owned actor output exceeded1MiB evidence ceiling")
 	}
@@ -236,7 +289,8 @@ func (p *storeActorProcess) finish(t *testing.T, killed bool) {
 		Argv                                                []string
 		Exit                                                int
 		Killed, ZeroGroup, StdoutTruncated, StderrTruncated bool
-	}{p.command.Args, exit, killed, cleanup == nil, p.stdout.truncated, p.stderr.truncated})
+		StderrDrained                                       bool
+	}{p.command.Args, exit, killed, cleanup == nil, p.stdout.truncated, p.stderr.truncated, p.stderr.drained})
 	if encodeErr != nil {
 		t.Error("actor result encoding failed")
 	}
