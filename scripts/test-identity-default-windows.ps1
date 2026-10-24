@@ -64,6 +64,7 @@ function Observe-OwnedClosure {
     $gui=Read-OwnedJSON (Join-Path $evidence 'broker-process.json')
     $script:nativeGuiReadback=$gui
     if ($gui.errors.Count -ne 0 -or -not $gui.restored -or -not $gui.stationCreated -or -not $gui.desktopCreated -or
+        -not $gui.desktopCreatorStarted -or -not $gui.desktopCreatorExited -or
         -not $gui.stationClosed -or -not $gui.desktopClosed -or -not $gui.stationAbsent -or -not $gui.childLaunchAttempted -or
         $gui.station -ne ('ca8_station_'+$nonce) -or $gui.desktop -ne ('ca8_desktop_'+$nonce) -or -not (Test-NativeClosure $gui.child)) { return $false }
     $controller=Read-OwnedJSON (Join-Path $evidence 'controller-process.json')

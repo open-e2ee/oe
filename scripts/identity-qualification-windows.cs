@@ -450,6 +450,7 @@ public static class IdentityStoreFixture {
         if(previousStation==IntPtr.Zero||previousDesktop==IntPtr.Zero)throw Error("broker GUI provenance");
         IntPtr station=IntPtr.Zero,desktop=IntPtr.Zero,stationSD=IntPtr.Zero,desktopSD=IntPtr.Zero;
         bool restored=false,stationClosed=false,desktopClosed=false,stationAbsent=false,childLaunchAttempted=false;
+        bool desktopCreatorStarted=false,desktopCreatorExited=true;
         object child=null;var errors=new List<string>();
         try {
             stationSD=NewGuiDescriptor(owner,sid,0x000f037f,0x00020123);
@@ -465,32 +466,48 @@ public static class IdentityStoreFixture {
             }
             if(Marshal.GetLastWin32Error()!=2)throw Error("owned desktop absence prerequisite");
             desktopSD=NewGuiDescriptor(owner,sid,0x000f01ff,0x000200c3);
-            var desktopSecurity=new SA{length=Marshal.SizeOf<SA>(),descriptor=desktopSD,inherit=0};
-            desktop=CreateDesktopW(desktopName,IntPtr.Zero,IntPtr.Zero,0,0x000f01ff,ref desktopSecurity);
-            if(desktop==IntPtr.Zero)throw Error("owned noninteractive desktop");
+            Exception creatorError=null;
+            // CreateDesktop assigns its desktop to the calling thread. Keep
+            // that association on a new thread that exits before restoration.
+            var creator=new Thread(()=>{
+                try {
+                    var desktopSecurity=new SA{length=Marshal.SizeOf<SA>(),descriptor=desktopSD,inherit=0};
+                    desktop=CreateDesktopW(desktopName,IntPtr.Zero,IntPtr.Zero,0,0x000f01ff,ref desktopSecurity);
+                    if(desktop==IntPtr.Zero)throw Error("owned noninteractive desktop");
+                    if(GetThreadDesktop(GetCurrentThreadId())!=desktop)throw Error("owned creator desktop association");
+                } catch(Exception error){creatorError=error;}
+            });
+            creator.IsBackground=true;
+            creator.Start();desktopCreatorStarted=true;desktopCreatorExited=false;
+            desktopCreatorExited=creator.Join(10000);
+            if(!desktopCreatorExited)throw new Exception("owned desktop creator did not exit within its bound");
+            if(creatorError!=null)throw creatorError;
             CheckGuiSecurity(desktop,owner,sid,0x000f01ff,0x000200c3);
-            if(!SetProcessWindowStation(previousStation)||!SetThreadDesktop(previousDesktop)||GetProcessWindowStation()!=previousStation||GetThreadDesktop(GetCurrentThreadId())!=previousDesktop)
+            if(!SetProcessWindowStation(previousStation)||GetProcessWindowStation()!=previousStation||GetThreadDesktop(GetCurrentThreadId())!=previousDesktop)
                 throw Error("restore isolated broker GUI state before child launch");
             restored=true;
             childLaunchAttempted=true;
             child=RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName);
         } catch(Exception error){errors.Add(error.ToString());}
         finally {
-            if(!restored) {
-                restored=SetProcessWindowStation(previousStation)&&SetThreadDesktop(previousDesktop)&&GetProcessWindowStation()==previousStation&&GetThreadDesktop(GetCurrentThreadId())==previousDesktop;
-                if(!restored)errors.Add(Error("broker GUI restoration").ToString());
-            }
-            if(desktop!=IntPtr.Zero){desktopClosed=CloseDesktop(desktop);if(!desktopClosed)errors.Add(Error("owned desktop close").ToString());}
-            if(station!=IntPtr.Zero){stationClosed=CloseWindowStation(station);if(!stationClosed)errors.Add(Error("owned station close").ToString());}
-            if(stationClosed) {
-                IntPtr observed=OpenWindowStationW(stationName,false,0x00020000);
-                if(observed==IntPtr.Zero)stationAbsent=Marshal.GetLastWin32Error()==2;
-                else if(!CloseWindowStation(observed))errors.Add(Error("owned station observation close").ToString());
-                if(!stationAbsent)errors.Add("owned station absence was not established");
-            }
-            foreach(IntPtr descriptor in new[]{stationSD,desktopSD})try{Free(descriptor);}catch(Exception error){errors.Add(error.ToString());}
+            if(desktopCreatorExited) {
+                if(!restored) {
+                    restored=SetProcessWindowStation(previousStation)&&GetProcessWindowStation()==previousStation&&GetThreadDesktop(GetCurrentThreadId())==previousDesktop;
+                    if(!restored)errors.Add(Error("broker GUI restoration").ToString());
+                }
+                if(desktop!=IntPtr.Zero){desktopClosed=CloseDesktop(desktop);if(!desktopClosed)errors.Add(Error("owned desktop close").ToString());}
+                if(station!=IntPtr.Zero){stationClosed=CloseWindowStation(station);if(!stationClosed)errors.Add(Error("owned station close").ToString());}
+                if(stationClosed) {
+                    IntPtr observed=OpenWindowStationW(stationName,false,0x00020000);
+                    if(observed==IntPtr.Zero)stationAbsent=Marshal.GetLastWin32Error()==2;
+                    else if(!CloseWindowStation(observed))errors.Add(Error("owned station observation close").ToString());
+                    if(!stationAbsent)errors.Add("owned station absence was not established");
+                }
+                foreach(IntPtr descriptor in new[]{stationSD,desktopSD})try{Free(descriptor);}catch(Exception error){errors.Add(error.ToString());}
+            } else errors.Add("preserve creator-owned GUI handles and descriptors until isolated broker exit");
         }
         return new {child=child,childLaunchAttempted=childLaunchAttempted,stationCreated=station!=IntPtr.Zero,desktopCreated=desktop!=IntPtr.Zero,
+            desktopCreatorStarted=desktopCreatorStarted,desktopCreatorExited=desktopCreatorExited,
             errors=errors.ToArray(),restored=restored,stationClosed=stationClosed,desktopClosed=desktopClosed,
             stationAbsent=stationAbsent,station=stationName,desktop=desktopName,stationUserMask=0x00020123,desktopUserMask=0x000200c3};
     }
