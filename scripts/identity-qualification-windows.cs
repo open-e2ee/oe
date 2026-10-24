@@ -404,6 +404,22 @@ public static class IdentityStoreFixture {
     [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateDesktopW(string name,IntPtr device,IntPtr mode,uint flags,uint access,ref SA security);
     [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenDesktopW(string name,uint flags,bool inherit,uint access);
     [DllImport("user32.dll",SetLastError=true)] static extern bool CloseDesktop(IntPtr desktop);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool GetUserObjectInformationW(IntPtr handle,int index,[Out] byte[] information,uint length,out uint needed);
+
+    static string GuiObjectName(IntPtr handle) {
+        if(handle==IntPtr.Zero)throw Error("GUI name handle unavailable");
+        byte[] bytes=new byte[512];
+        try {
+            uint needed;
+            if(!GetUserObjectInformationW(handle,2,bytes,(uint)bytes.Length,out needed))throw Error("bounded GUI object name readback");
+            if(needed<4||needed>bytes.Length||(needed&1)!=0)throw new Exception("GUI object name byte count is invalid");
+            int length=(int)needed;
+            if(bytes[length-2]!=0||bytes[length-1]!=0)throw new Exception("GUI object name terminator is absent");
+            string name=new UnicodeEncoding(false,false,true).GetString(bytes,0,length-2);
+            if(name.Length==0||name.IndexOf('\0')>=0)throw new Exception("GUI object name is empty or contains a terminator");
+            return name;
+        } finally { Array.Clear(bytes,0,bytes.Length); }
+    }
 
     static IntPtr NewGuiDescriptor(string owner,string user,uint trustedMask,uint userMask) {
         new SecurityIdentifier(owner); new SecurityIdentifier(user);
@@ -450,15 +466,24 @@ public static class IdentityStoreFixture {
         if(previousStation==IntPtr.Zero||previousDesktop==IntPtr.Zero)throw Error("broker GUI provenance");
         IntPtr station=IntPtr.Zero,desktop=IntPtr.Zero,stationSD=IntPtr.Zero,desktopSD=IntPtr.Zero;
         bool restored=false,stationClosed=false,desktopClosed=false,stationAbsent=false,childLaunchAttempted=false;
-        bool desktopCreatorStarted=false,desktopCreatorExited=true;
+        bool desktopCreatorStarted=false,desktopCreatorExited=true,stationNameBound=false,desktopNameBound=false;
+        string originalStationName=null,originalDesktopName=null,restoredStationName=null,restoredDesktopName=null;
+        string stationNameReadback=null,desktopNameReadback=null,creationStationName=null,creatorCurrentDesktopName=null;
         object child=null;var errors=new List<string>();
         try {
+            originalStationName=GuiObjectName(previousStation);
+            originalDesktopName=GuiObjectName(previousDesktop);
             stationSD=NewGuiDescriptor(owner,sid,0x000f037f,0x00020123);
             var stationSecurity=new SA{length=Marshal.SizeOf<SA>(),descriptor=stationSD,inherit=0};
             station=CreateWindowStationW(stationName,1,0x000f037f,ref stationSecurity);
             if(station==IntPtr.Zero)throw Error("create-only owned noninteractive station");
+            stationNameReadback=GuiObjectName(station);
+            stationNameBound=String.Equals(stationNameReadback,stationName,StringComparison.Ordinal);
+            if(!stationNameBound)throw new Exception("created station name differs");
             CheckGuiSecurity(station,owner,sid,0x000f037f,0x00020123);
             if(!SetProcessWindowStation(station))throw Error("isolated broker station association");
+            creationStationName=GuiObjectName(GetProcessWindowStation());
+            if(!String.Equals(creationStationName,stationName,StringComparison.Ordinal))throw new Exception("desktop creation station name differs");
             IntPtr collision=OpenDesktopW(desktopName,0,false,0x00020081);
             if(collision!=IntPtr.Zero) {
                 if(!CloseDesktop(collision))throw Error("colliding desktop close");
@@ -474,7 +499,8 @@ public static class IdentityStoreFixture {
                     var desktopSecurity=new SA{length=Marshal.SizeOf<SA>(),descriptor=desktopSD,inherit=0};
                     desktop=CreateDesktopW(desktopName,IntPtr.Zero,IntPtr.Zero,0,0x000f01ff,ref desktopSecurity);
                     if(desktop==IntPtr.Zero)throw Error("owned noninteractive desktop");
-                    if(GetThreadDesktop(GetCurrentThreadId())!=desktop)throw Error("owned creator desktop association");
+                    desktopNameReadback=GuiObjectName(desktop);
+                    creatorCurrentDesktopName=GuiObjectName(GetThreadDesktop(GetCurrentThreadId()));
                 } catch(Exception error){creatorError=error;}
             });
             creator.IsBackground=true;
@@ -482,9 +508,15 @@ public static class IdentityStoreFixture {
             desktopCreatorExited=creator.Join(10000);
             if(!desktopCreatorExited)throw new Exception("owned desktop creator did not exit within its bound");
             if(creatorError!=null)throw creatorError;
+            desktopNameBound=String.Equals(desktopNameReadback,desktopName,StringComparison.Ordinal);
+            if(!desktopNameBound)throw new Exception("created desktop name differs");
             CheckGuiSecurity(desktop,owner,sid,0x000f01ff,0x000200c3);
-            if(!SetProcessWindowStation(previousStation)||GetProcessWindowStation()!=previousStation||GetThreadDesktop(GetCurrentThreadId())!=previousDesktop)
-                throw Error("restore isolated broker GUI state before child launch");
+            if(!SetProcessWindowStation(previousStation))throw Error("restore isolated broker station before child launch");
+            restoredStationName=GuiObjectName(GetProcessWindowStation());
+            restoredDesktopName=GuiObjectName(GetThreadDesktop(GetCurrentThreadId()));
+            if(!String.Equals(restoredStationName,originalStationName,StringComparison.Ordinal)||
+                !String.Equals(restoredDesktopName,originalDesktopName,StringComparison.Ordinal))
+                throw new Exception("restored broker GUI names differ before child launch");
             restored=true;
             childLaunchAttempted=true;
             child=RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName);
@@ -492,8 +524,15 @@ public static class IdentityStoreFixture {
         finally {
             if(desktopCreatorExited) {
                 if(!restored) {
-                    restored=SetProcessWindowStation(previousStation)&&GetProcessWindowStation()==previousStation&&GetThreadDesktop(GetCurrentThreadId())==previousDesktop;
-                    if(!restored)errors.Add(Error("broker GUI restoration").ToString());
+                    try {
+                        if(!SetProcessWindowStation(previousStation))throw Error("broker station restoration");
+                        restoredStationName=GuiObjectName(GetProcessWindowStation());
+                        restoredDesktopName=GuiObjectName(GetThreadDesktop(GetCurrentThreadId()));
+                        restored=originalStationName!=null&&originalDesktopName!=null&&
+                            String.Equals(restoredStationName,originalStationName,StringComparison.Ordinal)&&
+                            String.Equals(restoredDesktopName,originalDesktopName,StringComparison.Ordinal);
+                        if(!restored)errors.Add("broker GUI restoration names differ");
+                    } catch(Exception error){errors.Add(error.ToString());}
                 }
                 if(desktop!=IntPtr.Zero){desktopClosed=CloseDesktop(desktop);if(!desktopClosed)errors.Add(Error("owned desktop close").ToString());}
                 if(station!=IntPtr.Zero){stationClosed=CloseWindowStation(station);if(!stationClosed)errors.Add(Error("owned station close").ToString());}
@@ -508,6 +547,10 @@ public static class IdentityStoreFixture {
         }
         return new {child=child,childLaunchAttempted=childLaunchAttempted,stationCreated=station!=IntPtr.Zero,desktopCreated=desktop!=IntPtr.Zero,
             desktopCreatorStarted=desktopCreatorStarted,desktopCreatorExited=desktopCreatorExited,
+            stationNameBound=stationNameBound,desktopNameBound=desktopNameBound,
+            stationNameReadback=stationNameReadback,desktopNameReadback=desktopNameReadback,creationStationName=creationStationName,
+            creatorCurrentDesktopName=creatorCurrentDesktopName,originalStationName=originalStationName,originalDesktopName=originalDesktopName,
+            restoredStationName=restoredStationName,restoredDesktopName=restoredDesktopName,
             errors=errors.ToArray(),restored=restored,stationClosed=stationClosed,desktopClosed=desktopClosed,
             stationAbsent=stationAbsent,station=stationName,desktop=desktopName,stationUserMask=0x00020123,desktopUserMask=0x000200c3};
     }
