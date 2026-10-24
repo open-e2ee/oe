@@ -1,6 +1,8 @@
 param([Parameter(Mandatory=$true)][ValidateSet('amd64','arm64')][string]$ExpectedArchitecture,
-    [switch]$DiagnosticFileSentinel)
+    [switch]$DiagnosticFileSentinel,
+    [switch]$DiagnosticGoSentinel)
 $ErrorActionPreference='Stop'
+if ($DiagnosticFileSentinel -and $DiagnosticGoSentinel) { throw 'Select one diagnostic mode.' }
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'A fresh disposable GitHub-hosted VM is required.' }
 if (-not $IsWindows -or [IntPtr]::Size -ne 8) { throw 'A native 64-bit Windows process is required.' }
 $architecture=@{X64='amd64';Arm64='arm64'}[[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()]
@@ -15,6 +17,7 @@ $root=Split-Path -Parent $PSScriptRoot
 $nonce=[Guid]::NewGuid().ToString('N')
 $proof=Join-Path $env:RUNNER_TEMP "ca8-default-proof-$nonce"
 if ($DiagnosticFileSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-file-sentinel-proof-$nonce" }
+if ($DiagnosticGoSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-go-sentinel-proof-$nonce" }
 $artifact=Join-Path $proof 'artifact'
 $workspace=Join-Path ($env:SystemDrive+'\') "ca8-default-$nonce"
 if (-not [IO.Path]::IsPathFullyQualified($workspace)) { throw 'The new fixture workspace requires an actual drive root.' }
@@ -23,6 +26,7 @@ $timer=[Diagnostics.Stopwatch]::StartNew()
 $stages=[Collections.Generic.List[object]]::new()
 $created=$false; $accountCreationAttempted=$false; $sid=$null; $profileRecord=$null; $runResult=$null
 $nativeGuiReadback=$null; $nativeControllerReadback=$null
+$diagnosticProgramReceipt=$null
 $nativeLauncherReceipt=$null; $hostVersionReceipt=@{available=$false;code='HOST_VERSION_NOT_CAPTURED';childLoadedVersionMeasured=$false}
 $brokerStarted=$false; $allJobsEmpty=$false; $evidence=$null; $copied=$false; $collectionComplete=$false; $success=$false; $failure=$null
 $artifactBytes=0L; $artifactEntries=0; $profileDeleted=$false; $accountDeleted=$false
@@ -216,7 +220,23 @@ try {
     Run-Stage $go @('mod','download','-json') 120 | Out-Null
     $buildEnvironment['GOPROXY']='off';$buildEnvironment['GOSUMDB']='off';$buildEnvironment['GOFLAGS']='-mod=readonly'
     $binary=Join-Path $workspace 'probe.exe'
+    if ($DiagnosticGoSentinel) {
+        $sentinelSource=Join-Path $workspace 'exit-sentinel.go'
+        $sentinelText="package main`n`nimport `"os`"`n`nfunc main() {`n`tos.Exit(73)`n}`n"
+        [IO.File]::WriteAllText($sentinelSource,$sentinelText,[Text.UTF8Encoding]::new($false))
+        $sentinelSourceHash=(Get-FileHash -LiteralPath $sentinelSource -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sentinelBuildArguments=@('build','-o',$binary,$sentinelSource)
+        Run-Stage $go $sentinelBuildArguments 120 | Out-Null
+        if ((Get-FileHash -LiteralPath $sentinelSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sentinelSourceHash) { throw 'The fixed Go diagnostic source changed.' }
+        $diagnosticProgramReceipt=@{kind='fixed-go-exit-73';sourcePath=$sentinelSource;sourceSHA256=$sentinelSourceHash;
+            sourceBytes=[Text.Encoding]::UTF8.GetByteCount($sentinelText);go=$goHost;buildExecutable=$go;
+            buildExecutableSHA256=(Get-FileHash -LiteralPath $go -Algorithm SHA256).Hash.ToLowerInvariant();buildArguments=$sentinelBuildArguments;
+            selectedLaunchImage=$binary;imageSHA256=(Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant();programArguments=@();
+            brokerExecutable=$pwsh;disposableMarkerIsDResult=$false;nativeExitMeasured=$false}
+        Save-Proof 'diagnostic-program.json' $diagnosticProgramReceipt
+    } else {
     Run-Stage $go @('test','-c','-tags','identity_default_qualification','-o',$binary,'./internal/identityattempt') 120 | Out-Null
+    }
     $inputs=@{};$tracked=(Run-Stage $git @('ls-files','-z')).Split([char]0)
     foreach ($name in $tracked) {if ($name) {$inputs[$name]=(Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash}}
     Save-Proof 'source-inputs.json' @{head=(Run-Stage $git @('rev-parse','HEAD')).Trim();files=$inputs;go=$goHost;architecture=$architecture}
@@ -250,6 +270,21 @@ if ($result.status -ne 0 -or -not $result.jobEmpty -or $result.errors.Count -ne 
 '@ | Set-Content -LiteralPath $child -Encoding utf8
     }
     $broker=Join-Path $workspace 'broker.ps1'
+    if ($DiagnosticGoSentinel) {
+    @'
+param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
+$ErrorActionPreference='Stop'
+Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
+$password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
+try {
+    $standardArguments=[string[]]@()
+    $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Binary,$standardArguments,$PSScriptRoot,$Nonce)
+    $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
+    if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
+        $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
+} finally {$password=$null}
+'@ | Set-Content -LiteralPath $broker -Encoding utf8
+    } else {
     @'
 param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
 $ErrorActionPreference='Stop'
@@ -263,6 +298,7 @@ try {
         $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
 } finally {$password=$null}
 '@ | Set-Content -LiteralPath $broker -Encoding utf8
+    }
     $pipe='ca8-default-secret-'+$nonce
     $brokerArgs=@('-NoLogo','-NoProfile','-NonInteractive','-File',$broker,$userName,$sid,$pipe,$pwsh,$binary,$evidence,$nonce)
     $brokerStarted=$true
@@ -350,7 +386,8 @@ finally {
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
         newAccount=$userName;newSID=$sid;originalProfilePath=if($profileRecord){$profileRecord.LocalPath}else{$null};
         profileDeleted=$profileDeleted;accountDeleted=$accountDeleted;
-        scope=if($DiagnosticFileSentinel){'Diagnostic-only PowerShell -File exit 73. No D01-D06, Go/default-store, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}else{'D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}}
+        scope=if($DiagnosticGoSentinel){'Diagnostic-only native Go exit 73. No D01-D06/default-store, PowerShell cause, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}elseif($DiagnosticFileSentinel){'Diagnostic-only PowerShell -File exit 73. No D01-D06, Go/default-store, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}else{'D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}}
+    if ($DiagnosticGoSentinel) { $terminal['diagnosticProgram']=$diagnosticProgramReceipt }
     $terminalText=$terminal | ConvertTo-Json -Depth 12
     if ([Text.Encoding]::UTF8.GetByteCount($terminalText) -gt 1048576) { throw 'The reserved terminal evidence bound was reached.' }
     [IO.File]::WriteAllText((Join-Path $artifact 'result.json'),$terminalText,[Text.UTF8Encoding]::new($false))
