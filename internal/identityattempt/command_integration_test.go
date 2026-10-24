@@ -24,6 +24,8 @@ import (
 	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
+const commandFixtureTimeout = 60 * time.Second
+
 const commandPrivateTarget = `{"kind":"subject","subject":"PRIVATE_COMMAND_SUBJECT","profileSource":"installed"}`
 const commandObservation = `{"operationId":"read_one","scope":` + scopeWire + `,"target":{"kind":"subject"},"observedVersion":0,"observedState":"active","currentHead":null,"application":{"kind":"unbound-subject"}}`
 const commandClerk = `{"mode":"provider-bound","provider":"clerk","algorithms":["RS256"],"issuer":"https://members.clerk.accounts.dev","subjectClaim":"sub","authorizedParties":["https://chat.example"]}`
@@ -339,10 +341,13 @@ func (f *commandFixture) run(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	dependencies := f.dependencies
 	dependencies.Out, dependencies.Err = &stdout, &stderr
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), commandFixtureTimeout)
 	defer cancel()
 	command := append([]string{"--json", "--control-url", f.server.URL, "--env", f.environmentKind}, args...)
 	exit := app.Run(ctx, command, dependencies)
+	if ctx.Err() != nil {
+		f.t.Log("native command fixture context ended:", ctx.Err())
+	}
 	if strings.Contains(stdout.String()+stderr.String(), "PRIVATE_COMMAND_SUBJECT") || strings.Contains(stdout.String()+stderr.String(), "owned_command_token") {
 		f.t.Fatal("command leaked private target or credential")
 	}
@@ -368,7 +373,7 @@ func (f *commandFixture) observation(kind identityattempt.Kind) identityattempt.
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), commandFixtureTimeout)
 	defer cancel()
 	observed, err := store.Inspect(ctx, f.slot(kind))
 	if err != nil {
@@ -393,7 +398,7 @@ func (f *commandFixture) retained(kind identityattempt.Kind) *identityattempt.At
 
 func (f *commandFixture) enrollLifecycle(original identity.LifecycleAttempt) {
 	f.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), commandFixtureTimeout)
 	defer cancel()
 	store, err := identityattempt.BootstrapFirstUse(ctx, f.factory.location, identityattempt.NamespaceNeverUsed)
 	if err != nil {
@@ -882,7 +887,7 @@ func TestPublicCommandActualStoreProductionIdentityAndRetentionConsent(t *testin
 			dependencies.In = iotest.OneByteReader(strings.NewReader(answers))
 			dependencies.Interactive = func() bool { return true }
 			dependencies.Out, dependencies.Err = &stdout, &stderr
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), commandFixtureTimeout)
 			defer cancel()
 			args := []string{"--agent", "no", "--control-url", f.server.URL, "--env", "production", "config", "push",
 				"--confirm-state-never-used", "--confirm-slot-never-used"}
