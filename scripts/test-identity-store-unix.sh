@@ -382,7 +382,9 @@ try:
             if remaining <= 0: raise RuntimeError('No cold-phase budget remains before the full native execution reserve.')
             return remaining
         test_binary = cache/'identityattempt.test'
-        run([go,'test','-c','-o',str(test_binary),'./internal/identityattempt'],cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
+        compile_argv = [go,'test','-c','-o',str(test_binary),'./internal/identityattempt']
+        if intel_native: compile_argv.insert(3,'-x')
+        run(compile_argv,cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
         tool_output = run([go,'tool','-n','test2json'],cold_limit(),capture=True,phase='native-tool-prepare',phase_deadline=cold_deadline).decode('utf-8',errors='strict').splitlines()
         if len(tool_output) != 1 or len(tool_output[0]) > 4096: raise RuntimeError('Ambiguous maintained test2json input.')
         test2json_path = pathlib.Path(tool_output[0])
