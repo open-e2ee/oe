@@ -25,6 +25,8 @@ var defaultProbeProof = flag.String("identity-default-proof", "", "owned disposa
 var defaultProbeNonce = flag.String("identity-default-nonce", "", "owned disposable qualification nonce")
 var defaultProbeActor = flag.String("identity-default-actor", "", "fixed same-binary qualification action")
 
+var defaultProbeRefusalObserver func(Location, string, error)
+
 type defaultProbeMarker struct {
 	Nonce        string `json:"nonce"`
 	Identity     string `json:"identity"`
@@ -384,6 +386,9 @@ func TestIdentityDefaultQualification(t *testing.T) {
 		var err error
 		store, err = Open(location)
 		if err != nil {
+			if errors.Is(err, ErrUnsafe) && defaultProbeRefusalObserver != nil {
+				defaultProbeRefusalObserver(location, *defaultProbeNonce, err)
+			}
 			t.Fatal(err)
 		}
 		observed, err := store.Inspect(ctx, recordSlot(t, Selection))

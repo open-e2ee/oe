@@ -93,7 +93,7 @@ session_supervisor = session_module.IdentitySessionController(root, proof, base_
 def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=None, phase=None, phase_deadline=None):
     phases = {'native': ['native-compile','native-tool-prepare','native-build-info','native-execution'],
               'race': ['full-cli-prewarm','full-race-execution']}
-    if intel_native: phases['native'] += ['native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
+    if intel_native: phases['native'] += ['module-preparation','native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
     if phase is not None and phase not in phases.get(profile, []):
         raise RuntimeError('Invalid test diagnostic phase.')
     diagnostic = None
@@ -345,7 +345,15 @@ try:
         if path.is_symlink() or not path.is_file() or root not in path.resolve().parents: raise RuntimeError('Uncertain tracked source input.')
         source_files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     save('source-inputs.json',{'head':run([git,'-c','safe.directory='+str(root),'rev-parse','HEAD'],capture=True).decode().strip(),'files':source_files, 'python':sys.version,'pythonSHA256':hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest()})
-    run([go,'mod','download','-json'],120)
+    module_argv = [go,'mod','download','-json']
+    module_phase = None
+    if intel_native:
+        module_argv.append('-x')
+        module_phase = 'module-preparation'
+        save('module-preparation-inputs.json',{'environmentKeys':sorted(base_env),
+            'sourceHashes':source_hashes,'cachePolicy':'fresh owned mounted cache; no restored dependency cache',
+            'limitSeconds':120,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest()})
+    run(module_argv,120,phase=module_phase)
     if any(hashlib.sha256((root/p).read_bytes()).hexdigest() != value for p,value in source_hashes.items()): raise RuntimeError('Module preparation changed a frozen source file.')
     base_env.update({'GOPROXY':'off','GOSUMDB':'off','GOFLAGS':'-mod=readonly'})
     if profile == 'race':
