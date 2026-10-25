@@ -1095,14 +1095,14 @@ public static class IdentityStoreFixture {
         try {
             originalStationName=GuiObjectName(previousStation);
             originalDesktopName=GuiObjectName(previousDesktop);
-            stationSD=NewOwnedObjectDescriptor(owner,sid,0x000f037f,0x00020123);
+            stationSD=NewOwnedObjectDescriptor(owner,sid,0x000f037f,0x0002037f);
             var stationSecurity=new SA{length=Marshal.SizeOf<SA>(),descriptor=stationSD,inherit=0};
             station=CreateWindowStationW(stationName,1,0x000f037f,ref stationSecurity);
             if(station==IntPtr.Zero)throw Error("create-only owned noninteractive station");
             stationNameReadback=GuiObjectName(station);
             stationNameBound=String.Equals(stationNameReadback,stationName,StringComparison.Ordinal);
             if(!stationNameBound)throw new Exception("created station name differs");
-            CheckGuiSecurity(station,owner,sid,0x000f037f,0x00020123);
+            CheckGuiSecurity(station,owner,sid,0x000f037f,0x0002037f);
             stationMandatoryLabel=ReadMandatoryLabel(station,7);
             if(!SetProcessWindowStation(station))throw Error("isolated broker station association");
             creationStationName=GuiObjectName(GetProcessWindowStation());
@@ -1113,7 +1113,7 @@ public static class IdentityStoreFixture {
                 throw new Exception("owned desktop name already exists");
             }
             if(Marshal.GetLastWin32Error()!=2)throw Error("owned desktop absence prerequisite");
-            desktopSD=NewOwnedObjectDescriptor(owner,sid,0x000f01ff,0x000200c3);
+            desktopSD=NewOwnedObjectDescriptor(owner,sid,0x000f01ff,0x000201ff);
             Exception creatorError=null;
             // CreateDesktop assigns its desktop to the calling thread. Keep
             // that association on a new thread that exits before restoration.
@@ -1133,7 +1133,7 @@ public static class IdentityStoreFixture {
             if(creatorError!=null)throw creatorError;
             desktopNameBound=String.Equals(desktopNameReadback,desktopName,StringComparison.Ordinal);
             if(!desktopNameBound)throw new Exception("created desktop name differs");
-            CheckGuiSecurity(desktop,owner,sid,0x000f01ff,0x000200c3);
+            CheckGuiSecurity(desktop,owner,sid,0x000f01ff,0x000201ff);
             desktopMandatoryLabel=ReadMandatoryLabel(desktop,7);
             if(!SetProcessWindowStation(previousStation))throw Error("restore isolated broker station before child launch");
             restoredStationName=GuiObjectName(GetProcessWindowStation());
@@ -1178,7 +1178,7 @@ public static class IdentityStoreFixture {
             creatorCurrentDesktopName=creatorCurrentDesktopName,originalStationName=originalStationName,originalDesktopName=originalDesktopName,
             restoredStationName=restoredStationName,restoredDesktopName=restoredDesktopName,
             errors=errors.ToArray(),restored=restored,stationClosed=stationClosed,desktopClosed=desktopClosed,
-            stationAbsent=stationAbsent,station=stationName,desktop=desktopName,stationUserMask=0x00020123,desktopUserMask=0x000200c3,stationMandatoryLabel=stationMandatoryLabel,desktopMandatoryLabel=desktopMandatoryLabel};
+            stationAbsent=stationAbsent,station=stationName,desktop=desktopName,stationUserMask=0x0002037f,desktopUserMask=0x000201ff,stationMandatoryLabel=stationMandatoryLabel,desktopMandatoryLabel=desktopMandatoryLabel};
     }
 
     public static string ReadBrokerPassword(string pipeName) {
