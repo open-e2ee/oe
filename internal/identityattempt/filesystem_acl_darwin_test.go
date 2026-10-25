@@ -97,23 +97,27 @@ func storeDarwinACLCommand(t *testing.T, anchor, path string, arguments ...strin
 	}
 	command.Cancel = group.Terminate
 	err := command.Start()
+	var custodyErr error
 	if err == nil {
 		if attachErr := group.Attach(command.Process); attachErr != nil {
 			killErr := group.Terminate()
-			waitErr := command.Wait()
+			waitErr, waitCustodyErr := group.Wait(ctx)
 			closeErr := group.Close()
-			t.Fatal("native ACL process attachment failed; checked cleanup:", attachErr, killErr, waitErr, closeErr)
+			t.Fatal("native ACL process attachment failed; checked cleanup:", attachErr, killErr, waitErr, waitCustodyErr, closeErr)
 		}
-		err = command.Wait()
+		err, custodyErr = group.Wait(ctx)
 	}
-	groupErr := group.Close()
+	groupErr := combine(custodyErr, group.Close())
+	if command.Process != nil && command.ProcessState == nil {
+		t.Fatal("native ACL fixture has no completed reap; output receipt unavailable:", err, groupErr)
+	}
 	output := capture.Bytes()
 	// This owned log contains only synthetic fixture arguments and native setup output.
 	exit := -1
 	if command.ProcessState != nil {
 		exit = command.ProcessState.ExitCode()
 	}
-	log := []byte(fmt.Sprintf("argv=%q\nexit=%d\n", append([]string{"/bin/chmod"}, argv...), exit))
+	log := []byte(fmt.Sprintf("argv=%q\nexit=%d\ndrained=%t\n", append([]string{"/bin/chmod"}, argv...), exit, capture.drained))
 	log = append(log, output...)
 	logFile, createErr := os.CreateTemp(anchor, "acl-fixture-*.log")
 	if createErr != nil {
@@ -124,11 +128,14 @@ func storeDarwinACLCommand(t *testing.T, anchor, path string, arguments ...strin
 	if writeErr != nil || closeErr != nil {
 		t.Fatal("native ACL fixture log write/close failed")
 	}
+	if !capture.drained {
+		t.Fatal("native ACL fixture output did not complete its drain")
+	}
 	if capture.truncated {
 		t.Fatal("native ACL fixture output exceeded64KiB")
 	}
 	if err != nil || groupErr != nil {
-		t.Fatal("native ACL fixture prerequisite or zero-process cleanup failed")
+		t.Fatal("native ACL fixture prerequisite or zero-process cleanup failed:", err, groupErr)
 	}
 }
 

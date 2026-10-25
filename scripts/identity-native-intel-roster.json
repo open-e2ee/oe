@@ -69,6 +69,7 @@
     "TestStoreKnownTemporaryBlocksMissingAssociation",
     "TestStoreValidStaleBackupCannotProveFreshness",
     "TestStoreCancellationBeforeNativeDirectoryCreates",
+    "TestStoreActorCaptureReadFrom",
     "TestAttemptStoreNativeActor",
     "TestStoreNativeInterruptionMatrix",
     "TestStoreNativeBootstrapAndEnrollmentInterruptions",
@@ -718,6 +719,12 @@
     "TestStoreCancellationBeforeNativeDirectoryCreates/before-managed-directory-create",
     "TestStoreCancellationBeforeNativeDirectoryCreates/between-managed-directory-creates",
     "TestStoreCancellationBeforeNativeDirectoryCreates/root-directory-created",
+    "TestStoreActorCaptureReadFrom",
+    "TestStoreActorCaptureReadFrom/default_ceiling",
+    "TestStoreActorCaptureReadFrom/ACL_ceiling",
+    "TestStoreActorCaptureReadFrom/exact_ceiling",
+    "TestStoreActorCaptureReadFrom/empty_EOF",
+    "TestStoreActorCaptureReadFrom/reader_error_is_incomplete",
     "TestAttemptStoreNativeActor",
     "TestStoreNativeInterruptionMatrix",
     "TestStoreNativeInterruptionMatrix/initial-vacant-selection/temporary-created",
@@ -1032,9 +1039,7 @@
       "TestStoreUnixCurrentDirectoryAssociationBeforeResolve",
       "TestStoreFullCASAndDetachedRead",
       "TestStoreCurrentNamespaceBetweenConfirmAndBegin",
-      "TestStoreCurrentNamespaceBeforeReceiptResolution"
-    ],
-    [
+      "TestStoreCurrentNamespaceBeforeReceiptResolution",
       "TestStoreCurrentNamespaceBeforeRetentionAndCancellationCAS",
       "TestStoreImmutableCancellationAndLateOriginalReceipt",
       "TestStoreLifecycleDispositionAndActualScope",
@@ -1059,7 +1064,10 @@
       "TestStoreKnownTemporaryBlocksMissingAssociation",
       "TestStoreValidStaleBackupCannotProveFreshness",
       "TestStoreCancellationBeforeNativeDirectoryCreates",
-      "TestAttemptStoreNativeActor",
+      "TestStoreActorCaptureReadFrom",
+      "TestAttemptStoreNativeActor"
+    ],
+    [
       "TestStoreNativeInterruptionMatrix",
       "TestStoreNativeBootstrapAndEnrollmentInterruptions",
       "TestStoreNativeContentionAndWinningOriginal",
@@ -1124,8 +1132,8 @@
   ],
   "benchmarks": [],
   "reference": {
-    "head": "c97c912564755e691416746c3d75cc0e02783839",
-    "eventSHA256": "b83ae9f3ac232ee8c323bdafa662015cff7ff9cd8f963066ccc31b4fe4ce20ce",
-    "orderedParentSHA256": "aafba6068ff6abe2b665861cc91e290d8b3e9a686a2be9dcafe9f51bb9cc1888"
+    "head": "ac33e2b4c0309484950c8d0cd09f2723f1b90639",
+    "eventSHA256": "0bdd50333ec50c7904309bb1f4f4840f490701e228413ef0b0437896b6b1cf33",
+    "orderedParentSHA256": "97e69db37c105b7a5dab8c77c962a884256fa4c697a83fc603822932fc307a4d"
   }
 }

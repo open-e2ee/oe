@@ -1,6 +1,7 @@
 package identityattempt
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -14,7 +15,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type windowsStoreActorGroup struct{ job windows.Handle }
+type windowsStoreActorGroup struct {
+	job     windows.Handle
+	command *exec.Cmd
+}
 type storeJobAccounting struct {
 	times                             [4]int64
 	faults, total, active, terminated uint32
@@ -33,7 +37,7 @@ func newStoreActorGroup(command *exec.Cmd) (storeActorGroup, error) {
 		}
 		return nil, ErrUnsafe
 	}
-	return &windowsStoreActorGroup{job}, nil
+	return &windowsStoreActorGroup{job: job, command: command}, nil
 }
 func (g *windowsStoreActorGroup) Attach(process *os.Process) error {
 	handle, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(process.Pid))
@@ -57,6 +61,9 @@ func (g *windowsStoreActorGroup) Terminate() error {
 		return ErrRelease
 	}
 	return nil
+}
+func (g *windowsStoreActorGroup) Wait(_ context.Context) (error, error) {
+	return g.command.Wait(), nil
 }
 func (g *windowsStoreActorGroup) Close() error {
 	if g.job == 0 {

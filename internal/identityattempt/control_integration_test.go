@@ -46,7 +46,21 @@ func (f integrationTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	return f(r)
 }
 
+type controlFixtureTiming struct {
+	Boundary     string
+	Elapsed      time.Duration
+	Deadline     time.Time
+	Remaining    time.Duration
+	HasDeadline  bool
+	Expired      bool
+	ContextState string
+}
+
 type integrationFixture struct {
+	started    time.Time
+	timings    [64]controlFixtureTiming
+	timingLen  int
+	timingLost bool
 	ctx        context.Context
 	store      *identityattempt.Store
 	lease      *identityattempt.Lease
@@ -57,6 +71,35 @@ type integrationFixture struct {
 	credential control.CredentialRequest
 	mu         sync.Mutex
 	requests   []integrationRequest
+}
+
+func (f *integrationFixture) recordTiming(boundary string) {
+	// Reserve the last row for the terminal snapshot before cancellation.
+	if f.timingLen >= len(f.timings)-1 && boundary != "cleanup-before-cancel" {
+		f.timingLost = true
+		return
+	}
+	now := time.Now()
+	deadline, present := f.ctx.Deadline()
+	state := "unknown"
+	switch f.ctx.Err() {
+	case nil:
+		state = "none"
+	case context.DeadlineExceeded:
+		state = "deadline-exceeded"
+	case context.Canceled:
+		state = "canceled"
+	}
+	f.timings[f.timingLen] = controlFixtureTiming{
+		Boundary:     boundary,
+		Elapsed:      now.Sub(f.started),
+		Deadline:     deadline.UTC(),
+		Remaining:    deadline.Sub(now),
+		HasDeadline:  present,
+		Expired:      present && !now.Before(deadline),
+		ContextState: state,
+	}
+	f.timingLen++
 }
 
 func (f *integrationFixture) count() int {
@@ -73,9 +116,25 @@ func (f *integrationFixture) last() integrationRequest {
 func realIdentityFixture(t *testing.T, kind identityattempt.Kind, wrap func(http.RoundTripper) http.RoundTripper) *integrationFixture {
 	t.Helper()
 	f := &integrationFixture{credential: control.CredentialRequest{AccessToken: "owned_fixture_token"}}
+	f.started = time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	f.ctx = ctx
-	t.Cleanup(cancel)
+	f.recordTiming("created")
+	t.Cleanup(func() {
+		// Capture terminal context state before the original cancellation.
+		f.recordTiming("cleanup-before-cancel")
+		cancel()
+		payload := map[string]any{
+			"start":    f.started.UTC(),
+			"rows":     f.timings[:f.timingLen],
+			"overflow": f.timingLost,
+		}
+		if wire, err := json.Marshal(payload); err == nil && len(wire) <= 32768 {
+			t.Logf("CA8_CONTROL_FIXTURE_TIMING_V1 %s", wire)
+		} else {
+			t.Log("CA8_CONTROL_FIXTURE_TIMING_V1 encoding-unavailable")
+		}
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -134,11 +193,15 @@ func realIdentityFixture(t *testing.T, kind identityattempt.Kind, wrap func(http
 	}
 	// The test-only export enforces the existing real native fixture policy.
 	location := identityattempt.FixtureLocation(t)
+	f.recordTiming("setup-bootstrap-before")
 	f.store, err = identityattempt.BootstrapFirstUse(ctx, location, identityattempt.NamespaceNeverUsed)
+	f.recordTiming("setup-bootstrap-after")
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("setup-enroll-before")
 	f.lease, err = f.store.EnrollFirstUse(ctx, f.slot, identityattempt.SlotNeverUsed)
+	f.recordTiming("setup-enroll-after")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +210,9 @@ func realIdentityFixture(t *testing.T, kind identityattempt.Kind, wrap func(http
 			t.Error(err)
 		}
 	})
+	f.recordTiming("setup-read-before")
 	f.envelope, err = f.lease.Read(ctx)
+	f.recordTiming("setup-read-after")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +228,9 @@ func realIdentityFixture(t *testing.T, kind identityattempt.Kind, wrap func(http
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("setup-current-before")
 	f.current, err = f.transport.Current(ctx, f.credential)
+	f.recordTiming("setup-current-after")
 	if err != nil {
 		t.Fatal("actual complete-current qualifier failed", err)
 	}
@@ -182,14 +249,18 @@ func (f *integrationFixture) retain(t *testing.T) {
 		command := integrationDecode[identity.KeysCommand](t, `{"operationId":"original_001","expectedConfigurationVersion":1,"keys":[`+keyWire+`],"precondition":`+preconditionWire+`}`)
 		attempt, err = identityattempt.NewKeysAttempt(command)
 	case identityattempt.Lifecycle:
+		f.recordTiming("retain-confirm-preparation-before")
 		permit, confirmErr := f.lease.ConfirmPreparation(f.ctx, f.envelope)
+		f.recordTiming("retain-confirm-preparation-after")
 		if confirmErr != nil {
 			t.Fatal(confirmErr)
 		}
 		subject, _ := identity.Text("private_fixture_subject")
 		profile := "installed"
+		f.recordTiming("retain-http-prepare-before")
 		prepared, prepareErr := f.transport.LifecyclePrepare(f.ctx, f.credential, f.current, permit, control.LifecyclePreparationInput{
 			Target: identity.LifecycleInputTarget{Kind: "subject", Subject: &subject, ProfileSource: &profile}, State: "suspended", Nonce: "AAAAAAAAAAAAAAAAAAAAAA"})
+		f.recordTiming("retain-http-prepare-after")
 		if prepareErr != nil {
 			t.Fatal("actual prepare qualifier failed", prepareErr)
 		}
@@ -209,7 +280,9 @@ func (f *integrationFixture) retain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("retain-store-before")
 	f.envelope, err = f.lease.Retain(f.ctx, f.envelope, attempt)
+	f.recordTiming("retain-store-after")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,11 +502,15 @@ func TestRealControlAmbiguousRepliesKeepWholeEnrichedOriginal(t *testing.T) {
 			})
 			f.retain(t)
 			var err error
+			f.recordTiming("cancel-append-before")
 			f.envelope, err = f.lease.AppendCancellation(f.ctx, f.envelope, "cancel_winner")
+			f.recordTiming("cancel-append-after")
 			if err != nil {
 				t.Fatal(err)
 			}
+			f.recordTiming("cancel-confirm-before")
 			permit, err := f.lease.Confirm(f.ctx, f.envelope, identityattempt.KeysCancelAction)
+			f.recordTiming("cancel-confirm-after")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -552,22 +629,32 @@ func TestRealControlActiveHTTPBlocksEveryStorePhaseUntilJoin(t *testing.T) {
 func TestRealControlLateOriginalReceiptCannotClearCancellationRevision(t *testing.T) {
 	f := realIdentityFixture(t, identityattempt.Selection, nil)
 	f.retain(t)
+	f.recordTiming("late-confirm-apply-before")
 	permit, err := f.lease.Confirm(f.ctx, f.envelope, identityattempt.SelectionApplyAction)
+	f.recordTiming("late-confirm-apply-after")
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("late-http-apply-before")
 	receipt, err := f.transport.SelectionApply(f.ctx, f.credential, permit)
+	f.recordTiming("late-http-apply-after")
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("late-close-lease-before")
 	if err := f.lease.Close(); err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("late-close-lease-after")
+	f.recordTiming("late-begin-existing-before")
 	f.lease, err = f.store.BeginExisting(f.ctx, f.slot)
+	f.recordTiming("late-begin-existing-after")
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recordTiming("late-append-cancellation-before")
 	enriched, err := f.lease.AppendCancellation(f.ctx, f.envelope, "cancel_winner")
+	f.recordTiming("late-append-cancellation-after")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +705,9 @@ func TestRealControlLifecycleAssociationRefusalsKeepExactAttempt(t *testing.T) {
 				})
 			})
 			f.retain(t)
+			f.recordTiming("lifecycle-confirm-resume-before")
 			permit, err := f.lease.Confirm(f.ctx, f.envelope, identityattempt.LifecycleResumeAction)
+			f.recordTiming("lifecycle-confirm-resume-after")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -758,7 +847,9 @@ func TestRealControlLifecyclePendingAndTerminalReceiptsPreserveCompleteEvidence(
 				})
 			})
 			f.retain(t)
+			f.recordTiming("lifecycle-confirm-status-before")
 			permit, err := f.lease.Confirm(f.ctx, f.envelope, identityattempt.LifecycleStatusAction)
+			f.recordTiming("lifecycle-confirm-status-after")
 			if err != nil {
 				t.Fatal(err)
 			}

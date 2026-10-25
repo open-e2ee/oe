@@ -80,222 +80,46 @@ def checkout_index_metadata():
             'device':info.st_dev,'inode':info.st_ino,'links':info.st_nlink,'bytes':info.st_size,
             'mtimeNs':info.st_mtime_ns,'ctimeNs':info.st_ctime_ns}
 
-def group_alive(pgid):
-    try: os.killpg(pgid, 0); return True
-    except ProcessLookupError: return False
-
-# ps supplies only numeric PID/PPID/UID candidates. Native getsid/getpgid own association.
-# The observer runs outside the test session and never receives fixture paths.
-def process_inventory():
-    observer = subprocess.Popen(['/bin/ps','-axo','pid=,ppid=,uid='], env=base_env,
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        start_new_session=True)
-    selector = selectors.DefaultSelector()
-    raw = bytearray()
-    outcome = {'pid':observer.pid,'sid':observer.pid,'empty':False,'status':None}
-    process_observers.append(outcome)
-    failure = None
-    try:
-        os.set_blocking(observer.stdout.fileno(),False)
-        selector.register(observer.stdout,selectors.EVENT_READ)
-        until = time.monotonic()+1
-        while selector.get_map():
-            if time.monotonic() >= until: raise RuntimeError('Process observation deadline expired.')
-            for key, _ in selector.select(.02):
-                chunk = os.read(key.fileobj.fileno(),65536)
-                if not chunk: selector.unregister(key.fileobj); continue
-                if len(raw)+len(chunk) > 1024*1024: raise RuntimeError('Process inventory byte bound reached.')
-                raw.extend(chunk)
-        observer.wait(timeout=max(.001,until-time.monotonic()))
-        if observer.returncode != 0: raise RuntimeError('Actual process inventory failed.')
-    except BaseException as error:
-        failure = error
-    finally:
-        # This fixed ps executable creates no children. Its own group is distinct.
-        for sig in [signal.SIGTERM,signal.SIGKILL]:
-            if observer.poll() is None:
-                try:
-                    if os.getsid(observer.pid) != observer.pid: raise RuntimeError('Process observer session changed.')
-                    os.killpg(observer.pid,sig)
-                except ProcessLookupError: pass
-                except BaseException as error: failure = failure or error
-            try: observer.wait(timeout=.25)
-            except subprocess.TimeoutExpired: pass
-        try: outcome['empty'] = not group_alive(observer.pid)
-        except BaseException as error: failure = failure or error
-        outcome['status'] = observer.poll()
-        selector.close(); observer.stdout.close()
-        if not outcome['empty']: failure = failure or RuntimeError('Process observer cleanup is uncertain.')
-        outcome['failure'] = None if failure is None else str(failure)
-        save('process-observers.json',process_observers)
-    if failure is not None: raise failure
-    rows = []
-    seen = set()
-    for line in raw.decode('ascii',errors='strict').splitlines():
-        fields = line.split()
-        if len(fields) != 3 or not all(field.isdecimal() for field in fields[:2]) or not fields[2].removeprefix('-').isdecimal():
-            raise RuntimeError('Uncertain PID/PPID inventory.')
-        pid, ppid, uid = map(int,fields)
-        if pid <= 0 or ppid < 0 or not -(1 << 31) <= uid < (1 << 32) or pid in seen: raise RuntimeError('Invalid PID/PPID inventory.')
-        seen.add(pid); rows.append((pid,ppid,uid))
-        if len(rows) > 65536: raise RuntimeError('Process inventory row bound reached.')
-    return rows
-
-def owned_session_members(session_id):
-    if session_id <= 1 or session_id == os.getsid(0): raise RuntimeError('Refuse an unowned supervisor session.')
-    rows = []
-    until = time.monotonic()+1
-    for pid, ppid, uid in process_inventory():
-        # The wrapper is root and queries every UID. The proposed ordinary qualifier
-        # creates only same-UID children and needs no access to other users' sessions.
-        if os.geteuid() != 0 and uid % (1 << 32) != os.geteuid(): continue
-        if time.monotonic() >= until: raise RuntimeError('Native session observation deadline expired.')
-        try:
-            sid = os.getsid(pid)
-            if sid != session_id: continue
-            pgid = os.getpgid(pid)
-            # Recheck association after collecting the process group.
-            if os.getsid(pid) != session_id: raise RuntimeError('Owned session association changed.')
-        except ProcessLookupError: continue
-        rows.append({'pid':pid,'ppid':ppid,'uid':uid,'reportedUID':uid,'pgid':pgid,'sid':sid})
-        if len(rows) > 4096: raise RuntimeError('Owned session member bound reached.')
-    return sorted(rows,key=lambda row:row['pid'])
-
-def finish_session(process, session):
-    observations, signals = [], []
-    session.update({'observations':observations,'signals':signals})
-    started = time.monotonic()
-    prior_empty = False
-    try:
-        for _ in range(24):
-            if time.monotonic()-started >= 5: break
-            # Reap only the owned leader. Separate-PGID actors remain observable by SID.
-            process.poll()
-            members = owned_session_members(session['sid'])
-            observations.append({'atMonotonic':time.monotonic(),'members':members})
-            if not members:
-                if prior_empty:
-                    session['empty'] = all(row['empty'] for row in process_observers)
-                    break
-                prior_empty = True
-            else:
-                prior_empty = False
-                sig = signal.SIGTERM if time.monotonic()-started < .5 else signal.SIGKILL
-                for member in members:
-                    pid = member['pid']
-                    try:
-                        sid = os.getsid(pid)
-                        pgid = os.getpgid(pid)
-                        if sid != session['sid']: raise RuntimeError('Owned process changed session before signal.')
-                        os.kill(pid,sig)
-                        signals.append({'pid':pid,'observedPPID':member['ppid'],'pgid':pgid,'sid':sid,'signal':int(sig)})
-                    except ProcessLookupError: pass
-            if time.monotonic()-started >= 5: break
-            time.sleep(.02)
-        if not session['empty']: session['failure'] = 'Owned session did not reach two complete empty observations.'
-    except BaseException as error:
-        session['failure'] = str(error)
-        session['empty'] = False
-    session['leaderStatus'] = process.poll()
-    session['scope'] = 'Actual native actors retain the launched POSIX SID even when Setpgid selects a separate PGID.'
-    save('groups.json',groups)
-    return session['empty']
-
+# The shared owner retains actual SID membership and checked process closure.
+import importlib.util
+sys.dont_write_bytecode = True
+session_module_path = root/'scripts/identity-qualification-session.py'
+session_spec = importlib.util.spec_from_file_location('identity_qualification_session', session_module_path)
+session_module = importlib.util.module_from_spec(session_spec)
+session_spec.loader.exec_module(session_module)
+session_supervisor = session_module.IdentitySessionController(root, proof, base_env, outer_deadline,
+    steps=steps, groups=groups, process_observers=process_observers,
+    space_floor_reached=lambda: mounted and shutil.disk_usage(mount).free < 128*1024*1024)
 def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=None, phase=None, phase_deadline=None):
-    if time.monotonic() >= outer_deadline: raise RuntimeError('Outer process deadline expired.')
     phases = {'native': ['native-compile','native-tool-prepare','native-build-info','native-execution'],
               'race': ['full-cli-prewarm','full-race-execution']}
-    if intel_native: phases['native'] += ['native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
+    if intel_native: phases['native'] += ['module-preparation','native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
     if phase is not None and phase not in phases.get(profile, []):
         raise RuntimeError('Invalid test diagnostic phase.')
-    cpu_count = os.cpu_count() if phase is not None else None
-    number = len(steps)
-    if number >= 24: raise RuntimeError('Owned stage count bound reached.')
-    executable = pathlib.Path(argv[0]).resolve(strict=True)
-    row = {'argv':argv, 'executableSHA256':hashlib.sha256(executable.read_bytes()).hexdigest(), 'limitSeconds':limit, 'startMonotonic':time.monotonic()}
-    steps.append(row); save('stages.json', steps)
-    process = subprocess.Popen(argv, cwd=root if cwd is None else cwd, env=env or base_env, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-    session = {'sid':process.pid,'leaderPID':process.pid,'expectedRootPGID':process.pid,'launchMechanism':'Popen(start_new_session=True)','empty':False}
-    groups.append(session); save('groups.json',groups)
     diagnostic = None
     if phase is not None:
-        diagnostic = {'phase':phase,'sid':process.pid,'stage':number,'cpuCount':cpu_count,
+        diagnostic = {'phase':phase,'cpuCount':os.cpu_count(),
                       'usageScope':'Cumulative reaped supervisor children; includes its process observers, not live per-process CPU.',
                       'maxRSSUnits':'native getrusage units; no cross-platform normalization',
                       'samples':[],'firstByteMonotonic':None,'lastByteMonotonic':None}
-    next_sample = time.monotonic()
-    def sample_progress():
-        if diagnostic is None: return
+    def sample_progress(snapshot):
         if len(diagnostic['samples']) >= 64: raise RuntimeError('Native diagnostic sample bound reached.')
-        now = time.monotonic()
+        now = snapshot['atMonotonic']
         usage = resource.getrusage(resource.RUSAGE_CHILDREN)
         capacity = shutil.disk_usage(mount)
+        diagnostic.update({key:snapshot[key] for key in ['sid','stage','effectiveDeadlineMonotonic','firstByteMonotonic','lastByteMonotonic']})
         diagnostic['samples'].append({'atMonotonic':now,'atUnixSeconds':time.time(),
-            'stdoutBytes':streams['stdout'][1],'stderrBytes':streams['stderr'][1],
-            'silenceSeconds':now-(diagnostic['lastByteMonotonic'] or row['startMonotonic']),
+            'stdoutBytes':snapshot['stdoutBytes'],'stderrBytes':snapshot['stderrBytes'],
+            'silenceSeconds':now-(snapshot['lastByteMonotonic'] or snapshot['startMonotonic']),
             'globalRemainingSeconds':outer_deadline-now,'loadAverage':list(os.getloadavg()),
             'capacityBytes':{'total':capacity.total,'used':capacity.used,'free':capacity.free},
             'reapedChildren':{'userSeconds':usage.ru_utime,'systemSeconds':usage.ru_stime,
                 'maxRSS':usage.ru_maxrss,'inputBlocks':usage.ru_inblock,'outputBlocks':usage.ru_oublock}})
-        save(f'native-stage-{number:02d}-progress.json',diagnostic)
-    selector = selectors.DefaultSelector()
-    streams = {}
-    raw = bytearray()
-    for name, stream in [('stdout',process.stdout), ('stderr',process.stderr)]:
-        os.set_blocking(stream.fileno(), False)
-        selector.register(stream, selectors.EVENT_READ, name)
-        streams[name] = [(proof/f'{number:02d}.{name}').open('wb'), 0]
-    reason = None
-    deadline = min(outer_deadline, time.monotonic()+limit)
-    if phase_deadline is not None: deadline = min(deadline,phase_deadline)
-    if diagnostic is not None: diagnostic['effectiveDeadlineMonotonic'] = deadline
-    try:
-        while selector.get_map():
-            if time.monotonic() >= deadline: reason = 'PROCESS_DEADLINE'; break
-            if mounted and monitor_volume and shutil.disk_usage(mount).free < 128*1024*1024:
-                reason = 'OWNED_VOLUME_SPACE_FLOOR'; break
-            if sum(v[1] for v in streams.values()) > 128*1024*1024:
-                reason = 'OUTPUT_LIMIT'; break
-            if diagnostic is not None and time.monotonic() >= next_sample:
-                sample_progress(); next_sample = time.monotonic()+10
-            for key, _ in selector.select(.1):
-                chunk = os.read(key.fileobj.fileno(), 65536)
-                if not chunk: selector.unregister(key.fileobj); continue
-                if diagnostic is not None:
-                    now = time.monotonic()
-                    if diagnostic['firstByteMonotonic'] is None: diagnostic['firstByteMonotonic'] = now
-                    diagnostic['lastByteMonotonic'] = now
-                stream = streams[key.data]
-                remaining = 64*1024*1024-stream[1]
-                stream[0].write(chunk[:max(0,remaining)]); stream[1] += len(chunk)
-                if capture and key.data == 'stdout':
-                    if len(raw)+len(chunk) > 4*1024*1024: reason = 'CAPTURE_LIMIT'; break
-                    raw.extend(chunk)
-                if stream[1] > 64*1024*1024: reason = 'OUTPUT_LIMIT'; break
-            if reason: break
-        if not reason:
-            try: process.wait(timeout=max(.001, deadline-time.monotonic()))
-            except subprocess.TimeoutExpired: reason = 'PROCESS_DEADLINE'
-    finally:
-        empty = finish_session(process,session)
-        if diagnostic is not None:
-            try:
-                sample_progress()
-                diagnostic['endedMonotonic'] = time.monotonic()
-                diagnostic['ownedSessionEmpty'] = empty
-                save(f'native-stage-{number:02d}-progress.json',diagnostic)
-            except BaseException as error:
-                reason = reason or 'NATIVE_DIAGNOSTIC_FAILURE'
-                row['diagnosticFailure'] = str(error)
-        selector.close()
-        for stream in streams.values(): stream[0].close()
-        process.stdout.close(); process.stderr.close()
-        row.update({'status':process.poll(),'reason':reason,'ownedSessionEmpty':empty,
-                    'stdoutBytes':streams['stdout'][1], 'stderrBytes':streams['stderr'][1]})
-        save('stages.json', steps); save('groups.json', groups)
-    if reason or row['status'] != 0 or not empty: raise RuntimeError('A bounded stage failed; see raw evidence.')
-    return bytes(raw)
+        if 'endedMonotonic' in snapshot:
+            diagnostic.update({key:snapshot[key] for key in ['endedMonotonic','ownedSessionEmpty']})
+        save(f"native-stage-{snapshot['stage']:02d}-progress.json",diagnostic)
+    return session_supervisor.run(argv,limit,env,capture,monitor_volume,
+        cwd=cwd,phase_deadline=phase_deadline,progress=sample_progress if phase is not None else None)
 
 def native_executable_input(path):
     path = pathlib.Path(path)
@@ -521,7 +345,15 @@ try:
         if path.is_symlink() or not path.is_file() or root not in path.resolve().parents: raise RuntimeError('Uncertain tracked source input.')
         source_files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     save('source-inputs.json',{'head':run([git,'-c','safe.directory='+str(root),'rev-parse','HEAD'],capture=True).decode().strip(),'files':source_files, 'python':sys.version,'pythonSHA256':hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest()})
-    run([go,'mod','download','-json'],120)
+    module_argv = [go,'mod','download','-json']
+    module_phase = None
+    if intel_native:
+        module_argv.append('-x')
+        module_phase = 'module-preparation'
+        save('module-preparation-inputs.json',{'environmentKeys':sorted(base_env),
+            'sourceHashes':source_hashes,'cachePolicy':'fresh owned mounted cache; no restored dependency cache',
+            'limitSeconds':120,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest()})
+    run(module_argv,120,phase=module_phase)
     if any(hashlib.sha256((root/p).read_bytes()).hexdigest() != value for p,value in source_hashes.items()): raise RuntimeError('Module preparation changed a frozen source file.')
     base_env.update({'GOPROXY':'off','GOSUMDB':'off','GOFLAGS':'-mod=readonly'})
     if profile == 'race':
@@ -543,14 +375,16 @@ try:
         run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
     else:
         base_env['CGO_ENABLED'] = '0'
-        cold_seconds,execution_reserve = (240,1830) if intel_native else (120,630)
+        cold_seconds,execution_reserve = (480,1830) if intel_native else (120,630)
         cold_deadline = min(time.monotonic()+cold_seconds,outer_deadline-execution_reserve)
         def cold_limit():
             remaining = cold_deadline-time.monotonic()
             if remaining <= 0: raise RuntimeError('No cold-phase budget remains before the full native execution reserve.')
             return remaining
         test_binary = cache/'identityattempt.test'
-        run([go,'test','-c','-o',str(test_binary),'./internal/identityattempt'],cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
+        compile_argv = [go,'test','-c','-o',str(test_binary),'./internal/identityattempt']
+        if intel_native: compile_argv.insert(3,'-x')
+        run(compile_argv,cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
         tool_output = run([go,'tool','-n','test2json'],cold_limit(),capture=True,phase='native-tool-prepare',phase_deadline=cold_deadline).decode('utf-8',errors='strict').splitlines()
         if len(tool_output) != 1 or len(tool_output[0]) > 4096: raise RuntimeError('Ambiguous maintained test2json input.')
         test2json_path = pathlib.Path(tool_output[0])

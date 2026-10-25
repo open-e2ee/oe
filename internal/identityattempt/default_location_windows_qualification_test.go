@@ -1,10 +1,12 @@
-//go:build windows && identity_default_root_qualification
+//go:build windows && (identity_default_root_qualification || identity_default_qualification)
 
 package identityattempt
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -26,34 +28,7 @@ type storeWindowsDefaultMetadata struct {
 // This qualifier reads the real caller's Known Folder without an injected root.
 // Its build tag keeps ordinary-user acceptance separate from privileged fixtures.
 func TestStoreWindowsOrdinaryDefaultLocationReadOnly(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
-	user, err := token.GetTokenUser()
-	if err != nil {
-		t.Fatal("ordinary caller token user unavailable")
-	}
-	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
-	if err != nil || user.User.Sid.Equals(system) {
-		t.Fatal("ordinary qualifier refuses SYSTEM")
-	}
-	groups, err := token.GetTokenGroups()
-	if err != nil {
-		t.Fatal("ordinary caller token groups unavailable")
-	}
-	for _, group := range groups.AllGroups() {
-		if group.Sid.Equals(administrators) {
-			t.Fatal("ordinary qualifier refuses administrator membership, including a filtered token")
-		}
-	}
-	var elevation, returned uint32
-	if windows.GetTokenInformation(token, windows.TokenElevation, (*byte)(unsafe.Pointer(&elevation)), uint32(unsafe.Sizeof(elevation)), &returned) != nil ||
-		returned != uint32(unsafe.Sizeof(elevation)) || elevation != 0 {
-		t.Fatal("ordinary qualifier requires a verified unelevated token")
-	}
-	storeWindowsOrdinaryPrivileges(t, token)
+	storeWindowsDefaultPrincipal(t)
 	expected, err := windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0)
 	if err != nil {
 		t.Fatal("actual Known Folder prerequisite unavailable")
@@ -151,4 +126,71 @@ func storeWindowsDefaultTreeMetadata(t *testing.T, location Location) []storeWin
 			descriptor: sha256.Sum256([]byte(sd.String()))})
 	}
 	return result
+}
+
+func storeWindowsDefaultPrincipal(t *testing.T) map[string]any {
+	t.Helper()
+	token := windows.GetCurrentProcessToken()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		t.Fatal("ordinary caller token user unavailable")
+	}
+	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil || user.User.Sid.Equals(system) {
+		t.Fatal("ordinary qualifier refuses SYSTEM")
+	}
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		t.Fatal("ordinary caller token groups unavailable")
+	}
+	for _, group := range groups.AllGroups() {
+		if group.Sid.Equals(administrators) {
+			t.Fatal("ordinary qualifier refuses administrator membership, including a filtered token")
+		}
+	}
+	var elevation, returned uint32
+	if windows.GetTokenInformation(token, windows.TokenElevation, (*byte)(unsafe.Pointer(&elevation)), uint32(unsafe.Sizeof(elevation)), &returned) != nil ||
+		returned != uint32(unsafe.Sizeof(elevation)) || elevation != 0 {
+		t.Fatal("ordinary qualifier requires a verified unelevated token")
+	}
+	storeWindowsOrdinaryPrivileges(t, token)
+	return map[string]any{"identity": user.User.Sid.String(), "administrator": false, "elevated": false,
+		"onlyEnabledPrivilege": "SeChangeNotifyPrivilege", "os": runtime.GOOS, "architecture": runtime.GOARCH}
+}
+
+func defaultQualificationPlatform(t *testing.T, location Location) map[string]any {
+	t.Helper()
+	result := storeWindowsDefaultPrincipal(t)
+	expected, err := windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0)
+	if err != nil || expected != location.anchor {
+		t.Fatal("production default does not match the actual standard user's Known Folder")
+	}
+	result["defaultAnchor"] = expected
+	var ancestors []map[string]any
+	for _, row := range storeWindowsDefaultTreeMetadata(t, location) {
+		ancestors = append(ancestors, map[string]any{"device": row.device, "object": row.object,
+			"attributes": row.attributes, "descriptorSHA256": hex.EncodeToString(row.descriptor[:]), "missing": row.missing})
+	}
+	result["nativeAncestors"] = ancestors
+	return result
+}
+
+func defaultQualificationEvidenceStamp(t *testing.T, file *os.File) fileStamp {
+	t.Helper()
+	handle := windows.Handle(file.Fd())
+	kind, kindErr := windows.GetFileType(handle)
+	var info windows.ByHandleFileInformation
+	if kindErr != nil || kind != windows.FILE_TYPE_DISK || windows.GetFileInformationByHandle(handle, &info) != nil ||
+		info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 || info.NumberOfLinks != 1 {
+		t.Fatal("ordinary handoff native file identity unavailable")
+	}
+	size := uint64(info.FileSizeHigh)<<32 | uint64(info.FileSizeLow)
+	if size > 2097152 {
+		t.Fatal("ordinary handoff file exceeds its bound")
+	}
+	return fileStamp{uint64(info.VolumeSerialNumber), uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow), int64(size)}
 }
