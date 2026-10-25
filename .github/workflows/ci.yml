@@ -317,9 +317,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./scripts/test-homebrew.sh
 
-  # RI-D369: temporary diagnostics only. Remove both jobs before final merge.
-  identity-default-go-sentinel-amd64:
-    name: Temporary Windows amd64 Go sentinel (diagnostic only, no D credit)
+  # RI-D401: temporary diagnostics only. Remove both jobs before final merge.
+  identity-default-loader-gui-amd64:
+    name: Temporary Windows amd64 loader/GUI observation (diagnostic only, no D credit)
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
@@ -328,23 +328,23 @@ jobs:
         with:
           go-version: 1.27.3
           cache: false
-      - name: Diagnostic only - fixed Go exit 73
-        id: sentinel
+      - name: Diagnostic only - fixed Go loader/GUI observation
+        id: observation
         shell: pwsh
-        run: ./scripts/test-identity-default-windows.ps1 -ExpectedArchitecture amd64 -DiagnosticGoSentinel
-      - name: Preserve bounded diagnostic-only Go sentinel evidence
-        if: always() && steps.sentinel.outputs.evidence-path != ''
+        run: ./scripts/test-identity-default-windows.ps1 -ExpectedArchitecture amd64 -DiagnosticLoaderGUI
+      - name: Preserve bounded diagnostic-only loader/GUI observation evidence
+        if: always() && steps.observation.outputs.evidence-path != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         timeout-minutes: 2
         with:
-          name: identity-default-go-sentinel-windows-amd64
-          path: ${{ steps.sentinel.outputs.evidence-path }}
+          name: identity-default-loader-gui-windows-amd64
+          path: ${{ steps.observation.outputs.evidence-path }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
-  identity-default-go-sentinel-arm64:
-    name: Temporary Windows arm64 Go sentinel (diagnostic only, no D credit)
+  identity-default-loader-gui-arm64:
+    name: Temporary Windows arm64 loader/GUI observation (diagnostic only, no D credit)
     runs-on: windows-11-arm
     timeout-minutes: 20
     steps:
@@ -353,17 +353,17 @@ jobs:
         with:
           go-version: 1.27.3
           cache: false
-      - name: Diagnostic only - fixed Go exit 73
-        id: sentinel
+      - name: Diagnostic only - fixed Go loader/GUI observation
+        id: observation
         shell: pwsh
-        run: ./scripts/test-identity-default-windows.ps1 -ExpectedArchitecture arm64 -DiagnosticGoSentinel
-      - name: Preserve bounded diagnostic-only Go sentinel evidence
-        if: always() && steps.sentinel.outputs.evidence-path != ''
+        run: ./scripts/test-identity-default-windows.ps1 -ExpectedArchitecture arm64 -DiagnosticLoaderGUI
+      - name: Preserve bounded diagnostic-only loader/GUI observation evidence
+        if: always() && steps.observation.outputs.evidence-path != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         timeout-minutes: 2
         with:
-          name: identity-default-go-sentinel-windows-arm64
-          path: ${{ steps.sentinel.outputs.evidence-path }}
+          name: identity-default-loader-gui-windows-arm64
+          path: ${{ steps.observation.outputs.evidence-path }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

@@ -1,8 +1,9 @@
 param([Parameter(Mandatory=$true)][ValidateSet('amd64','arm64')][string]$ExpectedArchitecture,
     [switch]$DiagnosticFileSentinel,
-    [switch]$DiagnosticGoSentinel)
+    [switch]$DiagnosticGoSentinel,
+    [switch]$DiagnosticLoaderGUI)
 $ErrorActionPreference='Stop'
-if ($DiagnosticFileSentinel -and $DiagnosticGoSentinel) { throw 'Select one diagnostic mode.' }
+if (($DiagnosticFileSentinel -and ($DiagnosticGoSentinel -or $DiagnosticLoaderGUI)) -or ($DiagnosticGoSentinel -and $DiagnosticLoaderGUI)) { throw 'Select one diagnostic mode.' }
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'A fresh disposable GitHub-hosted VM is required.' }
 if (-not $IsWindows -or [IntPtr]::Size -ne 8) { throw 'A native 64-bit Windows process is required.' }
 $architecture=@{X64='amd64';Arm64='arm64'}[[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()]
@@ -18,6 +19,7 @@ $nonce=[Guid]::NewGuid().ToString('N')
 $proof=Join-Path $env:RUNNER_TEMP "ca8-default-proof-$nonce"
 if ($DiagnosticFileSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-file-sentinel-proof-$nonce" }
 if ($DiagnosticGoSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-go-sentinel-proof-$nonce" }
+if ($DiagnosticLoaderGUI) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-loader-gui-proof-$nonce" }
 $artifact=Join-Path $proof 'artifact'
 $workspace=Join-Path ($env:SystemDrive+'\') "ca8-default-$nonce"
 if (-not [IO.Path]::IsPathFullyQualified($workspace)) { throw 'The new fixture workspace requires an actual drive root.' }
@@ -307,7 +309,21 @@ if ($result.status -ne 0 -or -not $result.jobEmpty -or $result.errors.Count -ne 
 '@ | Set-Content -LiteralPath $child -Encoding utf8
     }
     $broker=Join-Path $workspace 'broker.ps1'
-    if ($DiagnosticGoSentinel) {
+    if ($DiagnosticLoaderGUI) {
+    @'
+param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
+$ErrorActionPreference='Stop'
+Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
+$password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
+try {
+    $probeArguments=@('-test.run=^TestStoreWindowsLoaderGUIObservation$','-test.timeout=120s','-test.v',"-identity-loader-gui-nonce=$Nonce","-identity-loader-gui-sid=$SID")
+    $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Binary,$probeArguments,$PSScriptRoot,$Nonce,(Join-Path $Proof 'controller'))
+    $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
+    if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
+        $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
+} finally {$password=$null}
+'@ | Set-Content -LiteralPath $broker -Encoding utf8
+    } elseif ($DiagnosticGoSentinel) {
     @'
 param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
 $ErrorActionPreference='Stop'
@@ -357,6 +373,7 @@ try {
     Save-Proof 'broker-supervision.json' $runResult
     $allJobsEmpty=Observe-OwnedClosure
     if (-not $allJobsEmpty -or $runResult.process.status -ne 0 -or $timer.Elapsed.TotalSeconds -ge 500) { throw 'The isolated process graph did not close within its logical bound.' }
+    if ($DiagnosticLoaderGUI) { throw 'Loader/GUI observation returned. This diagnostic changes DLL load order and supplies no D acceptance.' }
     $profiles=@(Get-CimInstance Win32_UserProfile -Filter "SID='$sid'")
     if ($profiles.Count -ne 1 -or $profiles[0].Special) { throw 'The one newly loaded fixture profile is unavailable.' }
     $profileRecord=$profiles[0]
@@ -437,7 +454,7 @@ finally {
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
         newAccount=$userName;newSID=$sid;originalProfilePath=if($profileRecord){$profileRecord.LocalPath}else{$null};
         profileDeleted=$profileDeleted;accountDeleted=$accountDeleted;
-        scope=if($DiagnosticGoSentinel){'Diagnostic-only native Go exit 73. No D01-D06/default-store, PowerShell cause, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}elseif($DiagnosticFileSentinel){'Diagnostic-only PowerShell -File exit 73. No D01-D06, Go/default-store, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}else{'D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}}
+        scope=if($DiagnosticLoaderGUI){'Diagnostic-only compiled Go loader/GUI observation. DLL load order changed. No Known Folder/store call or D01-D06 acceptance; no provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}elseif($DiagnosticGoSentinel){'Diagnostic-only native Go exit 73. No D01-D06/default-store, PowerShell cause, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}elseif($DiagnosticFileSentinel){'Diagnostic-only PowerShell -File exit 73. No D01-D06, Go/default-store, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}else{'D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}}
     if ($DiagnosticGoSentinel) { $terminal['diagnosticProgram']=$diagnosticProgramReceipt }
     $terminalText=$terminal | ConvertTo-Json -Depth 12
     if ([Text.Encoding]::UTF8.GetByteCount($terminalText) -gt 1048576) { throw 'The reserved terminal evidence bound was reached.' }

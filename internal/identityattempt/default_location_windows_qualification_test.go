@@ -5,13 +5,18 @@ package identityattempt
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -193,4 +198,152 @@ func defaultQualificationEvidenceStamp(t *testing.T, file *os.File) fileStamp {
 		t.Fatal("ordinary handoff file exceeds its bound")
 	}
 	return fileStamp{uint64(info.VolumeSerialNumber), uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow), int64(size)}
+}
+
+var storeWindowsLoaderNonce = flag.String("identity-loader-gui-nonce", "", "explicit disposable loader observation nonce")
+var storeWindowsLoaderSID = flag.String("identity-loader-gui-sid", "", "expected disposable loader observation SID")
+
+func storeWindowsLoaderReport(t *testing.T, stage, code string, detail map[string]any, err error) {
+	t.Helper()
+	if detail == nil {
+		detail = make(map[string]any)
+	}
+	detail["stage"], detail["code"] = stage, code
+	if err != nil {
+		detail["errorType"] = fmt.Sprintf("%T", err)
+		var native windows.Errno
+		if errors.As(err, &native) {
+			detail["win32Code"] = uint64(native)
+		}
+	}
+	data, encodeErr := json.Marshal(detail)
+	if encodeErr != nil || len(data) > 4096 {
+		t.Fatal("loader observation exceeds its fixed record bound")
+	}
+	t.Logf("loader-gui-observation %s", data)
+	switch code {
+	case "LOAD_FAILED", "RESOLVE_FAILED", "NULL_HANDLE", "QUERY_FAILED", "INVALID_RETURNED_SPAN", "INVALID_RETURNED_NAME":
+		t.Fail()
+	}
+}
+
+// This changes DLL load order. Its observations cannot qualify any D case.
+func TestStoreWindowsLoaderGUIObservation(t *testing.T) {
+	if len(*storeWindowsLoaderNonce) != 32 || strings.Trim(*storeWindowsLoaderNonce, "0123456789abcdef") != "" || *storeWindowsLoaderSID == "" {
+		t.Fatal("explicit disposable loader observation identity is required")
+	}
+	if os.Getenv("OE_OPERATION_ID") != "" {
+		t.Fatal("loader observation refuses an operation ID")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	principal := storeWindowsDefaultPrincipal(t)
+	if principal["identity"] != *storeWindowsLoaderSID {
+		t.Fatal("loader observation caller differs from the disposable SID")
+	}
+	threadID := windows.GetCurrentThreadId()
+	started := time.Now()
+	before := func(stage string) {
+		if time.Since(started) >= 5*time.Second {
+			t.Fatal("loader observation exceeded its five-second logical budget")
+		}
+		storeWindowsLoaderReport(t, stage, "STARTED", nil, nil)
+	}
+	storeWindowsLoaderReport(t, "context", "DIAGNOSTIC_ONLY", map[string]any{
+		"pid": os.Getpid(), "threadID": threadID, "nonce": *storeWindowsLoaderNonce,
+		"principal": principal, "dCredit": false, "dllReferences": "retained until process exit",
+	}, nil)
+	user32 := windows.NewLazySystemDLL("user32.dll")
+	before("user32-load")
+	userErr := user32.Load()
+	if userErr != nil {
+		storeWindowsLoaderReport(t, "user32-load", "LOAD_FAILED", nil, userErr)
+		storeWindowsLoaderReport(t, "gui-readbacks", "NOT_ATTEMPTED_USER32_UNAVAILABLE", nil, nil)
+	} else {
+		storeWindowsLoaderReport(t, "user32-load", "AVAILABLE", nil, nil)
+		resolve := func(name string) *windows.LazyProc {
+			before(name + "-resolve")
+			proc := user32.NewProc(name)
+			if err := proc.Find(); err != nil {
+				storeWindowsLoaderReport(t, name+"-resolve", "RESOLVE_FAILED", nil, err)
+				return nil
+			}
+			storeWindowsLoaderReport(t, name+"-resolve", "AVAILABLE", nil, nil)
+			return proc
+		}
+		station := resolve("GetProcessWindowStation")
+		desktop := resolve("GetThreadDesktop")
+		information := resolve("GetUserObjectInformationW")
+		objects := []struct {
+			name, expected string
+			proc           *windows.LazyProc
+			args           []uintptr
+		}{
+			{"station", "ca8_station_" + *storeWindowsLoaderNonce, station, nil},
+			{"desktop", "ca8_desktop_" + *storeWindowsLoaderNonce, desktop, []uintptr{uintptr(threadID)}},
+		}
+		for _, object := range objects {
+			if object.proc == nil {
+				storeWindowsLoaderReport(t, object.name, "NOT_ATTEMPTED_PROCEDURE_UNAVAILABLE", nil, nil)
+				continue
+			}
+			before(object.name + "-handle")
+			handle, _, callErr := object.proc.Call(object.args...)
+			if handle == 0 {
+				storeWindowsLoaderReport(t, object.name, "NULL_HANDLE", map[string]any{"null": true}, callErr)
+				continue
+			}
+			// These association handles are borrowed. Never close or replace them.
+			storeWindowsLoaderReport(t, object.name+"-handle", "AVAILABLE", map[string]any{"null": false}, nil)
+			if information == nil {
+				storeWindowsLoaderReport(t, object.name+"-name", "NOT_ATTEMPTED_PROCEDURE_UNAVAILABLE", nil, nil)
+				continue
+			}
+			var buffer [256]uint16
+			var needed uint32
+			before(object.name + "-name")
+			ok, _, nameErr := information.Call(handle, 2, uintptr(unsafe.Pointer(&buffer[0])), uintptr(unsafe.Sizeof(buffer)), uintptr(unsafe.Pointer(&needed)))
+			runtime.KeepAlive(buffer)
+			if ok == 0 {
+				storeWindowsLoaderReport(t, object.name+"-name", "QUERY_FAILED", map[string]any{"neededBytes": needed}, nameErr)
+				continue
+			}
+			if needed < 2 || needed > uint32(unsafe.Sizeof(buffer)) || needed%2 != 0 || buffer[needed/2-1] != 0 {
+				storeWindowsLoaderReport(t, object.name+"-name", "INVALID_RETURNED_SPAN", map[string]any{"neededBytes": needed}, nil)
+				continue
+			}
+			units := buffer[:needed/2-1]
+			if len(units) == 0 || slices.Contains(units, uint16(0)) {
+				storeWindowsLoaderReport(t, object.name+"-name", "INVALID_RETURNED_NAME", map[string]any{"neededBytes": needed}, nil)
+				continue
+			}
+			name := windows.UTF16ToString(units)
+			storeWindowsLoaderReport(t, object.name+"-name", "AVAILABLE", map[string]any{
+				"name": name, "neededBytes": needed, "matchesRequested": name == object.expected,
+			}, nil)
+			if name != object.expected {
+				t.Fail()
+			}
+		}
+	}
+	shell32 := windows.NewLazySystemDLL("shell32.dll")
+	before("shell32-load")
+	if err := shell32.Load(); err != nil {
+		storeWindowsLoaderReport(t, "shell32-load", "LOAD_FAILED", nil, err)
+		storeWindowsLoaderReport(t, "SHGetKnownFolderPath-resolve", "NOT_ATTEMPTED_SHELL32_UNAVAILABLE", nil, nil)
+	} else {
+		storeWindowsLoaderReport(t, "shell32-load", "AVAILABLE", nil, nil)
+		before("SHGetKnownFolderPath-resolve")
+		if err := shell32.NewProc("SHGetKnownFolderPath").Find(); err != nil {
+			storeWindowsLoaderReport(t, "SHGetKnownFolderPath-resolve", "RESOLVE_FAILED", nil, err)
+		} else {
+			storeWindowsLoaderReport(t, "SHGetKnownFolderPath-resolve", "AVAILABLE_NOT_CALLED", nil, nil)
+		}
+	}
+	runtime.KeepAlive(user32)
+	runtime.KeepAlive(shell32)
+	before("sequence-returned")
+	storeWindowsLoaderReport(t, "sequence-returned", "DIAGNOSTIC_ONLY", map[string]any{
+		"elapsedMilliseconds": time.Since(started).Milliseconds(), "dCredit": false,
+	}, nil)
 }
