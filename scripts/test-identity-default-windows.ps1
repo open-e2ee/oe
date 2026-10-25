@@ -29,6 +29,9 @@ $stages=[Collections.Generic.List[object]]::new()
 $created=$false; $accountCreationAttempted=$false; $sid=$null; $profileRecord=$null; $runResult=$null
 $nativeGuiReadback=$null; $nativeControllerReadback=$null
 $diagnosticProgramReceipt=$null
+$artifactCopyObservation=[ordered]@{schema=1;kind='D06_ARTIFACT_COPY_OBSERVATION';state='NOT_ATTEMPTED';
+    scope='existing-target-stamp-before-unchanged-predicate';atomicSnapshot=$false;addedNativeMetadataReads=0;addedFileHashReads=0;
+    maximumRecords=4;maximumPayloadBytes=16384;records=@()}
 $nativeLauncherReceipt=$null; $hostVersionReceipt=@{available=$false;code='HOST_VERSION_NOT_CAPTURED';childLoadedVersionMeasured=$false}
 $brokerStarted=$false; $allJobsEmpty=$false; $evidence=$null; $copied=$false; $collectionComplete=$false; $success=$false; $failure=$null
 $artifactBytes=0L; $artifactEntries=0; $profileDeleted=$false; $accountDeleted=$false
@@ -152,6 +155,7 @@ function Copy-StandardHandoff($Manifest) {
     [IdentityStoreFixture]::CreateQualificationDirectory($destination,$launcherSID,'')
     foreach ($childName in @('locks','v1')) { [IdentityStoreFixture]::CreateQualificationDirectory((Join-Path $destination $childName),$launcherSID,'') }
     $rows=[Collections.Generic.List[object]]::new(); [UInt64]$total=0
+    $copyObservationRows=[Collections.Generic.List[object]]::new()
     foreach ($name in $expected) {
         $entry=$Manifest.files.PSObject.Properties[$name].Value
         $bytes=Read-ExactU64 $entry.bytes; $total+=$bytes
@@ -168,6 +172,28 @@ function Copy-StandardHandoff($Manifest) {
         $after=[IdentityStoreFixture]::InspectQualificationFile($source)
         Assert-CopyStamp $after $entry.copy $bytes $sid
         $copy=[IdentityStoreFixture]::InspectQualificationFile($target)
+        try {
+            if ($copyObservationRows.Count -ge 4 -or $name -isnot [string] -or $name.Length -gt 128 -or $copy.owner -isnot [string] -or
+                $copy.owner.Length -lt 1 -or $copy.owner.Length -gt 184 -or $launcherSID -isnot [string] -or
+                $launcherSID.Length -lt 1 -or $launcherSID.Length -gt 184 -or $entry.source.sha256 -isnot [string] -or
+                $entry.source.sha256 -cnotmatch '^[a-f0-9]{64}$') {
+                throw 'The fixed copy observation bound was reached.'
+            }
+            $copyObservationRows.Add([ordered]@{
+                path=$name;
+                actual=[ordered]@{owner=$copy.owner;device=(Read-ExactU64 $copy.device);nativeObject=(Read-ExactU64 $copy.nativeObject);fileBytes=(Read-ExactU64 $copy.fileBytes)};
+                expected=[ordered]@{owner=$launcherSID;fileBytes=$bytes;sha256=$entry.source.sha256};
+                comparisons=[ordered]@{ownerMatches=($copy.owner -eq $launcherSID);bytesMatch=((Read-ExactU64 $copy.fileBytes) -eq $bytes);
+                    actualSHA256=$null;hashMatches=$null;hashState='UNKNOWN_NOT_OBSERVED'}
+            })
+            $copyObservationDocument=[ordered]@{schema=1;kind='D06_ARTIFACT_COPY_OBSERVATION';state='RECORDED';
+                scope='existing-target-stamp-before-unchanged-predicate';atomicSnapshot=$false;
+                addedNativeMetadataReads=0;addedFileHashReads=0;maximumRecords=4;maximumPayloadBytes=16384;records=$copyObservationRows.ToArray()}
+            $copyObservationText=$copyObservationDocument | ConvertTo-Json -Depth 6
+            $copyObservationBytes=[Text.Encoding]::UTF8.GetByteCount($copyObservationText)
+            if ($copyObservationBytes -gt 16384) { throw 'The fixed copy observation output bound was reached.' }
+            $script:artifactCopyObservation=$copyObservationDocument
+        } catch { $script:artifactCopyObservation['state']='OBSERVATION_UNAVAILABLE' }
         if ($copy.owner -ne $launcherSID -or (Read-ExactU64 $copy.fileBytes) -ne $bytes -or
             (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.source.sha256) { throw 'The preserved artifact handoff differs.' }
         $rows.Add(@{path=$name;original=$entry.source;standardCopy=$entry.copy;artifact=$copy;sha256=$entry.source.sha256})
@@ -449,6 +475,7 @@ finally {
         }
     } catch { $success=$false; $failure+="`nCleanup: $_" }
     $terminal=@{success=$success;failure=$failure;elapsedSeconds=$timer.Elapsed.TotalSeconds;allJobsEmpty=$allJobsEmpty;
+        artifactCopyObservation=$artifactCopyObservation;
         nativeBroker=$runResult;nativeGui=$nativeGuiReadback;nativeController=$nativeControllerReadback;preparationStages=$stages;
         nativeLauncher=$nativeLauncherReceipt;hostVersions=$hostVersionReceipt;
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
