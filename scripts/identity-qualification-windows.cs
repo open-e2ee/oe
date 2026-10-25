@@ -1232,6 +1232,36 @@ public static class IdentityStoreFixture {
         } finally {Free(descriptor);}
     }
 
+    [DllImport("kernel32.dll",EntryPoint="CreateFileW",CharSet=CharSet.Unicode,SetLastError=true)]
+    static extern IntPtr CreateQualificationFileW(string path,uint access,uint share,ref SA security,uint disposition,uint flags,IntPtr template);
+    public static void CopyQualificationFile(string source,string target,string owner,ulong expectedBytes) {
+        new SecurityIdentifier(owner);
+        if(expectedBytes>2097152)throw new Exception("qualification copy exceeds fixed file bound");
+        IntPtr descriptor=IntPtr.Zero,handle=IntPtr.Zero;Exception failure=null;
+        try {
+            using(var input=new FileStream(source,FileMode.Open,FileAccess.Read,FileShare.Read)) {
+                if((ulong)input.Length!=expectedBytes)throw new Exception("qualification source size differs");
+                uint size;
+                if(!ConvertStringSecurityDescriptorToSecurityDescriptor("O:"+owner+"D:P(A;;FA;;;"+owner+")(A;;FA;;;SY)",1,out descriptor,out size))
+                    throw Error("new qualification file descriptor");
+                var security=new SA{length=Marshal.SizeOf<SA>(),descriptor=descriptor,inherit=0};
+                handle=CreateQualificationFileW(target,0x40000000,0,ref security,1,0x00200080,IntPtr.Zero);
+                if(handle==new IntPtr(-1))throw Error("exclusive new qualification file");
+                using(var borrowed=new Microsoft.Win32.SafeHandles.SafeFileHandle(handle,false))
+                using(var output=new FileStream(borrowed,FileAccess.Write,65536,false)) {
+                    byte[] buffer=new byte[65536];ulong copied=0;
+                    while(copied<expectedBytes) {
+                        int count=input.Read(buffer,0,(int)Math.Min((ulong)buffer.Length,expectedBytes-copied));
+                        if(count==0)throw new Exception("qualification source ended before declared size");
+                        output.Write(buffer,0,count);copied+=(ulong)count;
+                    }
+                    if(input.ReadByte()!=-1)throw new Exception("qualification source exceeds declared size");
+                }
+            }
+        } catch(Exception error){failure=error;throw;}
+        finally {ReleaseNativeResources(failure,()=>Close(handle),()=>Free(descriptor));}
+    }
+
     public static object InspectQualificationFile(string path) {
         IntPtr handle=CreateFileW(path,0x80020000,1,IntPtr.Zero,3,0x00200000,IntPtr.Zero);
         if(handle==new IntPtr(-1))throw Error("owned proof file open");

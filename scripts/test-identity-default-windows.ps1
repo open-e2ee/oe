@@ -168,7 +168,7 @@ function Copy-StandardHandoff($Manifest) {
         $before=[IdentityStoreFixture]::InspectQualificationFile($source)
         Assert-CopyStamp $before $entry.copy $bytes $sid
         if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.source.sha256) { throw 'The standard-user handoff hash differs.' }
-        [IO.File]::Copy($source,$target,$false)
+        [IdentityStoreFixture]::CopyQualificationFile($source,$target,$launcherSID,$bytes)
         $after=[IdentityStoreFixture]::InspectQualificationFile($source)
         Assert-CopyStamp $after $entry.copy $bytes $sid
         $copy=[IdentityStoreFixture]::InspectQualificationFile($target)
