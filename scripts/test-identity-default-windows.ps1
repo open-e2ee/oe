@@ -1,9 +1,5 @@
-param([Parameter(Mandatory=$true)][ValidateSet('amd64','arm64')][string]$ExpectedArchitecture,
-    [switch]$DiagnosticFileSentinel,
-    [switch]$DiagnosticGoSentinel,
-    [switch]$DiagnosticLoaderGUI)
+param([Parameter(Mandatory=$true)][ValidateSet('amd64','arm64')][string]$ExpectedArchitecture)
 $ErrorActionPreference='Stop'
-if (($DiagnosticFileSentinel -and ($DiagnosticGoSentinel -or $DiagnosticLoaderGUI)) -or ($DiagnosticGoSentinel -and $DiagnosticLoaderGUI)) { throw 'Select one diagnostic mode.' }
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'A fresh disposable GitHub-hosted VM is required.' }
 if (-not $IsWindows -or [IntPtr]::Size -ne 8) { throw 'A native 64-bit Windows process is required.' }
 $architecture=@{X64='amd64';Arm64='arm64'}[[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()]
@@ -17,9 +13,6 @@ if ($launcherSID -eq 'S-1-5-18' -or -not $launcherIsAdmin) { throw 'A non-SYSTEM
 $root=Split-Path -Parent $PSScriptRoot
 $nonce=[Guid]::NewGuid().ToString('N')
 $proof=Join-Path $env:RUNNER_TEMP "ca8-default-proof-$nonce"
-if ($DiagnosticFileSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-file-sentinel-proof-$nonce" }
-if ($DiagnosticGoSentinel) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-go-sentinel-proof-$nonce" }
-if ($DiagnosticLoaderGUI) { $proof=Join-Path $env:RUNNER_TEMP "ca8-default-loader-gui-proof-$nonce" }
 $artifact=Join-Path $proof 'artifact'
 $workspace=Join-Path ($env:SystemDrive+'\') "ca8-default-$nonce"
 if (-not [IO.Path]::IsPathFullyQualified($workspace)) { throw 'The new fixture workspace requires an actual drive root.' }
@@ -28,7 +21,6 @@ $timer=[Diagnostics.Stopwatch]::StartNew()
 $stages=[Collections.Generic.List[object]]::new()
 $created=$false; $accountCreationAttempted=$false; $sid=$null; $profileRecord=$null; $runResult=$null
 $nativeGuiReadback=$null; $nativeControllerReadback=$null
-$diagnosticProgramReceipt=$null
 $artifactCopyObservation=[ordered]@{schema=1;kind='D06_ARTIFACT_COPY_OBSERVATION';state='NOT_ATTEMPTED';
     scope='existing-target-stamp-before-unchanged-predicate';atomicSnapshot=$false;addedNativeMetadataReads=0;addedFileHashReads=0;
     maximumRecords=4;maximumPayloadBytes=16384;records=@()}
@@ -84,46 +76,41 @@ function Observe-OwnedClosure {
         $gui.restoredStationName -cne $gui.originalStationName -or $gui.restoredDesktopName -cne $gui.originalDesktopName -or
         -not $gui.stationClosed -or -not $gui.desktopClosed -or -not $gui.stationAbsent -or -not $gui.childLaunchAttempted -or
         $gui.station -ne ('ca8_station_'+$nonce) -or $gui.desktop -ne ('ca8_desktop_'+$nonce) -or -not (Test-NativeClosure $gui.child)) { return $false }
-    if (-not $DiagnosticFileSentinel -and -not $DiagnosticGoSentinel) {
-        $controller=$gui.child
-        if ($controller.kind -cne 'direct-standard-go-controller' -or $controller.topology -cne 'one-controller-child-one-controller-Job' -or
-            $controller.executable -cne $binary -or $controller.workingDirectory -cne $workspace -or
-            $controller.goSupervisionMilliseconds -ne 125000 -or $controller.standardChildMaximumMilliseconds -ne 130000 -or
-            -not $controller.io.stdioPrepared -or -not $controller.io.inputClosed -or
-            -not $controller.io.borrowedInheritanceRestored -or
-            -not $controller.io.stdout.complete -or -not $controller.io.stderr.complete -or
-            $controller.io.stdout.retainedBytes -le 0 -or $controller.io.stdout.retainedBytes -gt 16777216 -or
-            $controller.io.stderr.retainedBytes -lt 0 -or $controller.io.stderr.retainedBytes -gt 16777216) { return $false }
-        $slots=@($controller.io.borrowedSlots);$kinds=@(-10,-11,-12);$groups=@{}
-        $groupCount=Read-ExactU64 $controller.io.borrowedBrokerHandles
-        if ($slots.Count -ne 3 -or $groupCount -gt 3) { return $false }
-        for ($i=0;$i -lt 3;$i++) {
-            $slot=$slots[$i]
-            if ($slot.kind -ne $kinds[$i]) { return $false }
-            if ($slot.state -ceq 'ABSENT') {
-                if ($null -ne $slot.group -or $null -ne $slot.originalFlags -or $slot.cleared -ne $false -or $slot.restored -ne $false) { return $false }
-            } elseif ($slot.state -ceq 'PRESENT') {
-                $group=Read-ExactU64 $slot.group;$flags=Read-ExactU64 $slot.originalFlags
-                if ($group -ge $groupCount -or $flags -gt 3 -or $slot.cleared -ne $true -or $slot.restored -ne $true) { return $false }
-                if ($groups.ContainsKey($group) -and $groups[$group] -ne $flags) { return $false }
-                $groups[$group]=$flags
-            } else { return $false }
-        }
-        if ($groups.Count -ne $groupCount) { return $false }
-        $launch=$controller.launchDiagnostics
-        if ($launch.resumePreviousSuspendCount -ne 1 -or -not $launch.childToken.available -or -not $launch.childToken.tokenClosed -or
-            $launch.childToken.sid -cne $sid -or $launch.childToken.elevated -ne $false -or $launch.childToken.elevationType -ne 1 -or
-            $launch.createdContext.lifetimeCode -cne 'AVAILABLE' -or $launch.createdContext.pid -ne $controller.pid -or
-            $launch.createdContext.sessionCode -cne 'AVAILABLE' -or $launch.createdContext.childSession -ne $launch.createdContext.brokerSession -or
-            -not $launch.processBeforeCleanup.available -or $launch.processBeforeCleanup.waitState -ne 0 -or
-            $launch.processBeforeCleanup.exitCode -ne $controller.status -or $launch.contextBeforeCleanup.lifetimeCode -cne 'AVAILABLE') { return $false }
-        # This reference identifies the same native child/Job already checked above.
-        $script:nativeControllerReadback=@{record='broker-process.json#child';pid=$controller.pid;distinctControllerJobs=1}
-        return $true
+    $controller=$gui.child
+    if ($controller.kind -cne 'direct-standard-go-controller' -or $controller.topology -cne 'one-controller-child-one-controller-Job' -or
+        $controller.executable -cne $binary -or $controller.workingDirectory -cne $workspace -or
+        $controller.goSupervisionMilliseconds -ne 125000 -or $controller.standardChildMaximumMilliseconds -ne 130000 -or
+        -not $controller.io.stdioPrepared -or -not $controller.io.inputClosed -or
+        -not $controller.io.borrowedInheritanceRestored -or
+        -not $controller.io.stdout.complete -or -not $controller.io.stderr.complete -or
+        $controller.io.stdout.retainedBytes -le 0 -or $controller.io.stdout.retainedBytes -gt 16777216 -or
+        $controller.io.stderr.retainedBytes -lt 0 -or $controller.io.stderr.retainedBytes -gt 16777216) { return $false }
+    $slots=@($controller.io.borrowedSlots);$kinds=@(-10,-11,-12);$groups=@{}
+    $groupCount=Read-ExactU64 $controller.io.borrowedBrokerHandles
+    if ($slots.Count -ne 3 -or $groupCount -gt 3) { return $false }
+    for ($i=0;$i -lt 3;$i++) {
+        $slot=$slots[$i]
+        if ($slot.kind -ne $kinds[$i]) { return $false }
+        if ($slot.state -ceq 'ABSENT') {
+            if ($null -ne $slot.group -or $null -ne $slot.originalFlags -or $slot.cleared -ne $false -or $slot.restored -ne $false) { return $false }
+        } elseif ($slot.state -ceq 'PRESENT') {
+            $group=Read-ExactU64 $slot.group;$flags=Read-ExactU64 $slot.originalFlags
+            if ($group -ge $groupCount -or $flags -gt 3 -or $slot.cleared -ne $true -or $slot.restored -ne $true) { return $false }
+            if ($groups.ContainsKey($group) -and $groups[$group] -ne $flags) { return $false }
+            $groups[$group]=$flags
+        } else { return $false }
     }
-    $controller=Read-OwnedJSON (Join-Path $evidence 'controller-process.json')
-    $script:nativeControllerReadback=$controller
-    return Test-NativeClosure $controller
+    if ($groups.Count -ne $groupCount) { return $false }
+    $launch=$controller.launchDiagnostics
+    if ($launch.resumePreviousSuspendCount -ne 1 -or -not $launch.childToken.available -or -not $launch.childToken.tokenClosed -or
+        $launch.childToken.sid -cne $sid -or $launch.childToken.elevated -ne $false -or $launch.childToken.elevationType -ne 1 -or
+        $launch.createdContext.lifetimeCode -cne 'AVAILABLE' -or $launch.createdContext.pid -ne $controller.pid -or
+        $launch.createdContext.sessionCode -cne 'AVAILABLE' -or $launch.createdContext.childSession -ne $launch.createdContext.brokerSession -or
+        -not $launch.processBeforeCleanup.available -or $launch.processBeforeCleanup.waitState -ne 0 -or
+        $launch.processBeforeCleanup.exitCode -ne $controller.status -or $launch.contextBeforeCleanup.lifetimeCode -cne 'AVAILABLE') { return $false }
+    # This reference identifies the same native child/Job already checked above.
+    $script:nativeControllerReadback=@{record='broker-process.json#child';pid=$controller.pid;distinctControllerJobs=1}
+    return $true
 }
 function Read-ExactU64($Value) {
     if ($null -eq $Value -or $Value -is [double] -or $Value -is [single] -or $Value -is [decimal]) { throw 'Native integer evidence is absent or inexact.' }
@@ -285,101 +272,16 @@ try {
     Run-Stage $go @('mod','download','-json') 120 | Out-Null
     $buildEnvironment['GOPROXY']='off';$buildEnvironment['GOSUMDB']='off';$buildEnvironment['GOFLAGS']='-mod=readonly'
     $binary=Join-Path $workspace 'probe.exe'
-    if ($DiagnosticGoSentinel) {
-        $sentinelSource=Join-Path $workspace 'exit-sentinel.go'
-        $sentinelText="package main`n`nimport `"os`"`n`nfunc main() {`n`tos.Exit(73)`n}`n"
-        [IO.File]::WriteAllText($sentinelSource,$sentinelText,[Text.UTF8Encoding]::new($false))
-        $sentinelSourceHash=(Get-FileHash -LiteralPath $sentinelSource -Algorithm SHA256).Hash.ToLowerInvariant()
-        $sentinelBuildArguments=@('build','-o',$binary,$sentinelSource)
-        Run-Stage $go $sentinelBuildArguments 120 | Out-Null
-        if ((Get-FileHash -LiteralPath $sentinelSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sentinelSourceHash) { throw 'The fixed Go diagnostic source changed.' }
-        $diagnosticProgramReceipt=@{kind='fixed-go-exit-73';sourcePath=$sentinelSource;sourceSHA256=$sentinelSourceHash;
-            sourceBytes=[Text.Encoding]::UTF8.GetByteCount($sentinelText);go=$goHost;buildExecutable=$go;
-            buildExecutableSHA256=(Get-FileHash -LiteralPath $go -Algorithm SHA256).Hash.ToLowerInvariant();buildArguments=$sentinelBuildArguments;
-            selectedLaunchImage=$binary;imageSHA256=(Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant();programArguments=@();
-            brokerExecutable=$pwsh;disposableMarkerIsDResult=$false;nativeExitMeasured=$false}
-        Save-Proof 'diagnostic-program.json' $diagnosticProgramReceipt
-    } else {
     Run-Stage $go @('test','-c','-tags','identity_default_qualification','-o',$binary,'./internal/identityattempt') 120 | Out-Null
-    }
     $inputs=@{};$tracked=(Run-Stage $git @('ls-files','-z')).Split([char]0)
     foreach ($name in $tracked) {if ($name) {$inputs[$name]=(Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash}}
     Save-Proof 'source-inputs.json' @{head=(Run-Stage $git @('rev-parse','HEAD')).Trim();files=$inputs;go=$goHost;architecture=$architecture}
     @{nonce=$nonce;identity=$sid;os='windows';architecture=$architecture;binarySHA256=(Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant();githubHosted=$true} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'disposable.json') -Encoding utf8
     Copy-Item -LiteralPath $module -Destination (Join-Path $workspace 'native.cs')
-    $child=Join-Path $workspace 'standard.ps1'
-    if ($DiagnosticFileSentinel) {
-        'exit 73' | Set-Content -LiteralPath $child -Encoding utf8
-    } else {
-    @'
-param([string]$Binary,[string]$Proof,[string]$Nonce)
-$ErrorActionPreference='Stop'
-function Signal-StandardStartup([string]$Phase) {
-    if ($Phase -notin @('entered','helper-loaded','probe-returned','controller-recorded')) { throw 'Unknown standard startup phase.' }
-    $event=[Threading.EventWaitHandle]::OpenExisting('Global\ca8_standard_'+$Nonce+'_'+$Phase)
-    try { if (-not $event.Set()) { throw 'The owned standard startup event was not signalled.' } }
-    finally { $event.Dispose() }
-}
-Signal-StandardStartup 'entered'
-Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
-Signal-StandardStartup 'helper-loaded'
-$environment=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {$environment[$entry.Key]=$entry.Value}
-$probeArguments=@('-test.run=^TestIdentityDefaultQualification$','-test.timeout=120s','-test.v',"-identity-default-proof=$Proof","-identity-default-nonce=$Nonce")
-$result=[IdentityStoreFixture]::RunBounded($Binary,$probeArguments,$PSScriptRoot,$environment,(Join-Path $Proof 'controller'),125000,16777216)
-Signal-StandardStartup 'probe-returned'
-$result | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Proof 'controller-process.json') -Encoding utf8
-Signal-StandardStartup 'controller-recorded'
-if ($result.status -ne 0 -or -not $result.jobEmpty -or $result.errors.Count -ne 0) {exit 1}
-'@ | Set-Content -LiteralPath $child -Encoding utf8
-    }
     $broker=Join-Path $workspace 'broker.ps1'
-    if ($DiagnosticLoaderGUI) {
     @'
-param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
-$ErrorActionPreference='Stop'
-Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
-$password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
-try {
-    $probeArguments=@('-test.run=^TestStoreWindowsLoaderGUIObservation$','-test.timeout=120s','-test.v',"-identity-loader-gui-nonce=$Nonce","-identity-loader-gui-sid=$SID")
-    $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Binary,$probeArguments,$PSScriptRoot,$Nonce,(Join-Path $Proof 'controller'))
-    $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
-    if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
-        $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
-} finally {$password=$null}
-'@ | Set-Content -LiteralPath $broker -Encoding utf8
-    } elseif ($DiagnosticGoSentinel) {
-    @'
-param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
-$ErrorActionPreference='Stop'
-Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
-$password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
-try {
-    $standardArguments=[string[]]@()
-    $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Binary,$standardArguments,$PSScriptRoot,$Nonce)
-    $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
-    if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
-        $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
-} finally {$password=$null}
-'@ | Set-Content -LiteralPath $broker -Encoding utf8
-    } elseif ($DiagnosticFileSentinel) {
-    @'
-param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
-$ErrorActionPreference='Stop'
-Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
-$password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
-try {
-    $standardArguments=@('-NoLogo','-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'standard.ps1'),$Binary,$Proof,$Nonce)
-    $result=[IdentityStoreFixture]::RunInOwnedDesktop($User,$SID,$password,$Pwsh,$standardArguments,$PSScriptRoot,$Nonce)
-    $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Proof 'broker-process.json') -Encoding utf8
-    if ($result.errors.Count -ne 0 -or -not $result.restored -or -not $result.stationAbsent -or -not $result.child -or
-        $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
-} finally {$password=$null}
-'@ | Set-Content -LiteralPath $broker -Encoding utf8
-    } else {
-    @'
-param([string]$User,[string]$SID,[string]$Pipe,[string]$Pwsh,[string]$Binary,[string]$Proof,[string]$Nonce)
+param([string]$User,[string]$SID,[string]$Pipe,[string]$Binary,[string]$Proof,[string]$Nonce)
 $ErrorActionPreference='Stop'
 Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
 $password=[IdentityStoreFixture]::ReadBrokerPassword($Pipe)
@@ -391,15 +293,13 @@ try {
         $result.child.status -ne 0 -or -not $result.child.jobEmpty -or $result.child.errors.Count -ne 0) {exit 1}
 } finally {$password=$null}
 '@ | Set-Content -LiteralPath $broker -Encoding utf8
-    }
     $pipe='ca8-default-secret-'+$nonce
-    $brokerArgs=@('-NoLogo','-NoProfile','-NonInteractive','-File',$broker,$userName,$sid,$pipe,$pwsh,$binary,$evidence,$nonce)
+    $brokerArgs=@('-NoLogo','-NoProfile','-NonInteractive','-File',$broker,$userName,$sid,$pipe,$binary,$evidence,$nonce)
     $brokerStarted=$true
     $runResult=[IdentityStoreFixture]::RunBroker($pwsh,$brokerArgs,$workspace,$buildEnvironment,(Join-Path $proof 'broker'),$pipe,$passwordPlain)
     Save-Proof 'broker-supervision.json' $runResult
     $allJobsEmpty=Observe-OwnedClosure
     if (-not $allJobsEmpty -or $runResult.process.status -ne 0 -or $timer.Elapsed.TotalSeconds -ge 500) { throw 'The isolated process graph did not close within its logical bound.' }
-    if ($DiagnosticLoaderGUI) { throw 'Loader/GUI observation returned. This diagnostic changes DLL load order and supplies no D acceptance.' }
     $profiles=@(Get-CimInstance Win32_UserProfile -Filter "SID='$sid'")
     if ($profiles.Count -ne 1 -or $profiles[0].Special) { throw 'The one newly loaded fixture profile is unavailable.' }
     $profileRecord=$profiles[0]
@@ -481,8 +381,7 @@ finally {
         syntheticArtifactPreserved=$copied;collectionComplete=$collectionComplete;artifactUsageExact=$collectionComplete;artifactBytes=$artifactBytes;artifactEntries=$artifactEntries;
         newAccount=$userName;newSID=$sid;originalProfilePath=if($profileRecord){$profileRecord.LocalPath}else{$null};
         profileDeleted=$profileDeleted;accountDeleted=$accountDeleted;
-        scope=if($DiagnosticLoaderGUI){'Diagnostic-only compiled Go loader/GUI observation. DLL load order changed. No Known Folder/store call or D01-D06 acceptance; no provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}elseif($DiagnosticGoSentinel){'Diagnostic-only native Go exit 73. No D01-D06/default-store, PowerShell cause, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}elseif($DiagnosticFileSentinel){'Diagnostic-only PowerShell -File exit 73. No D01-D06, Go/default-store, provider, hosted Relay, public CLI, recovery, customer or historical-client acceptance.'}else{'D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}}
-    if ($DiagnosticGoSentinel) { $terminal['diagnosticProgram']=$diagnosticProgramReceipt }
+        scope='D01-D06 only. No provider, hosted Relay, public CLI or historical-client acceptance.'}
     $terminalText=$terminal | ConvertTo-Json -Depth 12
     if ([Text.Encoding]::UTF8.GetByteCount($terminalText) -gt 1048576) { throw 'The reserved terminal evidence bound was reached.' }
     [IO.File]::WriteAllText((Join-Path $artifact 'result.json'),$terminalText,[Text.UTF8Encoding]::new($false))

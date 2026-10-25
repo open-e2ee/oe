@@ -25,22 +25,11 @@ public static class IdentityStoreFixture {
     [StructLayout(LayoutKind.Sequential)] struct LUID { public uint low; public int high; }
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr value);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
-    [DllImport("kernel32.dll")] static extern uint GetErrorMode();
     [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetProcessId(IntPtr process);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool ProcessIdToSessionId(uint process,out uint session);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetProcessTimes(IntPtr process,
         out System.Runtime.InteropServices.ComTypes.FILETIME created,out System.Runtime.InteropServices.ComTypes.FILETIME exited,
         out System.Runtime.InteropServices.ComTypes.FILETIME kernel,out System.Runtime.InteropServices.ComTypes.FILETIME user);
-    [DllImport("wevtapi.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr EvtOpenChannelConfig(IntPtr session,string path,uint flags);
-    [DllImport("wevtapi.dll",SetLastError=true)] static extern bool EvtGetChannelConfigProperty(IntPtr channel,uint property,uint flags,uint size,IntPtr value,out uint used);
-    [DllImport("wevtapi.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr EvtCreateRenderContext(uint count,
-        [In,MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=0)] string[] paths,uint flags);
-    [DllImport("wevtapi.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr EvtQuery(IntPtr session,string path,string query,uint flags);
-    [DllImport("wevtapi.dll",SetLastError=true)] static extern bool EvtNext(IntPtr query,uint size,
-        [Out,MarshalAs(UnmanagedType.LPArray,SizeParamIndex=1)] IntPtr[] events,uint timeout,uint flags,out uint returned);
-    [DllImport("wevtapi.dll",SetLastError=true)] static extern bool EvtRender(IntPtr context,IntPtr fragment,uint flags,uint size,IntPtr buffer,out uint used,out uint count);
-    [DllImport("wevtapi.dll",SetLastError=true)] static extern bool EvtClose(IntPtr handle);
-    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateEventW(ref SA security,bool manualReset,bool initialState,string name);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
     [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool LookupPrivilegeValue(string system,string name,out LUID luid);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool AdjustTokenPrivileges(IntPtr token,bool disable,IntPtr state,int size,IntPtr previous,out int returned);
@@ -418,44 +407,6 @@ public static class IdentityStoreFixture {
         }
         return result;
     }
-    // The ordinary logon receives its actual profile environment from Windows.
-    // Its launcher starts suspended and enters the owned Job before any script runs.
-    static readonly string[] StandardStartupPhases={"entered","helper-loaded","probe-returned","controller-recorded"};
-    static void CreateStandardStartupEvents(IntPtr[] events,MandatoryLabelMetadata[] labels,string user,string nonce) {
-        if(events.Length!=StandardStartupPhases.Length||labels.Length!=events.Length||events.Any(value=>value!=IntPtr.Zero)||
-            nonce.Length!=32||nonce.Any(character=>!"0123456789abcdef".Contains(character)))
-            throw new Exception("invalid standard startup event scope");
-        string owner;
-        using(var identity=WindowsIdentity.GetCurrent()) {
-            owner=identity.User.Value;
-            if(owner==user||owner=="S-1-5-18"||!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
-                throw new Exception("standard startup events require the isolated admin broker");
-        }
-        const uint trustedMask=0x001f0003,userMask=0x00100002;
-        IntPtr descriptor=NewOwnedObjectDescriptor(owner,user,trustedMask,userMask,true);
-        try {
-            var security=new SA{length=Marshal.SizeOf<SA>(),descriptor=descriptor,inherit=0};
-            for(int index=0;index<events.Length;index++) {
-                events[index]=CreateEventW(ref security,true,false,"Global\\ca8_standard_"+nonce+"_"+StandardStartupPhases[index]);
-                int error=Marshal.GetLastWin32Error();
-                if(events[index]==IntPtr.Zero)throw new Win32Exception(error,"create owned standard startup event");
-                if(error==183)throw new Exception("standard startup event already exists");
-                CheckOwnedObjectSecurity(events[index],6,owner,user,trustedMask,userMask);
-                labels[index]=ReadMandatoryLabel(events[index],6);
-                if(!labels[index].available||labels[index].sid!="S-1-16-8192"||labels[index].mask!=1u)
-                    throw new Exception("owned standard startup event mandatory label differs");
-            }
-        } finally { Free(descriptor); }
-    }
-    static void ObserveStandardStartup(IntPtr[] events,long[] observed,System.Diagnostics.Stopwatch watch) {
-        if(watch==null)return;
-        for(int index=0;index<events.Length;index++) {
-            if(events[index]==IntPtr.Zero||observed[index]>=0)continue;
-            uint state=WaitForSingleObject(events[index],0);
-            if(state==0)observed[index]=watch.ElapsedMilliseconds;
-            else if(state!=258)throw Error("observe standard startup event");
-        }
-    }
     public sealed class StandardChildTokenMetadata {
         public bool available { get; internal set; }
         public string code { get; internal set; }
@@ -594,204 +545,6 @@ public static class IdentityStoreFixture {
         catch {result.desktopCode="DESKTOP_UNAVAILABLE";}
         return result;
     }
-    public sealed class PowerShellStartupEventMetadata {
-        public ushort eventID { get; internal set; }
-        public ulong createdFileTime { get; internal set; }
-        public ulong recordID { get; internal set; }
-        public uint processID { get; internal set; }
-    }
-    public sealed class PowerShellStartupLogMetadata {
-        public bool available { get; internal set; }
-        public string code { get; internal set; } = "EVENTS_NOT_QUERIED";
-        public int win32Code { get; internal set; }
-        public bool? channelEnabled { get; internal set; }
-        public bool complete { get; internal set; }
-        public bool handlesClosed { get; internal set; } = true;
-        public bool bufferReleased { get; internal set; } = true;
-        public int closeWin32Code { get; internal set; }
-        public long elapsedMilliseconds { get; internal set; }
-        public PowerShellStartupEventMetadata[] events { get; internal set; } = new PowerShellStartupEventMetadata[0];
-    }
-    static uint StartupLogWaitBudget(System.Diagnostics.Stopwatch watch) {
-        long remaining=5000-watch.ElapsedMilliseconds;
-        if(remaining<=0)throw new TimeoutException();
-        return (uint)Math.Min(250,remaining);
-    }
-    static void CloseStartupLogHandle(IntPtr handle,PowerShellStartupLogMetadata result,List<string> errors) {
-        if(handle==IntPtr.Zero)return;
-        try {
-            if(EvtClose(handle))return;
-            result.closeWin32Code=Marshal.GetLastWin32Error();
-        } catch { }
-        result.handlesClosed=false;
-        errors.Add("standard startup event-log handle close failed");
-    }
-    static PowerShellStartupLogMetadata ReadPowerShellStartupLog(StandardChildContextMetadata child,List<string> errors) {
-        var result=new PowerShellStartupLogMetadata();
-        if(child.lifetimeCode!="AVAILABLE"||!child.pid.HasValue||!child.createdFileTime.HasValue||!child.observedFileTime.HasValue) {
-            result.code="PROCESS_LIFETIME_UNAVAILABLE";return result;
-        }
-        IntPtr channel=IntPtr.Zero,context=IntPtr.Zero,query=IntPtr.Zero,buffer=IntPtr.Zero;
-        var eventHandles=new IntPtr[1];var rows=new List<PowerShellStartupEventMetadata>();
-        var watch=System.Diagnostics.Stopwatch.StartNew();
-        try {
-            const string channelName="PowerShellCore/Operational";
-            buffer=Marshal.AllocHGlobal(64);result.bufferReleased=false;
-            Marshal.Copy(new byte[64],0,buffer,64);
-            StartupLogWaitBudget(watch);
-            channel=EvtOpenChannelConfig(IntPtr.Zero,channelName,0);
-            if(channel==IntPtr.Zero) {
-                result.win32Code=Marshal.GetLastWin32Error();
-                result.code=result.win32Code==15007?"CHANNEL_MISSING":"CHANNEL_QUERY_FAILED";return result;
-            }
-            StartupLogWaitBudget(watch);
-            uint used;
-            if(!EvtGetChannelConfigProperty(channel,0,0,16,buffer,out used)) {
-                result.code="CHANNEL_ENABLED_QUERY_FAILED";result.win32Code=Marshal.GetLastWin32Error();return result;
-            }
-            StartupLogWaitBudget(watch);
-            if(used!=16||Marshal.ReadInt32(buffer,12)!=13) {result.code="CHANNEL_ENABLED_SHAPE_UNSUPPORTED";return result;}
-            result.channelEnabled=Marshal.ReadInt32(buffer)!=0;
-            if(!result.channelEnabled.Value) {result.code="CHANNEL_DISABLED";return result;}
-            string[] valuePaths={"Event/System/EventID","Event/System/TimeCreated/@SystemTime","Event/System/EventRecordID","Event/System/Execution/@ProcessID"};
-            context=EvtCreateRenderContext(4,valuePaths,0);
-            if(context==IntPtr.Zero) {result.code="EVENT_CONTEXT_FAILED";result.win32Code=Marshal.GetLastWin32Error();return result;}
-            StartupLogWaitBudget(watch);
-            var culture=System.Globalization.CultureInfo.InvariantCulture;
-            string from=DateTime.FromFileTimeUtc((long)child.createdFileTime.Value).ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ",culture);
-            string through=DateTime.FromFileTimeUtc((long)child.observedFileTime.Value).ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ",culture);
-            string filter="*[System[Provider[@Name='PowerShellCore'] and (EventID=40961 or EventID=40962) and Execution[@ProcessID="+
-                child.pid.Value.ToString(culture)+"] and TimeCreated[@SystemTime>='"+from+"' and @SystemTime<='"+through+"']]]";
-            query=EvtQuery(IntPtr.Zero,channelName,filter,0x101);
-            if(query==IntPtr.Zero) {
-                result.win32Code=Marshal.GetLastWin32Error();
-                result.code=result.win32Code==15007?"CHANNEL_MISSING":"EVENT_QUERY_FAILED";return result;
-            }
-            StartupLogWaitBudget(watch);
-            for(int index=0;index<8;index++) {
-                uint returned;
-                bool next=EvtNext(query,1,eventHandles,StartupLogWaitBudget(watch),0,out returned);
-                int nextError=next?0:Marshal.GetLastWin32Error();
-                try {
-                    StartupLogWaitBudget(watch);
-                    if(!next) {
-                        if(nextError==259&&returned==0&&eventHandles[0]==IntPtr.Zero) {
-                            result.complete=true;result.code=rows.Count==0?"NO_MATCH":"MATCHES";
-                        } else {result.code="EVENT_NEXT_FAILED";result.win32Code=nextError;}
-                        return result;
-                    }
-                    if(returned!=1||eventHandles[0]==IntPtr.Zero) {result.code="EVENT_HANDLE_COUNT_INVALID";return result;}
-                    Marshal.Copy(new byte[64],0,buffer,64);uint count;
-                    if(!EvtRender(context,eventHandles[0],0,64,buffer,out used,out count)) {
-                        result.code="EVENT_RENDER_FAILED";result.win32Code=Marshal.GetLastWin32Error();return result;
-                    }
-                    StartupLogWaitBudget(watch);
-                    // Four 16-byte EVT_VARIANT records. Exact types reject arrays and pointers.
-                    if(used!=64||count!=4||Marshal.ReadInt32(buffer,12)!=6||Marshal.ReadInt32(buffer,28)!=17||
-                        Marshal.ReadInt32(buffer,44)!=10||Marshal.ReadInt32(buffer,60)!=8) {
-                        result.code="EVENT_SCALAR_SHAPE_UNSUPPORTED";return result;
-                    }
-                    var row=new PowerShellStartupEventMetadata {
-                        eventID=unchecked((ushort)Marshal.ReadInt16(buffer)),createdFileTime=unchecked((ulong)Marshal.ReadInt64(buffer,16)),
-                        recordID=unchecked((ulong)Marshal.ReadInt64(buffer,32)),processID=unchecked((uint)Marshal.ReadInt32(buffer,48))
-                    };
-                    if((row.eventID!=40961&&row.eventID!=40962)||row.processID!=child.pid.Value||
-                        row.createdFileTime<child.createdFileTime.Value||row.createdFileTime>child.observedFileTime.Value) {
-                        result.code="EVENT_IDENTITY_OR_TIME_MISMATCH";return result;
-                    }
-                    rows.Add(row);
-                } finally {
-                    CloseStartupLogHandle(eventHandles[0],result,errors);eventHandles[0]=IntPtr.Zero;
-                }
-                if(!result.handlesClosed) {result.code="EVENT_CLOSE_FAILED";return result;}
-            }
-            result.code="EVENT_LIMIT_REACHED";
-        } catch(TimeoutException) {result.code="EVENT_QUERY_BUDGET_EXCEEDED";}
-        catch {result.code="EVENT_QUERY_UNAVAILABLE";}
-        finally {
-            CloseStartupLogHandle(eventHandles[0],result,errors);
-            CloseStartupLogHandle(query,result,errors);
-            CloseStartupLogHandle(context,result,errors);
-            CloseStartupLogHandle(channel,result,errors);
-            if(buffer!=IntPtr.Zero) {
-                try {Marshal.FreeHGlobal(buffer);result.bufferReleased=true;}
-                catch {errors.Add("standard startup event-log buffer release failed");}
-            }
-            result.events=rows.ToArray();result.elapsedMilliseconds=watch.ElapsedMilliseconds;
-            if(result.elapsedMilliseconds>=5000) {result.complete=false;result.code="EVENT_QUERY_BUDGET_EXCEEDED";}
-            result.available=result.complete&&result.handlesClosed&&result.bufferReleased;
-        }
-        return result;
-    }
-    public static object RunAsStandard(string user,string password,string executable,string[] argv,string cwd,int milliseconds,string desktopName,string startupSID=null,string startupNonce=null) {
-        IntPtr job=IntPtr.Zero,limits=IntPtr.Zero;
-        PI child=new PI(); bool assigned=false,empty=false; uint status=0xffffffff;
-        long profileMilliseconds=-1; var errors=new List<string>();
-        uint? resumePreviousSuspendCount=null,brokerErrorModeAtCreate=null;
-        var childToken=new StandardChildTokenMetadata();var processBeforeCleanup=new StandardProcessStateMetadata();
-        var contextBeforeCleanup=new StandardChildContextMetadata();var powerShellStartupLog=new PowerShellStartupLogMetadata();
-        var startupEvents=new IntPtr[4]; var startupObserved=Enumerable.Repeat(-1L,4).ToArray();
-        var startupLabels=Enumerable.Range(0,4).Select(index=>UnavailableMandatoryLabel("LABEL_NOT_QUERIED")).ToArray();
-        System.Diagnostics.Stopwatch startupWatch=null; bool startupEventsClosed=true;
-        try {
-            if(milliseconds<=0||milliseconds>130000)throw new Exception("invalid standard-process bound");
-            if((startupSID==null)!=(startupNonce==null))throw new Exception("incomplete standard startup event scope");
-            if(startupNonce!=null)CreateStandardStartupEvents(startupEvents,startupLabels,startupSID,startupNonce);
-            job=CreateJobObjectW(IntPtr.Zero,null);
-            if(job==IntPtr.Zero)throw Error("standard process job");
-            limits=Marshal.AllocHGlobal(144); Marshal.Copy(new byte[144],0,limits,144); Marshal.WriteInt32(limits,16,0x2000);
-            if(!SetInformationJobObject(job,9,limits,144))throw Error("standard kill-on-close job limit");
-            var command=new StringBuilder(String.Join(" ",new[]{executable}.Concat(argv).Select(Quote)));
-            if(command.Length>=1024)throw new Exception("standard logon command exceeds its native bound");
-            if(String.IsNullOrEmpty(desktopName)||!desktopName.StartsWith("ca8_station_",StringComparison.Ordinal))throw new Exception("owned desktop locator unavailable");
-            IntPtr desktopText=Marshal.StringToHGlobalUni(desktopName);
-            var startup=new SI{cb=Marshal.SizeOf<SI>(),desktop=desktopText};
-            try {brokerErrorModeAtCreate=GetErrorMode();}catch {brokerErrorModeAtCreate=null;}
-            var profileWatch=System.Diagnostics.Stopwatch.StartNew();
-            try {
-                if(!CreateProcessWithLogonW(user,".",password,1,executable,command,0x08000004,IntPtr.Zero,cwd,ref startup,out child))
-                    throw Error("standard suspended profile logon");
-            } finally { Marshal.FreeHGlobal(desktopText); }
-            profileMilliseconds=profileWatch.ElapsedMilliseconds;
-            if(profileMilliseconds>60000)throw new Exception("standard profile stage exceeded its logical bound");
-            if(!AssignProcessToJobObject(job,child.process))throw Error("assign suspended standard process to owned job");
-            assigned=true;
-            childToken=ReadStandardChildToken(child.process,errors);
-            if(!childToken.tokenClosed)throw new Exception("standard child diagnostic token did not close");
-            uint previousSuspendCount=ResumeThread(child.thread);resumePreviousSuspendCount=previousSuspendCount;
-            if(previousSuspendCount==0xffffffff)throw Error("resume standard process");
-            var watch=System.Diagnostics.Stopwatch.StartNew(); startupWatch=watch;
-            while(true) {
-                uint wait=WaitForSingleObject(child.process,50);
-                ObserveStandardStartup(startupEvents,startupObserved,startupWatch);
-                if(wait==0)break;
-                if(wait!=258)throw Error("standard process wait");
-                if(watch.ElapsedMilliseconds>=milliseconds)throw new Exception("standard controller logical bound exceeded");
-            }
-            if(!GetExitCodeProcess(child.process,out status))throw Error("standard process exit status");
-        } catch(Exception error){errors.Add(error.ToString());}
-        finally {
-            processBeforeCleanup=ReadStandardProcessState(child.process);
-            contextBeforeCleanup=ReadStandardChildContext(child);
-            empty=CloseOwnedProcessJob(job,child,assigned,errors);
-            if(empty)powerShellStartupLog=ReadPowerShellStartupLog(contextBeforeCleanup,errors);
-            else powerShellStartupLog.code="CHILD_JOB_NOT_EMPTY";
-            try { ObserveStandardStartup(startupEvents,startupObserved,startupWatch); }
-            catch(Exception error){errors.Add(error.ToString());}
-            foreach(IntPtr handle in startupEvents)
-                try{Close(handle);}catch(Exception error){startupEventsClosed=false;errors.Add(error.ToString());}
-            foreach(IntPtr handle in new[]{child.thread,child.process,job})
-                try{Close(handle);}catch(Exception error){errors.Add(error.ToString());}
-            if(limits!=IntPtr.Zero)Marshal.FreeHGlobal(limits);
-        }
-        return new {status=status,pid=child.pid,jobEmpty=empty,profileMilliseconds=profileMilliseconds,errors=errors.ToArray(),
-                    launchDiagnostics=new {resumePreviousSuspendCount=resumePreviousSuspendCount,brokerErrorModeAtCreate=brokerErrorModeAtCreate,
-                        childToken=childToken,processBeforeCleanup=processBeforeCleanup,
-                        contextBeforeCleanup=contextBeforeCleanup,powerShellStartupLog=powerShellStartupLog},
-                    startupEventsClosed=startupEventsClosed,
-                    startupPhases=StandardStartupPhases.Select((phase,index)=>new {phase=phase,observedMilliseconds=startupObserved[index],mandatoryLabel=startupLabels[index]}).ToArray()};
-    }
-
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetHandleInformation(IntPtr handle,out uint flags);
     [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GetStdHandle(int kind);
 
@@ -1034,12 +787,9 @@ public static class IdentityStoreFixture {
         } finally { Array.Clear(bytes,0,bytes.Length); }
     }
 
-    static IntPtr NewOwnedObjectDescriptor(string owner,string user,uint trustedMask,uint userMask,bool mediumStartupEvents=false) {
+    static IntPtr NewOwnedObjectDescriptor(string owner,string user,uint trustedMask,uint userMask) {
         new SecurityIdentifier(owner); new SecurityIdentifier(user);
-        if(mediumStartupEvents&&(trustedMask!=0x001f0003||userMask!=0x00100002))
-            throw new Exception("mandatory event label requires the fixed event grants");
         string text="O:"+owner+"D:P(A;;0x"+trustedMask.ToString("x8")+";;;"+owner+")(A;;0x"+trustedMask.ToString("x8")+";;;SY)(A;;0x"+userMask.ToString("x8")+";;;"+user+")";
-        if(mediumStartupEvents)text+="S:(ML;;NW;;;ME)";
         IntPtr descriptor;uint size;
         if(!ConvertStringSecurityDescriptorToSecurityDescriptor(text,1,out descriptor,out size))throw Error("owned object security descriptor");
         return descriptor;
@@ -1073,7 +823,7 @@ public static class IdentityStoreFixture {
 
     // Only the isolated broker script calls this entry. The long-lived parent
     // never changes its process window station or its thread desktop.
-    public static object RunInOwnedDesktop(string user,string sid,string password,string executable,string[] argv,string cwd,string nonce,string controllerPrefix=null) {
+    public static object RunInOwnedDesktop(string user,string sid,string password,string executable,string[] argv,string cwd,string nonce,string controllerPrefix) {
         if(nonce.Length!=32||nonce.Any(character=>!"0123456789abcdef".Contains(character)))throw new Exception("owned GUI nonce unavailable");
         string owner;
         using(var identity=WindowsIdentity.GetCurrent()) {
@@ -1143,9 +893,7 @@ public static class IdentityStoreFixture {
                 throw new Exception("restored broker GUI names differ before child launch");
             restored=true;
             childLaunchAttempted=true;
-            child=controllerPrefix==null
-                ? RunAsStandard(user,password,executable,argv,cwd,130000,stationName+"\\"+desktopName,sid,nonce)
-                : RunStandardController(user,sid,password,executable,argv,cwd,nonce,stationName+"\\"+desktopName,controllerPrefix);
+            child=RunStandardController(user,sid,password,executable,argv,cwd,nonce,stationName+"\\"+desktopName,controllerPrefix);
         } catch(Exception error){errors.Add(error.ToString());}
         finally {
             if(desktopCreatorExited) {
