@@ -29,6 +29,7 @@ type storeActorRequest struct {
 }
 type storeActorEvent struct {
 	Stage, Code, Original, Cancellation string
+	ErrorClass                          string `json:",omitempty"`
 	PID                                 int
 }
 type storeActorGroup interface {
@@ -510,7 +511,14 @@ func TestAttemptStoreNativeActor(t *testing.T) {
 	if err != nil && code == "ok" {
 		code = "unclassified-failure"
 	}
-	if output.Encode(storeActorEvent{Stage: "done", Code: code, PID: os.Getpid()}) != nil {
+	errorClass := ""
+	if code == "unclassified-failure" {
+		errorClass = "OTHER_UNCLASSIFIED"
+		if errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			errorClass = "TIMEOUT_OR_CANCELLATION"
+		}
+	}
+	if output.Encode(storeActorEvent{Stage: "done", Code: code, ErrorClass: errorClass, PID: os.Getpid()}) != nil {
 		t.Fatal("actor completion report failed")
 	}
 }
@@ -1078,17 +1086,31 @@ func TestStoreNativeSelectedAnchorConcurrentAndInterrupted(t *testing.T) {
 		location.anchor = filepath.Join(location.anchor, "selected-config")
 		// Marker creation needs an existing fixture parent, not the absent selected anchor.
 		// This case uses the explicit native actor marker directory carried separately.
-		first := startStoreActor(t, location, storeActorRequest{Operation: "bootstrap", Pause: "selected-anchor-created"})
+		first := startStoreActor(t, location, storeActorRequest{Operation: "bootstrap", Pause: "selected-anchor-created", Start: true})
+		second := startStoreActor(t, location, storeActorRequest{Operation: "bootstrap", Start: true})
+		for _, actor := range []*storeActorProcess{first, second} {
+			if actor.next(t).Stage != "armed" {
+				t.Fatal("election actor not armed")
+			}
+		}
+		first.continueActor(t)
 		if first.next(t).Stage != "selected-anchor-created" {
 			t.Fatal("new selected anchor not observed")
 		}
-		second := startStoreActor(t, location, storeActorRequest{Operation: "bootstrap"})
-		if done := storeActorDone(t, second); done.Code != "ok" {
-			t.Fatal("concurrent safe existing anchor did not permit namespace election")
+		second.continueActor(t)
+		secondDone := second.next(t)
+		if secondDone.Stage != "done" {
+			t.Fatal("unexpected native actor completion event")
+		}
+		if secondDone.Code != "ok" {
+			second.finish(t, false)
+			t.Fatal("concurrent safe existing anchor did not permit namespace election", secondDone.Code, secondDone.ErrorClass)
 		}
 		first.continueActor(t)
-		if done := storeActorDone(t, first); done.Code != ErrAlreadyInitialized.Code() {
-			t.Fatal("first anchor creator replaced namespace winner")
+		done := storeActorDone(t, first)
+		second.finish(t, false)
+		if done.Code != ErrAlreadyInitialized.Code() {
+			t.Fatal("first anchor creator replaced namespace winner", done.Code, done.ErrorClass)
 		}
 	})
 	t.Run("anchor-exit-no-admission", func(t *testing.T) {
