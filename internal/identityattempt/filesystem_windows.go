@@ -15,6 +15,7 @@ import (
 )
 
 const windowsFileAllAccess uint32 = 0x001f01ff
+const windowsTrustedInstallerSID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 const windowsAncestorRead uint32 = windows.READ_CONTROL | windows.SYNCHRONIZE | windows.FILE_READ_DATA | windows.FILE_READ_EA | windows.FILE_READ_ATTRIBUTES | windows.FILE_EXECUTE
 
 type windowsPrincipals struct{ user, system, administrators *windows.SID }
@@ -37,6 +38,14 @@ var currentWindowsPrincipals = sync.OnceValues(func() (windowsPrincipals, error)
 		return windowsPrincipals{}, ErrUnsafe
 	}
 	return windowsPrincipals{owner, system, administrators}, nil
+})
+
+var windowsInstallerOwner = sync.OnceValues(func() (*windows.SID, error) {
+	sid, err := windows.StringToSid(windowsTrustedInstallerSID)
+	if err != nil {
+		return nil, ErrUnsafe
+	}
+	return sid, nil
 })
 
 var defaultConfigRoot = func() (string, error) { return windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0) }
@@ -67,7 +76,14 @@ func windowsCheckSecurity(handle windows.Handle, managed bool) error {
 		return err
 	}
 	sd, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil || sd == nil || !sd.IsValid() {
+	if err != nil {
+		return ErrUnsafe
+	}
+	return windowsCheckDescriptor(sd, managed, principals)
+}
+
+func windowsCheckDescriptor(sd *windows.SECURITY_DESCRIPTOR, managed bool, principals windowsPrincipals) error {
+	if sd == nil || !sd.IsValid() {
 		return ErrUnsafe
 	}
 	owner, defaulted, err := sd.Owner()
@@ -77,8 +93,15 @@ func windowsCheckSecurity(handle windows.Handle, managed bool) error {
 	trusted := func(sid *windows.SID) bool {
 		return sid.Equals(principals.user) || sid.Equals(principals.system) || sid.Equals(principals.administrators)
 	}
-	if managed && !owner.Equals(principals.user) || !managed && !trusted(owner) {
-		return ErrUnsafe
+	if managed {
+		if !owner.Equals(principals.user) {
+			return ErrUnsafe
+		}
+	} else if !trusted(owner) {
+		installer, err := windowsInstallerOwner()
+		if err != nil || !owner.Equals(installer) {
+			return ErrUnsafe
+		}
 	}
 	dacl, defaulted, err := sd.DACL()
 	if err != nil || defaulted || dacl == nil {
