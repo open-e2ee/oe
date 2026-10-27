@@ -414,10 +414,14 @@ A Production change never waits for an answer that no person can give. Without
 a terminal, under an agent, and in JSON and CI modes, the push stops with
 `CONFIRMATION_REQUIRED`. Review the changes, then run `oe config push --yes`.
 An activation needs the billing permission, the terms, an open Free plan slot,
-and a card on the organization. Each missing one exits 5:
-`BILLING_PERMISSION_REQUIRED`, `TERMS_REQUIRED`, `FREE_PROJECT_LIMIT`, or
-`CARD_REQUIRED`, where `action.url` is the card page. A person at a terminal
-waits on the card page instead, and `oe` opens it in a browser.
+a card on the organization, and a default payment method that backs fewer than
+2 Free projects. Each missing one exits 5: `BILLING_PERMISSION_REQUIRED`,
+`TERMS_REQUIRED`, `FREE_PROJECT_LIMIT`, `CARD_REQUIRED`, or
+`FREE_PAYMENT_METHOD_LIMIT`. For `CARD_REQUIRED`, `action.url` is the card page.
+A person at a terminal waits on the card page instead, and `oe` opens it in a
+browser. For `FREE_PAYMENT_METHOD_LIMIT`, `action.url` is the billing page of
+the organization. After the card, the person can still get
+`FREE_PAYMENT_METHOD_LIMIT`.
 
 ## Configuration ownership
 

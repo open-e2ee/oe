@@ -1,6 +1,6 @@
 ---
 name: open-e2ee-relay-production
-description: Use this skill to activate or change the Production environment of an OpenE2EE Relay project with the oe CLI. It covers the Production section of open-e2ee.config.ts, oe config push --dry-run, and oe config push --yes. Use it when a person asks to go to Production, or when the oe CLI returns CARD_REQUIRED, BILLING_PERMISSION_REQUIRED, FREE_PROJECT_LIMIT, or TERMS_REQUIRED for a push.
+description: Use this skill to activate or change the Production environment of an OpenE2EE Relay project with the oe CLI. It covers the Production section of open-e2ee.config.ts, oe config push --dry-run, and oe config push --yes. Use it when a person asks to go to Production, or when the oe CLI returns CARD_REQUIRED, BILLING_PERMISSION_REQUIRED, FREE_PROJECT_LIMIT, FREE_PAYMENT_METHOD_LIMIT, or TERMS_REQUIRED for a push.
 ---
 
 # OpenE2EE Relay Production
@@ -56,7 +56,7 @@ environment. Do not print the value.
 ## Codes
 
 The activation checks the gates in this order: the billing permission, the
-terms, the Free plan slot, and the card.
+terms, the Free plan slot, the card, and the Free limit of the payment method.
 
 | `code`                        | What to do                                                                                                                                                  |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -65,3 +65,4 @@ terms, the Free plan slot, and the card.
 | `TERMS_REQUIRED`              | The organization did not accept the terms. Use the terms steps of the `open-e2ee-relay-setup` skill. Then run the command in `data.retry`.                  |
 | `FREE_PROJECT_LIMIT`          | The organization already has two Free Production projects. Tell the person to change a plan in the console, then run the push again. `next` is empty.       |
 | `CARD_REQUIRED`               | The organization has no card. Give `action.url` to the person. After the person adds a card, run `next`.                                                    |
+| `FREE_PAYMENT_METHOD_LIMIT`   | The default payment method of the organization already backs two Free Production projects. Give `action.url` to the person. Then run `next`.                |

@@ -60,6 +60,7 @@ type console struct {
 	organizations    map[string]any
 	signIn           string
 	requests         []string
+	cliVersions      []string
 	accepts          []map[string]any
 	protectionBypass *string
 	refreshes        []url.Values
@@ -83,6 +84,14 @@ func (c *console) requested() []string {
 	return slices.Clone(c.requests)
 }
 
+// declaredVersions reports the OpenE2EE-CLI-Version header of each request,
+// in the order of requested.
+func (c *console) declaredVersions() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.cliVersions)
+}
+
 // accepted reports each acceptance body that the console recorded.
 func (c *console) accepted() []map[string]any {
 	c.mu.Lock()
@@ -94,6 +103,7 @@ func (c *console) serve(response http.ResponseWriter, request *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.requests = append(c.requests, request.Method+" "+request.URL.Path)
+	c.cliVersions = append(c.cliVersions, request.Header.Get("OpenE2EE-CLI-Version"))
 	if c.protectionBypass != nil {
 		want := ""
 		if strings.HasPrefix(request.URL.Path, "/api/cli/") {

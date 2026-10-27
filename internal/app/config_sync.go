@@ -453,10 +453,11 @@ func (p *pusher) plan(ctx context.Context, environment string) (control.Plan, er
 
 // consent decides whether a Production change may go ahead. It returns the
 // problem that blocks the change, or an error when a read fails. An activation
-// checks the gates first, in the order that the console checks them, and the
-// card last, so a person never adds a card and then meets a gate that the
-// card does not open. A person waits on the card page and then answers the
-// prompt. Any other caller needs --yes.
+// checks the gates in the order that the console checks them. The card comes
+// before the Free limit of the payment method, because that check reads the
+// saved payment method, so a person can add a card and then get
+// FREE_PAYMENT_METHOD_LIMIT. A person waits on the card page and then answers
+// the prompt. Any other caller needs --yes.
 func (p *pusher) consent(ctx context.Context, plan control.Plan, activation bool, blockedBy string) (*problem, error) {
 	if activation {
 		if blocked, err := p.gate(ctx, blockedBy); blocked != nil || err != nil {
@@ -530,6 +531,14 @@ func (p *pusher) gate(ctx context.Context, blockedBy string) (*problem, error) {
 		return &problem{
 			code: "FREE_PROJECT_LIMIT", exit: exitPersonAction,
 			message: "the organization already has two Free Production projects; change a plan at " + p.consoleURL() + ", then run " + p.command(p.yes) + " again",
+		}, nil
+	case control.BlockedByFreePaymentMethodLimit:
+		billing := p.billingURL()
+		return &problem{
+			code: "FREE_PAYMENT_METHOD_LIMIT", exit: exitPersonAction, next: p.command(p.yes),
+			actionURL: billing, actionReason: "billing",
+			message: "the default payment method of the organization already backs two Free Production projects. Choose a paid plan at " + p.consoleURL() +
+				", or save another default payment method at " + billing + ", then run " + p.command(p.yes) + " again",
 		}, nil
 	}
 	return nil, nil
@@ -690,6 +699,16 @@ func (p *pusher) consoleURL() string {
 		return "the console"
 	}
 	return parsed.Scheme + "://" + parsed.Host + "/signal-relay"
+}
+
+// billingURL is the billing page of the organization, on the host of the
+// control API.
+func (p *pusher) billingURL() string {
+	parsed, err := url.Parse(p.r.controlURL)
+	if err != nil {
+		return "the console"
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/billing"
 }
 
 func validatePlan(plan control.Plan, project control.Project, environment string) error {

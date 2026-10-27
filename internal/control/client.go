@@ -20,6 +20,7 @@ type Client struct {
 	baseURL          *url.URL
 	http             *http.Client
 	protectionBypass string
+	cliVersion       string
 }
 
 type apiError struct {
@@ -491,6 +492,12 @@ func (c *Client) SetProtectionBypass(value string) {
 	c.protectionBypass = strings.TrimSpace(value)
 }
 
+// SetCLIVersion sets the version of oe that each control request declares in
+// OpenE2EE-CLI-Version. Call it before use.
+func (c *Client) SetCLIVersion(value string) {
+	c.cliVersion = strings.TrimSpace(value)
+}
+
 func (c *Client) do(ctx context.Context, method, endpoint string, credential CredentialRequest, body, output any) (err error) {
 	defer func() {
 		err = sanitizeCredentialError(err, credential.AccessToken, c.protectionBypass)
@@ -523,6 +530,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 			return err
 		}
 		request.Header.Set("Accept", "application/json")
+		if c.cliVersion != "" {
+			request.Header.Set("OpenE2EE-CLI-Version", c.cliVersion)
+		}
 		if c.protectionBypass != "" {
 			request.Header.Set("x-vercel-protection-bypass", c.protectionBypass)
 		}
@@ -595,7 +605,9 @@ func (e *sanitizedError) Unwrap() error { return e.cause }
 // APIError is a control API refusal. Code is the stable value a caller
 // switches on; the console omits it for some refusals. A TERMS_REQUIRED
 // refusal also carries CanAccept and the Documents to accept. A CARD_REQUIRED
-// refusal carries the BillingSetupURL where a person adds the card.
+// refusal carries the BillingSetupURL where a person adds the card, and a
+// FREE_PAYMENT_METHOD_LIMIT refusal carries the billing page of the
+// organization in it.
 type APIError struct {
 	Status          int
 	Code            string
