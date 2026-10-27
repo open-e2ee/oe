@@ -115,6 +115,8 @@ def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=Non
             'capacityBytes':{'total':capacity.total,'used':capacity.used,'free':capacity.free},
             'reapedChildren':{'userSeconds':usage.ru_utime,'systemSeconds':usage.ru_stime,
                 'maxRSS':usage.ru_maxrss,'inputBlocks':usage.ru_inblock,'outputBlocks':usage.ru_oublock}})
+        if phase == 'module-preparation':
+            diagnostic['samples'][-1]['moduleCache'] = module_cache.snapshot()
         if 'endedMonotonic' in snapshot:
             diagnostic.update({key:snapshot[key] for key in ['endedMonotonic','ownedSessionEmpty']})
         save(f"native-stage-{snapshot['stage']:02d}-progress.json",diagnostic)
@@ -348,11 +350,15 @@ try:
     module_argv = [go,'mod','download','-json']
     module_phase = None
     if intel_native:
+        cache_spec = importlib.util.spec_from_file_location('identity_module_cache',root/'scripts/identity-module-cache.py')
+        cache_module = importlib.util.module_from_spec(cache_spec); cache_spec.loader.exec_module(cache_module)
+        module_cache = cache_module.ModuleCacheDiagnostic(cache/'modules',(root/'go.mod').read_bytes(),source_hashes['go.mod'])
         module_argv.append('-x')
         module_phase = 'module-preparation'
         save('module-preparation-inputs.json',{'environmentKeys':sorted(base_env),
             'sourceHashes':source_hashes,'cachePolicy':'fresh owned mounted cache; no restored dependency cache',
-            'limitSeconds':120,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest()})
+            'limitSeconds':120,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
+            'cacheTargets':module_cache.targets})
     run(module_argv,120,phase=module_phase)
     if any(hashlib.sha256((root/p).read_bytes()).hexdigest() != value for p,value in source_hashes.items()): raise RuntimeError('Module preparation changed a frozen source file.')
     base_env.update({'GOPROXY':'off','GOSUMDB':'off','GOFLAGS':'-mod=readonly'})
