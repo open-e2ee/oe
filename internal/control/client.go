@@ -26,7 +26,8 @@ type Client struct {
 type apiError struct {
 	Code            string          `json:"code"`
 	Message         string          `json:"message"`
-	Error           string          `json:"error"`
+	Error           json.RawMessage `json:"error"`
+	Protection      json.RawMessage `json:"protection"`
 	CanAccept       bool            `json:"canAccept"`
 	Documents       []TermsDocument `json:"documents"`
 	BillingSetupURL string          `json:"billingSetupUrl"`
@@ -623,16 +624,31 @@ func (e *APIError) retryable() bool {
 	return e.Status == http.StatusTooManyRequests || e.Status >= 500
 }
 
+func (e apiError) vercelProtectionEnvelope() bool {
+	var failure struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	var protection struct {
+		VercelAuthEnabled bool `json:"vercel_auth_enabled"`
+	}
+	return json.Unmarshal(e.Error, &failure) == nil && failure.Code == "401" && failure.Message == "Protected deployment" &&
+		json.Unmarshal(e.Protection, &protection) == nil && protection.VercelAuthEnabled
+}
+
 func decodeResponse(response *http.Response, output any) error {
 	limited := io.LimitReader(response.Body, 1<<20)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var problem apiError
 		decodeErr := json.NewDecoder(limited).Decode(&problem)
-		message := strings.TrimSpace(cmp.Or(problem.Message, problem.Error))
+		var errorMessage string
+		legacyError := len(problem.Error) == 0 || json.Unmarshal(problem.Error, &errorMessage) == nil
+		message := strings.TrimSpace(cmp.Or(problem.Message, errorMessage))
 		if message == "" {
 			message = http.StatusText(response.StatusCode)
 		}
-		if decodeErr == nil && response.StatusCode == http.StatusUnauthorized && problem.Code == "" && message == "Protected by Vercel Authentication" {
+		if decodeErr == nil && response.StatusCode == http.StatusUnauthorized && problem.Code == "" && message == "Protected by Vercel Authentication" &&
+			(legacyError || problem.vercelProtectionEnvelope()) {
 			return &APIError{
 				Status: response.StatusCode, Code: "DEPLOYMENT_PROTECTION_REQUIRED",
 				Message: "Vercel deployment protection blocked the control API. Ask the deployment owner for a valid bypass and set OE_PROTECTION_BYPASS. Then retry.",

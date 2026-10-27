@@ -84,16 +84,40 @@ func TestExpiredSessionRetainsProtectionForNextLogin(t *testing.T) {
 
 func TestDeploymentProtectionDoesNotSendLoginBackToLogin(t *testing.T) {
 	t.Setenv("OE_ACCESS_TOKEN", "")
-	server := newConsole(t, "accepted", true)
-	server.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/v1/auth/configuration" {
-			t.Error("login passed the deployment protection boundary")
-		}
-		server.answer(w, http.StatusUnauthorized, map[string]any{"error": "Protected by Vercel Authentication"})
-	})
-	exit, stdout, _ := run(t, server.dependencies(credential.NewMemory(), environment(nil)), "--control-url", server.controlURL(), "--agent=yes", "auth", "login")
-	result := decodeEvent(t, []byte(stdout))
-	if exit != 5 || result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next != "" || !strings.Contains(result.Error, "OE_PROTECTION_BYPASS") {
-		t.Fatalf("deployment protection gave no actionable diagnosis: exit=%d %s", exit, stdout)
+	for _, test := range []struct {
+		name string
+		body map[string]any
+	}{
+		{"legacy", map[string]any{"error": "Protected by Vercel Authentication"}},
+		{"structured envelope", map[string]any{
+			"error":   map[string]any{"code": "401", "message": "Protected deployment"},
+			"message": "Protected by Vercel Authentication",
+			"access":  "vendor-access-instruction",
+			"mcp":     "vendor-mcp-instruction",
+			"protection": map[string]any{
+				"vercel_auth_enabled": true, "password_enabled": false, "auto_vercel_auth_redirect": true,
+				"vercel_auth_callback": "https://vercel.com/sso-api?nonce=vendor-callback-nonce",
+			},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := newConsole(t, "accepted", true)
+			server.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/cli/v1/auth/configuration" {
+					t.Error("login passed the deployment protection boundary")
+				}
+				server.answer(w, http.StatusUnauthorized, test.body)
+			})
+			exit, stdout, stderr := run(t, server.dependencies(credential.NewMemory(), environment(nil)), "--control-url", server.controlURL(), "--agent=yes", "auth", "login")
+			result := decodeEvent(t, []byte(stdout))
+			if exit != 5 || result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next != "" || !strings.Contains(result.Error, "OE_PROTECTION_BYPASS") {
+				t.Fatalf("deployment protection gave no actionable diagnosis: exit=%d %s", exit, stdout)
+			}
+			for _, private := range []string{"vendor-access-instruction", "vendor-mcp-instruction", "vendor-callback-nonce", "Protected deployment"} {
+				if strings.Contains(stdout+stderr, private) {
+					t.Fatal("deployment protection reflected the vendor envelope")
+				}
+			}
+		})
 	}
 }
