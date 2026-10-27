@@ -197,10 +197,11 @@ const (
 	ProductionAvailable = "available"
 	ProductionInactive  = "inactive"
 
-	BlockedByBillingPermission = "billing_permission"
-	BlockedByTerms             = "terms"
-	BlockedByFreeProjectLimit  = "free_project_limit"
-	BlockedByCard              = "card"
+	BlockedByBillingPermission      = "billing_permission"
+	BlockedByTerms                  = "terms"
+	BlockedByFreeProjectLimit       = "free_project_limit"
+	BlockedByCard                   = "card"
+	BlockedByFreePaymentMethodLimit = "free_payment_method_limit"
 )
 
 // ProjectSummary is one project in the list of the projects that the caller

@@ -109,6 +109,9 @@ func classify(err error, commandLine, environment string) *problem {
 			result.actionURL, result.actionReason = refusal.BillingSetupURL, "card"
 		case refusal.Code == "FREE_PROJECT_LIMIT":
 			result.exit = exitPersonAction
+		case refusal.Code == "FREE_PAYMENT_METHOD_LIMIT":
+			result.exit, result.next = exitPersonAction, commandLine
+			result.actionURL, result.actionReason = refusal.BillingSetupURL, "billing"
 		case refusal.Code == "ENVIRONMENT_NOT_FOUND" && environment == "sandbox":
 			// Every project has Sandbox, so the session cannot read this project.
 			result.next = "oe auth status"

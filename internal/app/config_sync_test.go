@@ -394,6 +394,14 @@ func TestPullKeepsTheSectionOfAnInactiveEnvironment(t *testing.T) {
 
 const cardSetupURL = "https://console.open-e2ee.dev/billing/setup"
 
+// organizationBillingURL is the billing page of the organization on the host
+// of the default control URL.
+const organizationBillingURL = "https://console.open-e2ee.dev/billing"
+
+// paymentMethodLimitRefusal is the console refusal of a Free activation whose
+// default payment method already backs two Free Production projects.
+const paymentMethodLimitRefusal = "This payment method cannot back more Free production projects. Each payment method can back 2 Free projects across all Organizations. Choose a paid plan for this project, or save another payment method as the Organization default on the Billing page."
+
 // pushConsole keeps one project as the console does. A plan compares the
 // policy with the environment, and a deploy of that plan applies the policy
 // and activates a Production that is not active. It records each call in
@@ -690,6 +698,7 @@ func TestPushMapsBlockedByToCodes(t *testing.T) {
 		{control.BlockedByTerms, "TERMS_REQUIRED", "oe auth login --accept-terms", ""},
 		{control.BlockedByFreeProjectLimit, "FREE_PROJECT_LIMIT", "", ""},
 		{control.BlockedByCard, "CARD_REQUIRED", "oe config push --yes", cardSetupURL},
+		{control.BlockedByFreePaymentMethodLimit, "FREE_PAYMENT_METHOD_LIMIT", "oe config push --yes", organizationBillingURL},
 	} {
 		t.Run(test.blockedBy, func(t *testing.T) {
 			directory := initializedProject(t, "gated-chat")
@@ -708,6 +717,51 @@ func TestPushMapsBlockedByToCodes(t *testing.T) {
 				t.Fatalf("a blocked Production reached the deploy: %v", console.calls)
 			}
 		})
+	}
+}
+
+func TestPushStopsWithFreePaymentMethodLimitAndExitCodeFiveWhenBlockedByIsFreePaymentMethodLimit(t *testing.T) {
+	directory := initializedProject(t, "method-chat")
+	console := newPushConsole(t, "method-chat")
+	console.blockProduction(control.BlockedByFreePaymentMethodLimit)
+	exit, stdout, _ := run(t, pushDependencies(t, console, directory), "--json", "config", "push", "--yes")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != 5 || result.Code != "FREE_PAYMENT_METHOD_LIMIT" || result.Next != "oe config push --yes" {
+		t.Fatalf("blockedBy free_payment_method_limit did not exit 5 with the same push next: exit=%d %s", exit, stdout)
+	}
+	if result.Action.URL != organizationBillingURL || result.Action.Kind != "browser" || result.Action.Reason != "billing" {
+		t.Fatalf("the refusal did not give the billing page of the organization in action: %s", stdout)
+	}
+	want := "the default payment method of the organization already backs two Free Production projects. Choose a paid plan at https://console.open-e2ee.dev/signal-relay, or save another default payment method at " +
+		organizationBillingURL + ", then run oe config push --yes again"
+	if !strings.Contains(result.Error, "Production: "+want+".") {
+		t.Fatalf("the refusal said %q, want the Production entry %q", result.Error, want)
+	}
+	if pushStatus(t, result, "sandbox") != "applied" || environmentResult(t, result, "production")["status"] != "blocked" {
+		t.Fatalf("the refusal did not report Sandbox applied and Production blocked: %s", stdout)
+	}
+	if slices.Contains(console.calls, "deploy production") {
+		t.Fatalf("a Production at the Free limit of its payment method reached the deploy: %v", console.calls)
+	}
+}
+
+func TestPushMapsA409FreePaymentMethodLimitToExitCodeFive(t *testing.T) {
+	directory := initializedProject(t, "refused-method-chat")
+	console := newPushConsole(t, "refused-method-chat")
+	console.fail["deploy production"] = &control.APIError{
+		Status: 409, Code: "FREE_PAYMENT_METHOD_LIMIT", Message: paymentMethodLimitRefusal, BillingSetupURL: organizationBillingURL,
+	}
+	exit, stdout, _ := run(t, pushDependencies(t, console, directory), "--json", "config", "push", "--yes")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != 5 || result.Code != "FREE_PAYMENT_METHOD_LIMIT" || result.Next != "oe config push --yes" ||
+		!strings.Contains(result.Error, "Production: "+paymentMethodLimitRefusal) {
+		t.Fatalf("a 409 FREE_PAYMENT_METHOD_LIMIT did not exit 5 with the console message and the same push: exit=%d %s", exit, stdout)
+	}
+	if result.Action.URL != organizationBillingURL || result.Action.Kind != "browser" || result.Action.Reason != "billing" {
+		t.Fatalf("a 409 FREE_PAYMENT_METHOD_LIMIT did not give billingSetupUrl in action: %s", stdout)
+	}
+	if pushStatus(t, result, "sandbox") != "applied" || environmentResult(t, result, "production")["code"] != "FREE_PAYMENT_METHOD_LIMIT" {
+		t.Fatalf("the refusal was not the code of Production: %s", stdout)
 	}
 }
 
@@ -758,6 +812,91 @@ func TestPushPersonWaitsForTheCard(t *testing.T) {
 	}
 	if !slices.Contains(console.calls, "deploy production") {
 		t.Fatalf("the push did not activate Production after the card: %v", console.calls)
+	}
+}
+
+func TestPushStopsWithFreePaymentMethodLimitAfterTheCardWaitWhenBlockedByBecomesFreePaymentMethodLimit(t *testing.T) {
+	directory := initializedProject(t, "card-method-chat")
+	console := newPushConsole(t, "card-method-chat")
+	console.blockProduction(control.BlockedByCard)
+	browser := &opener{}
+	dependencies := pushDependencies(t, console, directory)
+	dependencies.In, dependencies.Interactive, dependencies.OpenURL = unreadable{t}, terminal, browser.open
+	waits := 0
+	dependencies.Sleep = func(context.Context, time.Duration) error {
+		// The person adds a card whose payment method already backs two Free
+		// Production projects.
+		if waits++; waits == 2 {
+			console.project.Production.BlockedBy = control.BlockedByFreePaymentMethodLimit
+			console.project.Production.CardOnFile = true
+		}
+		return nil
+	}
+	exit, stdout, stderr := run(t, dependencies, "config", "push")
+	if exit != 5 || waits != 2 || !slices.Equal(browser.opened, []string{cardSetupURL}) {
+		t.Fatalf("the card wait did not end in exit 5: exit=%d waits=%d opened=%v %q %q", exit, waits, browser.opened, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Card found.") {
+		t.Fatalf("the person was not told that the card was found: %q", stdout)
+	}
+	if !strings.Contains(stderr, "Production: the default payment method of the organization already backs two Free Production projects.") ||
+		!strings.Contains(stderr, "action: open "+organizationBillingURL+"\n") || !strings.Contains(stderr, "next: oe config push\n") {
+		t.Fatalf("the person did not get FREE_PAYMENT_METHOD_LIMIT with the billing page: %q", stderr)
+	}
+	if slices.Contains(console.calls, "deploy production") {
+		t.Fatalf("a Production at the Free limit of its payment method reached the deploy: %v", console.calls)
+	}
+}
+
+func TestPushSendsTheCLIVersionHeaderOnEveryControlRequestMadeThroughDo(t *testing.T) {
+	previous := Version
+	Version = "4.5.6-header.1"
+	t.Cleanup(func() { Version = previous })
+	server := newConsole(t, "required", true)
+	project := newPushConsole(t, "version-chat")
+	project.blockProduction(control.BlockedByTerms)
+	server.routes.HandleFunc("GET /api/cli/v1/projects/version-chat", func(response http.ResponseWriter, _ *http.Request) {
+		answer, _ := project.GetProject(t.Context(), control.CredentialRequest{}, "version-chat")
+		server.answer(response, http.StatusOK, answer)
+	})
+	server.routes.HandleFunc("POST /api/cli/v1/projects/version-chat/deploys/plan", func(response http.ResponseWriter, request *http.Request) {
+		var body control.PlanRequest
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode the plan body: %v", err)
+		}
+		body.ProjectSlug = "version-chat"
+		answer, _ := project.Plan(t.Context(), control.CredentialRequest{OperationID: request.Header.Get("Idempotency-Key")}, body)
+		server.answer(response, http.StatusOK, answer)
+	})
+	server.routes.HandleFunc("POST /api/cli/v1/deploys", func(response http.ResponseWriter, request *http.Request) {
+		var body control.DeployRequest
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode the deploy body: %v", err)
+		}
+		answer, _ := project.Deploy(t.Context(), control.CredentialRequest{OperationID: request.Header.Get("Idempotency-Key")}, body)
+		server.answer(response, http.StatusOK, answer)
+	})
+	store := credential.NewMemory()
+	server.storeSession(t, store)
+	dependencies := server.dependencies(store, nil)
+	dependencies.WorkingDir = initializedProject(t, "version-chat")
+	exit, stdout, _ := run(t, dependencies, "--json", "--control-url", server.controlURL(), "config", "push", "--yes")
+	if result := decodeEvent(t, []byte(stdout)); exit != 5 || result.Code != "TERMS_REQUIRED" {
+		t.Fatalf("the push did not reach the terms read: exit=%d %s", exit, stdout)
+	}
+	requests, versions := server.requested(), server.declaredVersions()
+	for _, want := range []string{
+		"GET /api/cli/v1/projects/version-chat", "POST /api/cli/v1/projects/version-chat/deploys/plan",
+		"POST /api/cli/v1/deploys", "GET /api/cli/v1/terms",
+	} {
+		if !slices.Contains(requests, want) {
+			t.Fatalf("the push made no %s request: %v", want, requests)
+		}
+	}
+	for i, request := range requests {
+		if versions[i] != Version {
+			t.Errorf("%s declared OpenE2EE-CLI-Version %q, want %q", request, versions[i], Version)
+		}
 	}
 }
 

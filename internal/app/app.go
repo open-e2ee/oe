@@ -180,6 +180,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 	}
 	if client, ok := api.(*control.Client); ok {
 		client.SetProtectionBypass(protectionBypass)
+		client.SetCLIVersion(Version)
 	}
 	identities := dependencies.Identities
 	if identities == nil {
