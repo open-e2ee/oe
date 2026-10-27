@@ -47,7 +47,7 @@ class SessionTests(unittest.TestCase):
             self.owner.run(argv,limit,progress=progress)
         self.assertEqual(len(self.owner.steps),1)
         row = self.owner.steps[0]
-        self.assertEqual(row['closureDeadlineMonotonic']-row['closureStartedMonotonic'],5)
+        self.assertEqual(row['closureDeadlineMonotonic'],row['closureStartedMonotonic']+5)
         return row
 
     def assert_closed(self, row):
