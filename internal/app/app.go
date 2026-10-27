@@ -442,7 +442,9 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken, "")
 		if refreshErr != nil {
 			if errors.Is(refreshErr, control.ErrSessionExpired) {
-				_ = r.store.Delete(profile)
+				if err := credential.DeleteSession(r.store, profile); err != nil {
+					return credential.Credential{}, fmt.Errorf("remove the expired WorkOS session: %w", err)
+				}
 				return credential.Credential{}, loginRequired("SESSION_EXPIRED", "the WorkOS session expired; run oe auth login again", refreshErr)
 			}
 			if !credentialIsCurrentlyValid(value, r.now()) {

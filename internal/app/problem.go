@@ -87,6 +87,8 @@ func classify(err error, commandLine, environment string) *problem {
 	if refusal, ok := errors.AsType[*control.APIError](err); ok {
 		result := &problem{code: cmp.Or(refusal.Code, "CONTROL_ERROR"), message: err.Error(), exit: exitFailure, cause: err}
 		switch {
+		case refusal.Code == "DEPLOYMENT_PROTECTION_REQUIRED":
+			result.exit = exitPersonAction
 		case refusal.Status == http.StatusUnauthorized || refusal.Code == "AUTHENTICATION_REQUIRED" || refusal.Code == "INVALID_SESSION":
 			result.code = cmp.Or(refusal.Code, "AUTHENTICATION_REQUIRED")
 			result.next = "oe auth login"
