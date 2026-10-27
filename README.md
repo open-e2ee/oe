@@ -251,7 +251,7 @@ then the stored value, then no bypass. The value never appears in output.
 An expired session removes only its session credentials and keeps this bypass
 for the next login. Explicit `oe auth logout` removes both. If Vercel blocks a
 request, `DEPLOYMENT_PROTECTION_REQUIRED` exits 5 and asks for a valid
-`OE_PROTECTION_BYPASS`; another login cannot bypass deployment protection.
+`OE_PROTECTION_BYPASS`. Another login cannot bypass deployment protection.
 
 Under an agent, `oe` does not open the browser. It writes a pending event, then
 the result after the person approves, so start the command in the background and
