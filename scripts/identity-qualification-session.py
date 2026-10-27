@@ -22,7 +22,10 @@ class IdentitySessionController:
 
     # ps supplies only numeric PID/PPID/UID candidates. Native getsid/getpgid own association.
     # The observer runs outside the test session and never receives fixture paths.
-    def process_inventory(self):
+    def process_inventory(self, deadline=None):
+        until = time.monotonic()+1
+        if deadline is not None: until = min(until,deadline)
+        if time.monotonic() >= until: raise RuntimeError('Process observation deadline expired.')
         observer = subprocess.Popen(['/bin/ps','-axo','pid=,ppid=,uid='], env=self.base_env,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=True)
@@ -34,7 +37,6 @@ class IdentitySessionController:
         try:
             os.set_blocking(observer.stdout.fileno(),False)
             selector.register(observer.stdout,selectors.EVENT_READ)
-            until = time.monotonic()+1
             while selector.get_map():
                 if time.monotonic() >= until: raise RuntimeError('Process observation deadline expired.')
                 for key, _ in selector.select(.02):
@@ -55,7 +57,8 @@ class IdentitySessionController:
                         os.killpg(observer.pid,sig)
                     except ProcessLookupError: pass
                     except BaseException as error: failure = failure or error
-                try: observer.wait(timeout=.25)
+                remaining = .25 if deadline is None else max(0,min(.25,deadline-time.monotonic()))
+                try: observer.wait(timeout=remaining)
                 except subprocess.TimeoutExpired: pass
             try: outcome['empty'] = not self.group_alive(observer.pid)
             except BaseException as error: failure = failure or error
@@ -77,11 +80,12 @@ class IdentitySessionController:
             if len(rows) > 65536: raise RuntimeError('Process inventory row bound reached.')
         return rows
 
-    def owned_session_members(self, session_id):
+    def owned_session_members(self, session_id, deadline=None):
         if session_id <= 1 or session_id == os.getsid(0): raise RuntimeError('Refuse an unowned supervisor session.')
         rows = []
         until = time.monotonic()+1
-        for pid, ppid, uid in self.process_inventory():
+        if deadline is not None: until = min(until,deadline)
+        for pid, ppid, uid in self.process_inventory(deadline=until):
             # The wrapper is root and queries every UID. The proposed ordinary qualifier
             # creates only same-UID children and needs no access to other users' sessions.
             if os.geteuid() != 0 and uid % (1 << 32) != os.geteuid(): continue
@@ -97,17 +101,17 @@ class IdentitySessionController:
             if len(rows) > 4096: raise RuntimeError('Owned session member bound reached.')
         return sorted(rows,key=lambda row:row['pid'])
 
-    def finish_session(self, process, session):
+    def finish_session(self, process, session, deadline):
         observations, signals = [], []
         session.update({'observations':observations,'signals':signals})
         started = time.monotonic()
         prior_empty = False
         try:
             for _ in range(24):
-                if time.monotonic()-started >= 5: break
+                if time.monotonic() >= deadline: break
                 # Reap only the owned leader. Separate-PGID actors remain observable by SID.
                 process.poll()
-                members = self.owned_session_members(session['sid'])
+                members = self.owned_session_members(session['sid'],deadline=deadline)
                 observations.append({'atMonotonic':time.monotonic(),'members':members})
                 if not members:
                     if prior_empty:
@@ -126,8 +130,9 @@ class IdentitySessionController:
                             os.kill(pid,sig)
                             signals.append({'pid':pid,'observedPPID':member['ppid'],'pgid':pgid,'sid':sid,'signal':int(sig)})
                         except ProcessLookupError: pass
-                if time.monotonic()-started >= 5: break
-                time.sleep(.02)
+                remaining = deadline-time.monotonic()
+                if remaining <= 0: break
+                time.sleep(min(.02,remaining))
             if not session['empty']: session['failure'] = 'Owned session did not reach two complete empty observations.'
         except BaseException as error:
             session['failure'] = str(error)
@@ -151,66 +156,136 @@ class IdentitySessionController:
         self.groups.append(session); self.save('groups.json',self.groups)
         selector = selectors.DefaultSelector()
         streams = {}
+        eof = {'stdout':False,'stderr':False}
+        write_failed = {'stdout':False,'stderr':False}
         raw = bytearray()
         for name, stream in [('stdout',process.stdout), ('stderr',process.stderr)]:
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, name)
-            streams[name] = [(self.proof/f'{number:02d}.{name}').open('wb'), 0]
+            streams[name] = [(self.proof/f'{number:02d}.{name}').open('wb',buffering=0), 0, 0]
         reason = None
+        secondary = []
+        leader_waited = False
+        leader_wait_status = None
         deadline = min(self.outer_deadline, time.monotonic()+limit)
         if phase_deadline is not None: deadline = min(deadline,phase_deadline)
         first_byte, last_byte = None, None
         next_progress = time.monotonic() if progress is not None else None
-        def report_progress(ended=False):
+        def record_failure(code, detail=None):
+            nonlocal reason
+            if reason is None:
+                reason = code
+                if detail is not None: row['failureDetail'] = detail
+            elif code != reason and not any(item['reason'] == code for item in secondary):
+                secondary.append({'reason':code,'detail':detail})
+        def read_ready(timeout):
+            nonlocal first_byte, last_byte
+            for key, _ in selector.select(timeout):
+                chunk = os.read(key.fileobj.fileno(),65536)
+                if not chunk:
+                    eof[key.data] = True
+                    selector.unregister(key.fileobj)
+                    continue
+                now = time.monotonic()
+                if first_byte is None: first_byte = now
+                last_byte = now
+                stream = streams[key.data]
+                remaining = max(0,min(self.stream_limit-stream[2],self.combined_limit-sum(value[2] for value in streams.values())))
+                retained = chunk[:remaining]
+                stream[1] += len(chunk)
+                if retained and not write_failed[key.data]:
+                    try:
+                        written = stream[0].write(retained)
+                        stream[2] += written
+                        if written != len(retained):
+                            write_failed[key.data] = True
+                            record_failure('OUTPUT_WRITE_INCOMPLETE')
+                    except OSError as error:
+                        write_failed[key.data] = True
+                        record_failure('OUTPUT_WRITE_FAILURE',str(error))
+                if capture and key.data == 'stdout':
+                    capacity = 4*1024*1024-len(raw)
+                    raw.extend(chunk[:capacity])
+                    if len(chunk) > capacity: record_failure('CAPTURE_LIMIT')
+                if stream[1] > self.stream_limit or sum(value[1] for value in streams.values()) > self.combined_limit:
+                    record_failure('OUTPUT_LIMIT')
+        def report_progress(ended=False, before_settlement=False):
             if progress is None: return
             now = time.monotonic()
             snapshot = {'atMonotonic':now,'sid':process.pid,'stage':number,
                 'startMonotonic':row['startMonotonic'],'effectiveDeadlineMonotonic':deadline,
                 'firstByteMonotonic':first_byte,'lastByteMonotonic':last_byte,
                 'stdoutBytes':streams['stdout'][1],'stderrBytes':streams['stderr'][1]}
+            if before_settlement:
+                snapshot.update({'beforeSettlement':True,'leaderStatusBeforeSettlement':process.poll()})
             if ended:
-                snapshot.update({'endedMonotonic':now,'ownedSessionEmpty':session['empty']})
+                snapshot.update({'endedMonotonic':now,'ownedSessionEmpty':session['empty'],
+                    'stdoutEOF':eof['stdout'],'stderrEOF':eof['stderr'],'leaderWaited':leader_waited,
+                    'closureComplete':session['empty'] and leader_waited and all(eof.values())})
             progress(snapshot)
         try:
             while selector.get_map():
-                if time.monotonic() >= deadline: reason = 'PROCESS_DEADLINE'; break
+                if time.monotonic() >= deadline: record_failure('PROCESS_DEADLINE'); break
                 if monitor_volume and self.space_floor_reached():
-                    reason = 'OWNED_VOLUME_SPACE_FLOOR'; break
-                if sum(v[1] for v in streams.values()) > self.combined_limit:
-                    reason = 'OUTPUT_LIMIT'; break
+                    record_failure('OWNED_VOLUME_SPACE_FLOOR'); break
                 if progress is not None and time.monotonic() >= next_progress:
                     report_progress(); next_progress = time.monotonic()+10
-                for key, _ in selector.select(.1):
-                    chunk = os.read(key.fileobj.fileno(), 65536)
-                    if not chunk: selector.unregister(key.fileobj); continue
-                    if progress is not None:
-                        now = time.monotonic()
-                        if first_byte is None: first_byte = now
-                        last_byte = now
-                    stream = streams[key.data]
-                    remaining = self.stream_limit-stream[1]
-                    stream[0].write(chunk[:max(0,remaining)]); stream[1] += len(chunk)
-                    if capture and key.data == 'stdout':
-                        if len(raw)+len(chunk) > 4*1024*1024: reason = 'CAPTURE_LIMIT'; break
-                        raw.extend(chunk)
-                    if stream[1] > self.stream_limit: reason = 'OUTPUT_LIMIT'; break
+                read_ready(max(0,min(.1,deadline-time.monotonic())))
                 if reason: break
             if not reason:
-                try: process.wait(timeout=max(.001, deadline-time.monotonic()))
-                except subprocess.TimeoutExpired: reason = 'PROCESS_DEADLINE'
+                try:
+                    leader_wait_status = process.wait(timeout=max(0,deadline-time.monotonic()))
+                    leader_waited = True
+                    if leader_wait_status != 0: record_failure('PROCESS_EXIT_NONZERO')
+                except subprocess.TimeoutExpired: record_failure('PROCESS_DEADLINE')
+        except BaseException as error:
+            record_failure('PROCESS_IO_FAILURE',str(error))
         finally:
-            empty = self.finish_session(process,session)
+            closure_started = time.monotonic()
+            closure_deadline = closure_started+5
+            if progress is not None:
+                try: report_progress(before_settlement=True)
+                except BaseException as error: record_failure('NATIVE_DIAGNOSTIC_FAILURE',str(error))
+            try: empty = self.finish_session(process,session,closure_deadline)
+            except BaseException as error:
+                empty = False
+                session['empty'] = False
+                session['failure'] = str(error)
+            if not empty: record_failure('SESSION_CLOSURE_UNCERTAIN',session.get('failure'))
+            try:
+                leader_wait_status = process.wait(timeout=max(0,closure_deadline-time.monotonic()))
+                leader_waited = True
+            except subprocess.TimeoutExpired: record_failure('LEADER_WAIT_INCOMPLETE')
+            except BaseException as error: record_failure('LEADER_WAIT_INCOMPLETE',str(error))
+            while selector.get_map() and time.monotonic() < closure_deadline:
+                try: read_ready(min(.1,max(0,closure_deadline-time.monotonic())))
+                except BaseException as error:
+                    record_failure('PIPE_DRAIN_FAILURE',str(error))
+                    break
+            if not all(eof.values()): record_failure('PIPE_EOF_INCOMPLETE')
+            closure_ended = time.monotonic()
+            if closure_ended > closure_deadline: record_failure('CLOSURE_DEADLINE')
+            session.update({'leaderStatus':process.poll(),'leaderWaited':leader_waited,
+                'leaderWaitStatus':leader_wait_status})
             if progress is not None:
                 try: report_progress(ended=True)
                 except BaseException as error:
-                    reason = reason or 'NATIVE_DIAGNOSTIC_FAILURE'
+                    record_failure('NATIVE_DIAGNOSTIC_FAILURE')
                     row['diagnosticFailure'] = str(error)
-            selector.close()
-            for stream in streams.values(): stream[0].close()
-            process.stdout.close(); process.stderr.close()
+            try: selector.close()
+            except BaseException as error: record_failure('STREAM_CLOSE_FAILURE',str(error))
+            for stream in [value[0] for value in streams.values()]+[process.stdout,process.stderr]:
+                try: stream.close()
+                except BaseException as error: record_failure('STREAM_CLOSE_FAILURE',str(error))
             row.update({'status':process.poll(),'reason':reason,'ownedSessionEmpty':empty,
-                        'stdoutBytes':streams['stdout'][1], 'stderrBytes':streams['stderr'][1]})
+                        'stdoutBytes':streams['stdout'][1], 'stderrBytes':streams['stderr'][1],
+                        'stdoutRetainedBytes':streams['stdout'][2],'stderrRetainedBytes':streams['stderr'][2],
+                        'stdoutEOF':eof['stdout'],'stderrEOF':eof['stderr'],
+                        'leaderWaited':leader_waited,'leaderWaitStatus':leader_wait_status,
+                        'closureStartedMonotonic':closure_started,'closureDeadlineMonotonic':closure_deadline,
+                        'closureEndedMonotonic':closure_ended,'secondaryFailures':secondary,
+                        'closureComplete':empty and leader_waited and all(eof.values())})
             self.save('stages.json', self.steps); self.save('groups.json', self.groups)
-        if reason or row['status'] != 0 or not empty: raise RuntimeError('A bounded stage failed; see raw evidence.')
+        if reason or row['status'] != 0 or not row['closureComplete']: raise RuntimeError('A bounded stage failed; see raw evidence.')
         return bytes(raw)
 

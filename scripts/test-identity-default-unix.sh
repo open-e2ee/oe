@@ -59,7 +59,8 @@ source = {name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in 
 def save(name,value):
     (proof/name).write_text(json.dumps(value,indent=2)+'\n')
 def owned_closed():
-    return (all(row.get('ownedSessionEmpty') is True for row in supervisor.steps)
+    return (all(row.get('ownedSessionEmpty') is True and row.get('leaderWaited') is True
+            and row.get('stdoutEOF') is True and row.get('stderrEOF') is True for row in supervisor.steps)
         and all(row.get('empty') is True for row in supervisor.groups)
         and all(row.get('empty') is True for row in supervisor.process_observers))
 def read_owned_proof(path, maximum, expected=None):
@@ -187,7 +188,9 @@ finally:
         success = False
         failure = (failure or '')+'; collection: '+str(error)
     terminal = {'success':success,'failure':failure,'elapsedSeconds':time.monotonic()-started,
-        'ownedSessionsEmpty':owned_closed(),'standardHandoffVerified':handoff_verified,'collectionComplete':collection_complete,
+        'ownedSessionsEmpty':all(row.get('empty') is True for row in supervisor.groups)
+            and all(row.get('empty') is True for row in supervisor.process_observers),
+        'ownedProcessAndPipeClosureComplete':owned_closed(),'standardHandoffVerified':handoff_verified,'collectionComplete':collection_complete,
         'defaultStatePreserved':True,'sourceProof':str(proof),
         'cleanup':'VM teardown owns removal of the original synthetic default namespace. No first-use reset.',
         'limits':'D01-D06 only. No public CLI, Console, Relay, provider or historical-client acceptance.'}

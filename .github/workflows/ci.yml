@@ -47,6 +47,26 @@ jobs:
           package-manager-cache: false
       - name: Show Node.js version
         run: node --version
+      - name: Session closure owner regressions
+        id: session-closure
+        if: runner.os != 'Windows'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          session_proof=$(mktemp -d "${RUNNER_TEMP:?}/ca8-session-closure.XXXXXXXX")
+          printf 'evidence-path=%s\n' "$session_proof" >> "${GITHUB_OUTPUT:?}"
+          OE_IDENTITY_SESSION_TEST_PROOF="$session_proof/evidence" python3 -I -B scripts/identity-qualification-session.test.py -v 2>&1 | tee "$session_proof/run.log"
+      - name: Preserve session closure regression evidence
+        if: always() && steps.session-closure.outputs.evidence-path != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: identity-session-closure-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ steps.session-closure.outputs.evidence-path }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
       - name: Full race suite with owned Unix fixtures
         id: store-unix
         if: runner.os != 'Windows'
