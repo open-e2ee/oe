@@ -179,3 +179,64 @@ func TestIdentityCheckDeviceOwnedUsesTheAddressedReadAndNoAssertion(t *testing.T
 		t.Fatalf("device-owned identity check: exit=%d requests=%d stdinReads=%d output=%s stderr=%s", exit, calls, in.reads, out, stderr)
 	}
 }
+
+func TestIdentityCheckUsesStoredOrEnvironmentProtection(t *testing.T) {
+	for _, test := range []struct {
+		name, stored, environment string
+		wantExit                  int
+	}{
+		{"stored", "BYPASS_CANARY", "", 0},
+		{"environment overrides stored", "OLD_BYPASS_CANARY", "BYPASS_CANARY", 0},
+		{"missing", "", "", exitPersonAction},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory, profile, _ := identityFixture(t, `{"mode":"device-owned"}`)
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Method != http.MethodPost || r.URL.Path != "/api/cli/v1/projects/identity-check/identity/check" || r.URL.RawQuery != "environment=sandbox" || r.Header.Get("Authorization") != "Bearer test-token" || r.Header.Get("Idempotency-Key") != "" {
+					t.Error("check used the wrong request or authority")
+				}
+				if r.Header.Get("x-vercel-protection-bypass") != "BYPASS_CANARY" {
+					w.WriteHeader(http.StatusUnauthorized)
+					fmt.Fprint(w, `{"error":{"code":"401","message":"Protected deployment"},"message":"Protected by Vercel Authentication","protection":{"vercel_auth_enabled":true},"access":"VENDOR_CANARY"}`)
+					return
+				}
+				fmt.Fprint(w, `{"state":"not_applicable","profileMode":"device-owned","reason":"device_owned_identity","environment":"sandbox","configuration":"draft","installedConfiguration":"unverified","deviceAdmission":"unverified","memberBinding":"unverified","encryptedExchange":"unverified","lifecycle":"unverified"}`)
+			}))
+			defer server.Close()
+			api, err := control.New(server.URL+"/api/cli", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := credential.NewMemory()
+			origin, _ := credential.Profile(server.URL + "/api/cli")
+			if err := store.Set(origin, credential.Credential{AccessToken: "test-token", Scopes: []string{"project:read"}, ProtectionBypass: test.stored}); err != nil {
+				t.Fatal(err)
+			}
+			in := &unreadIdentityInput{}
+			exit, out, stderr := run(t, Dependencies{API: api, Store: store, WorkingDir: directory, In: in, Getenv: environment(map[string]string{"OE_PROTECTION_BYPASS": test.environment})}, "--json", "--agent=yes", "--control-url", server.URL+"/api/cli", "--env", "sandbox", "identity", "check", "--profile", profile)
+			if exit != test.wantExit || stderr != "" || calls != 1 || in.reads != 0 {
+				t.Fatalf("check: exit=%d calls=%d reads=%d out=%s stderr=%s", exit, calls, in.reads, out, stderr)
+			}
+			if test.wantExit == 0 && !strings.Contains(out, `"state":"not_applicable"`) {
+				t.Fatal("check lost the device-owned evidence level")
+			}
+			if test.wantExit != 0 {
+				result := decodeEvent(t, []byte(out))
+				if result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next == "oe auth login" || !strings.Contains(result.Error, "OE_PROTECTION_BYPASS") {
+					t.Fatal("protection refusal lost its corrective action")
+				}
+			}
+			for _, secret := range []string{"BYPASS_CANARY", "VENDOR_CANARY", "test-token"} {
+				if strings.Contains(out+stderr, secret) {
+					t.Fatal("check exposed credentials or vendor text")
+				}
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 2 {
+				t.Fatal("check created local state")
+			}
+		})
+	}
+}
