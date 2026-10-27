@@ -48,14 +48,14 @@ Preparation gives no test coverage or native fixture qualification.
 Intel native execution uses three fixed partitions of the maintained complete roster.
 The other package, configuration, formatting and Homebrew gates remain present.
 
-| Profile        | Entry point arguments                                           | Scope                          |
-| -------------- | --------------------------------------------------------------- | ------------------------------ |
-| Unix race      | `race linux amd64` or `race darwin arm64`                       | Full race suite                |
-| Windows race   | `-FixtureProfile race -ExpectedArchitecture amd64`              | Full race suite                |
-| Minimum Go     | `minimum linux amd64`                                           | Full suite and six CGO0 builds |
-| Unix native    | `native <linux-or-darwin> <amd64-or-arm64>`                     | Native store package           |
-| Windows native | `-FixtureProfile native -ExpectedArchitecture <amd64-or-arm64>` | Native store package           |
-| Cleanup diagnostic | `cleanup-diagnostic darwin amd64` | Owned image cleanup only, `NO_TEST_CREDIT` |
+| Profile            | Entry point arguments                                           | Scope                                      |
+| ------------------ | --------------------------------------------------------------- | ------------------------------------------ |
+| Unix race          | `race linux amd64` or `race darwin arm64`                       | Full race suite                            |
+| Windows race       | `-FixtureProfile race -ExpectedArchitecture amd64`              | Full race suite                            |
+| Minimum Go         | `minimum linux amd64`                                           | Full suite and six CGO0 builds             |
+| Unix native        | `native <linux-or-darwin> <amd64-or-arm64>`                     | Native store package                       |
+| Windows native     | `-FixtureProfile native -ExpectedArchitecture <amd64-or-arm64>` | Native store package                       |
+| Cleanup diagnostic | `cleanup-diagnostic darwin amd64`                               | Owned image cleanup only, `NO_TEST_CREDIT` |
 
 | Runner label       | Native target |
 | ------------------ | ------------- |
