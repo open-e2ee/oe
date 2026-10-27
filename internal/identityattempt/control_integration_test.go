@@ -117,7 +117,9 @@ func realIdentityFixture(t *testing.T, kind identityattempt.Kind, wrap func(http
 	t.Helper()
 	f := &integrationFixture{credential: control.CredentialRequest{AccessToken: "owned_fixture_token"}}
 	f.started = time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// One complete fixture lifetime uses the existing public invocation and
+	// lease limit. Setup and every later phase share this deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	f.ctx = ctx
 	f.recordTiming("created")
 	t.Cleanup(func() {
