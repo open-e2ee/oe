@@ -45,6 +45,8 @@ if (actual_os, actual_arch) != (expected_os, expected_arch):
     raise SystemExit('The actual native OS/architecture differs from the job target.')
 intel_native = profile == 'native' and actual_os == 'darwin' and actual_arch == 'amd64'
 if intel_native: outer_deadline = started + 2400
+cleanup_reserve = 70 if intel_native else 30
+detach_limit = 60 if intel_native else 20
 nonce = uuid.uuid4().hex
 mount = pathlib.Path('/Volumes' if actual_os == 'darwin' else '/') / ('ca8-store-run-' + nonce)
 backing = proof / 'volume'
@@ -66,9 +68,22 @@ base_env.update({'GOTOOLCHAIN':'local', 'GOENV':'off', 'GOWORK':'off',
                  'GIT_CONFIG_GLOBAL':'/dev/null',
                  'GIT_CONFIG_COUNT':'1', 'GIT_CONFIG_KEY_0':'safe.directory',
                  'GIT_CONFIG_VALUE_0':str(root), 'GIT_OPTIONAL_LOCKS':'0'})
+cleanup_temporary = proof/'cleanup-temporary'
+cleanup_temporary.mkdir(mode=0o700)
+cleanup_env = dict(base_env,TMPDIR=str(cleanup_temporary),TMP=str(cleanup_temporary),
+    TEMP=str(cleanup_temporary),PWD=str(proof))
 
 def save(name, value):
     (proof/name).write_text(json.dumps(value, indent=2)+'\n')
+
+def owned_closed():
+    return (all(row.get('closureComplete') is True for row in steps)
+        and all(row.get('empty') is True for row in groups)
+        and all(row.get('empty') is True for row in process_observers))
+
+def owned_volume_backing_removal_allowed(successful, detach_status, closed, mount_state):
+    return (successful is True and type(detach_status) is int and detach_status == 0
+        and closed is True and mount_state is False)
 
 def checkout_index_metadata():
     directory = root / '.git'
@@ -92,7 +107,7 @@ session_supervisor = session_module.IdentitySessionController(root, proof, base_
     space_floor_reached=lambda: mounted and shutil.disk_usage(mount).free < 128*1024*1024)
 def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=None, phase=None, phase_deadline=None):
     phases = {'native': ['native-compile','native-tool-prepare','native-build-info','native-execution'],
-              'race': ['full-cli-prewarm','full-race-execution']}
+              'race': ['full-cli-prewarm','full-race-preparation','full-race-execution']}
     if intel_native: phases['native'] += ['module-preparation','native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
     if phase is not None and phase not in phases.get(profile, []):
         raise RuntimeError('Invalid test diagnostic phase.')
@@ -118,7 +133,8 @@ def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=Non
         if phase == 'module-preparation':
             diagnostic['samples'][-1]['moduleCache'] = module_cache.snapshot()
         if 'endedMonotonic' in snapshot:
-            diagnostic.update({key:snapshot[key] for key in ['endedMonotonic','ownedSessionEmpty']})
+            diagnostic.update({key:snapshot[key] for key in ['endedMonotonic','ownedSessionEmpty',
+                'stdoutEOF','stderrEOF','leaderWaited','closureComplete']})
         save(f"native-stage-{snapshot['stage']:02d}-progress.json",diagnostic)
     return session_supervisor.run(argv,limit,env,capture,monitor_volume,
         cwd=cwd,phase_deadline=phase_deadline,progress=sample_progress if phase is not None else None)
@@ -174,7 +190,7 @@ def run_intel_partitions(module,roster,cold_deadline,execution_env,package_dir):
         native = groups[stage]
         return {'stage':stage,'sid':native['sid'],'leaderPID':native['leaderPID'],
             'expectedRootPGID':native['expectedRootPGID'],'leaderStatus':native['leaderStatus'],
-            'empty':native.get('empty') is True and steps[stage].get('ownedSessionEmpty') is True
+            'empty':native.get('empty') is True and steps[stage].get('closureComplete') is True
                 and all(observer.get('empty') is True for observer in process_observers)}
     def bounded_output(stage,maximum):
         path = proof/f'{stage:02d}.stdout'
@@ -191,11 +207,11 @@ def run_intel_partitions(module,roster,cold_deadline,execution_env,package_dir):
         coverage.accept_listing(bounded_output(stage,65536),identity(),group(stage))
         save('native-intel-coverage.json',coverage.snapshot())
         if time.monotonic() > cold_deadline: raise RuntimeError('Intel cold preparation deadline expired.')
-        if outer_deadline-time.monotonic() < 1830: raise RuntimeError('Intel execution and cleanup reserve unavailable.')
+        if outer_deadline-time.monotonic() < 1800+cleanup_reserve: raise RuntimeError('Intel execution and cleanup reserve unavailable.')
         for partition in range(1,4):
             source = identity()
             if partition == 1 and time.monotonic() > cold_deadline: raise RuntimeError('Intel cold preparation deadline expired.')
-            if outer_deadline-time.monotonic() < (4-partition)*600+30:
+            if outer_deadline-time.monotonic() < (4-partition)*600+cleanup_reserve:
                 raise RuntimeError('Intel remaining partition reserve unavailable.')
             stage = len(steps)
             selector = coverage.admit(partition,source,group(stage-1),stage)
@@ -207,6 +223,7 @@ def run_intel_partitions(module,roster,cold_deadline,execution_env,package_dir):
                     env=execution_env,cwd=package_dir,phase='native-partition-'+str(partition))
             except BaseException as error:
                 stage_failure = str(error)
+            if not owned_closed(): raise RuntimeError('Intel native input readback requires complete process and pipe closure.')
             after = current_inputs()
             save(f'native-intel-inputs-{partition}.json',after)
             receipt = coverage.record(partition,identity(),group(stage),steps[stage]['status'],bounded_output(stage,64*1024*1024),stage_failure is None)
@@ -374,6 +391,13 @@ try:
         if warm_remaining <= 0: raise RuntimeError('No full-suite cold-build reserve remains.')
         run([go,'build','-o',str(cache/'acceptance-oe'),'./cmd/oe'],warm_remaining,
             phase='full-cli-prewarm',phase_deadline=warm_deadline)
+        preparation_deadline = min(time.monotonic()+120,outer_deadline-630)
+        preparation_remaining = preparation_deadline-time.monotonic()
+        if preparation_remaining <= 0: raise RuntimeError('No full-suite race preparation reserve remains.')
+        run([go,'test','-count=1','-json','-race','-timeout=9m','-run=^$','./...'],preparation_remaining,
+            phase='full-race-preparation',phase_deadline=preparation_deadline)
+        if any(fixture.iterdir()) or any(evidence.iterdir()):
+            raise RuntimeError('Race preparation changed the owned fixture or native evidence directory.')
         if outer_deadline-time.monotonic() < 630: raise RuntimeError('Full race execution and cleanup reserve unavailable.')
         run([go,'test','-count=1','-json','-race','-timeout=9m','./...'],600,phase='full-race-execution')
     elif profile == 'minimum':
@@ -381,7 +405,7 @@ try:
         run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
     else:
         base_env['CGO_ENABLED'] = '0'
-        cold_seconds,execution_reserve = (480,1830) if intel_native else (120,630)
+        cold_seconds,execution_reserve = (480,1800+cleanup_reserve) if intel_native else (120,630)
         cold_deadline = min(time.monotonic()+cold_seconds,outer_deadline-execution_reserve)
         def cold_limit():
             remaining = cold_deadline-time.monotonic()
@@ -399,6 +423,7 @@ try:
                          'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
                          'buildInfo':binary_info,'host':host,'CGO_ENABLED':'0',
                          'sourceHashes':source_files,'coldPhaseSeconds':cold_seconds,'executionSeconds':600,
+                         'executionReserveSeconds':execution_reserve,'cleanupReserveSeconds':cleanup_reserve,
                          'globalSeconds':2400 if intel_native else 800}
         save('native-test-inputs-before.json',native_inputs)
         if native_inputs['binary']['uid'] != 0: raise RuntimeError('Compiled test binary is not owned by the fixture caller.')
@@ -424,6 +449,7 @@ except BaseException as error:
 finally:
     if 'native_inputs' in globals():
         try:
+            if not owned_closed(): raise RuntimeError('Native input readback requires complete process and pipe closure.')
             after_inputs = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
                             'sourceHashes':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in source_files}}
             save('native-test-inputs-after.json',after_inputs)
@@ -431,10 +457,21 @@ finally:
                 raise RuntimeError('Native executable or source inputs changed during execution.')
         except BaseException as error:
             success = False; failure = (failure or '')+'; native input readback: '+str(error)
-    empty = all(row['empty'] for row in groups) and all(row['empty'] for row in process_observers)
-    try: mounted = mounted or os.path.ismount(mount)
-    except OSError as error: success = False; failure = (failure or '')+'; mount readback: '+str(error)
-    if mounted and empty:
+    cleanup = {'detachAttempted':False,'detachLimitSeconds':detach_limit,'cleanupReserveSeconds':cleanup_reserve,
+        'observations':[],'backingRemovalAllowed':False,'backingRemoved':False}
+    def observe_mount(label):
+        global mounted, success, failure
+        observation = {'phase':label,'atMonotonic':time.monotonic(),'mounted':None,'error':None}
+        try: observation['mounted'] = os.path.ismount(mount)
+        except OSError as error:
+            observation['error'] = str(error)
+            success = False; failure = (failure or '')+'; mount readback: '+str(error)
+        mounted = observation['mounted']
+        cleanup['observations'].append(observation)
+        save('volume-cleanup.json',cleanup)
+        return mounted
+    observe_mount('before-cleanup')
+    if mounted is True and owned_closed():
         try:
             if 'evidence' in globals(): shutil.copytree(evidence,proof/'native-evidence')
             if not success and 'fixture' in globals():
@@ -448,16 +485,44 @@ finally:
                     target = snapshot/path.relative_to(fixture); target.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(path,target,follow_symlinks=False)
             if success:
-                run((['/bin/umount',str(mount)] if actual_os == 'linux' else ['/usr/bin/hdiutil','detach',volume_device]),20,monitor_volume=False)
-                if os.path.ismount(mount): raise RuntimeError('Owned mount remains after successful detach.')
-                mounted = False
-                if actual_os == 'linux': run(['/usr/sbin/losetup','--detach',volume_device],20)
+                session_supervisor.base_env = cleanup_env
+                cleanup.update({'detachAttempted':True,'detachStage':len(steps),'environmentKeys':sorted(cleanup_env),
+                    'temporary':str(cleanup_temporary),'cwd':str(proof),'device':volume_device})
+                try:
+                    run((['/bin/umount',str(mount)] if actual_os == 'linux' else ['/usr/bin/hdiutil','detach',volume_device]),
+                        detach_limit,env=cleanup_env,cwd=proof,monitor_volume=False)
+                except BaseException as error:
+                    success = False; failure = (failure or '')+'; detach: '+str(error)
+                    raise
+                finally:
+                    observe_mount('after-detach')
+                    stage = cleanup['detachStage']
+                    cleanup['detachStatus'] = steps[stage].get('status') if stage < len(steps) else None
+                    cleanup['detachClosureComplete'] = steps[stage].get('closureComplete') if stage < len(steps) else False
+                    save('volume-cleanup.json',cleanup)
+                if not owned_volume_backing_removal_allowed(success,cleanup['detachStatus'],owned_closed(),mounted):
+                    raise RuntimeError('Detach exit, closure and absent mount are required before backing deletion.')
+                if actual_os == 'linux':
+                    try: run(['/usr/sbin/losetup','--detach',volume_device],20,env=cleanup_env,cwd=proof,monitor_volume=False)
+                    finally: observe_mount('after-loop-detach')
+                cleanup['backingRemovalAllowed'] = owned_volume_backing_removal_allowed(success,cleanup['detachStatus'],owned_closed(),mounted)
+                if not cleanup['backingRemovalAllowed']: raise RuntimeError('Backing deletion lacks complete cleanup evidence.')
                 try: mount.rmdir()
                 except FileNotFoundError:
                     if actual_os != 'darwin': raise
                 shutil.rmtree(backing)
+                cleanup['backingRemoved'] = True
         except BaseException as error:
             success = False; failure = (failure or '')+'; cleanup: '+str(error)
+    elif mounted is not False or not owned_closed():
+        success = False; failure = (failure or '')+'; cleanup: Owned mount or process/pipe closure is uncertain.'
+    elif success:
+        success = False; failure = 'Owned mount disappeared before the selected detach.'
+    try: cleanup['backingImagePreserved'] = os.path.lexists(image)
+    except OSError as error:
+        cleanup['backingImagePreserved'] = None; cleanup['backingReadbackFailure'] = str(error)
+        success = False; failure = (failure or '')+'; backing readback: '+str(error)
+    save('volume-cleanup.json',cleanup)
     try:
         index_after = checkout_index_metadata()
         save('checkout-index-after.json',index_after)
@@ -468,8 +533,11 @@ finally:
     except BaseException as error:
         success = False; failure = (failure or '')+'; checkout index readback: '+str(error)
     empty = all(row['empty'] for row in groups) and all(row['empty'] for row in process_observers)
-    success = success and empty
+    closed = owned_closed()
+    success = success and empty and closed
     save('result.json',{'success':success,'failure':failure,'groups':groups,'processObservers':process_observers,'ownedSessionsEmpty':empty,'mountedOwnedVolumePreserved':mounted,
+                        'ownedProcessAndPipeClosureComplete':closed,'observedMountedState':mounted,
+                        'backingImagePreserved':cleanup['backingImagePreserved'],'backingRemoved':cleanup['backingRemoved'],
                         'volumeDevice':volume_device,'mount':str(mount),'elapsedSeconds':time.monotonic()-started,
                         'checkoutIndexOwnerModePreserved':index_owner_mode_preserved,
                         'limits':'No ordinary-user/default-root, ENOSPC, hosted caller or hard-kernel-deadline qualification.'})

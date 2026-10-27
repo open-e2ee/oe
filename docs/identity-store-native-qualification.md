@@ -36,7 +36,14 @@ The full race jobs retain `go test -count=1 -json -race -timeout=9m ./...`.
 They call the wrapper before the existing vet, build and native npm gates.
 The minimum Go job retains the full suite and adds six CGO0 cross-builds.
 The native job runs the complete `./internal/identityattempt` package with CGO disabled.
-No wrapper selects tests with `-run` or filters declared cases.
+Complete execution retains every declared case.
+
+Unix race preparation uses `-run=^$` before the unchanged full execution command.
+It runs package initialization and `TestMain`, but no named tests or fuzz seeds.
+The app hook changes only its child environment and browser function.
+Preparation gives no test coverage or native fixture qualification.
+
+Intel native execution uses three fixed partitions of the maintained complete roster.
 The other package, configuration, formatting and Homebrew gates remain present.
 
 | Profile        | Entry point arguments                                           | Scope                          |
@@ -102,15 +109,26 @@ The temporary ancestor chain must contain no `node_modules` directory.
 
 ## Bounds and evidence
 
-Each wrapper has an 800-second logical outer deadline.
+Unix race, minimum, other native targets and Windows keep an 800-second logical outer deadline.
+Darwin Intel native keeps its 2,400-second owner deadline and 45-minute workflow job.
 Test processes have a 600-second bound and Go's nine-minute test timeout.
 Module preparation has a 120-second bound.
-Each workflow job has a 20-minute bound.
+
+Unix race preparation has a 120-second maximum before the full execution command.
+Its deadline preserves the existing 630-second execution and cleanup reserve.
+The owned fixture and native evidence directories must remain empty afterward.
+An insufficient remaining reserve refuses execution without increasing the owner deadline.
+
+Darwin Intel cold preparation keeps its 480-second maximum.
+Its three 600-second partitions reserve 70 seconds for cleanup, for a 1,870-second execution reserve.
+Each other workflow job keeps its 20-minute bound.
 Artifact upload has a two-minute bound and seven-day retention.
 Cold-cache sufficiency remains unverified until a run completes.
 
 Each stage records its executable hash, argv, raw stdout, raw stderr and exit status.
 Each stream has a 64 MiB limit.
+Each stage also has a combined 128 MiB retained-output limit.
+Observed byte counts remain separate from retained byte counts after an output refusal.
 Each wrapper permits at most 24 child stages.
 Raw child output therefore has a 3 GiB total bound.
 
@@ -122,6 +140,12 @@ Later Go commands use an offline, read-only module graph.
 Unix creates a fresh POSIX session for each child stage.
 Native SID observations include owned children that use separate process groups.
 Cleanup requires two complete empty session observations and checked observer closure.
+The owner uses one five-second settlement deadline for session cleanup, leader wait and remaining pipe drain.
+
+Each receipt records actual leader wait, stdout EOF and stderr EOF separately from session emptiness.
+An incomplete drain retains an explicit failure and never substitutes descriptor closure for EOF.
+Later cleanup errors do not replace the original stage failure.
+Fixture traversal requires session emptiness, actual leader wait and both EOFs.
 
 Windows creates each child suspended and assigns it to a kill-on-close Job Object before resumption.
 Cleanup terminates owned descendants and checks for zero remaining processes.
@@ -140,7 +164,20 @@ The workflow uploads proof files and excludes backing volume images.
 An uncertain volume readback remains an explicit failure.
 
 A successful run detaches only its recorded owned volume.
-It deletes only its new backing image and mount directory.
+Darwin Intel permits one ordinary detach with a 60-second allowance.
+Other targets keep their existing 20-second allowance.
+
+Detach uses an explicit environment and working directory outside the mounted volume.
+No force flag or retry follows a refusal.
+The 60-second allowance is an operational limit, not a measured latency guarantee or proven cure.
+The 70-second cleanup reserve is nominal and does not bound blocked kernel calls.
+
+The wrapper records a fresh mount observation after every detach outcome.
+It records backing-image preservation separately from the observed mount state.
+Only exit zero, complete process and pipe closure, and an absent mount permit backing deletion.
+A failed attempt retains its backing image even if the mount proves absent.
+
+The wrapper deletes only its new backing image and mount directory.
 Native evidence and cleanup records remain in the uploaded artifact.
 The scripts never detach an unrelated disk or repair a user directory.
 
