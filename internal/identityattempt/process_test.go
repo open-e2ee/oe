@@ -500,7 +500,7 @@ func TestAttemptStoreNativeActor(t *testing.T) {
 		}
 	}
 	code := "ok"
-	for _, candidate := range []*Failure{ErrChanged, ErrBusy, ErrUncertain, ErrAlreadyInitialized, ErrFirstUseRequired, ErrPersistence} {
+	for _, candidate := range []*Failure{ErrChanged, ErrBusy, ErrTimeout, ErrUncertain, ErrAlreadyInitialized, ErrFirstUseRequired, ErrPersistence} {
 		if errors.Is(err, candidate) {
 			code = candidate.Code()
 		}
@@ -954,9 +954,10 @@ func TestStoreNativeCancellationWinnerAndLateOriginal(t *testing.T) {
 			if err := lease.Close(); err != nil {
 				t.Fatal(err)
 			}
+			ids := [2]identity.CancellationOperationID{"cancel_001", "cancel_002"}
 			var actors []*storeActorProcess
-			for _, id := range []string{"cancel_001", "cancel_002"} {
-				actors = append(actors, startStoreActor(t, location, storeActorRequest{Operation: "cancel", Kind: kind, Cancellation: id, Start: true}))
+			for _, id := range ids {
+				actors = append(actors, startStoreActor(t, location, storeActorRequest{Operation: "cancel", Kind: kind, Cancellation: string(id), Start: true}))
 			}
 			for _, actor := range actors {
 				if actor.next(t).Stage != "armed" {
@@ -966,30 +967,75 @@ func TestStoreNativeCancellationWinnerAndLateOriginal(t *testing.T) {
 			for _, actor := range actors {
 				actor.continueActor(t)
 			}
+			var outcomes [2]storeActorEvent
+			for index, actor := range actors {
+				outcomes[index] = storeActorDone(t, actor)
+			}
 			winners := 0
-			for _, actor := range actors {
-				done := storeActorDone(t, actor)
+			var winnerID, loserID identity.CancellationOperationID
+			for index, done := range outcomes {
 				if done.Code == "ok" {
 					winners++
-				} else if done.Code != ErrChanged.Code() {
+					winnerID = ids[index]
+				} else if done.Code == ErrChanged.Code() || done.Code == ErrBusy.Code() {
+					loserID = ids[index]
+				} else {
 					t.Fatal("unexpected cancellation outcome", done.Code)
 				}
 			}
 			if winners != 1 {
 				t.Fatal("cancellation did not elect one durable ID")
 			}
-			lease, err := store.BeginExisting(storeContext(t), original.Slot())
+			ctx := storeContext(t)
+			lease, err := store.BeginExisting(ctx, original.Slot())
 			if err != nil {
 				t.Fatal(err)
 			}
-			enriched, err := lease.Read(storeContext(t))
+			t.Cleanup(func() {
+				if err := lease.Close(); err != nil {
+					t.Error("cancellation observation lease close failed", err)
+				}
+			})
+			enriched, err := lease.Read(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			attempt, _ := enriched.RetainedAttempt()
+			attempt, err := enriched.RetainedAttempt()
+			if err != nil || attempt == nil {
+				t.Fatal("cancellation winner lost the retained attempt", err)
+			}
 			id, present := attempt.CancellationID()
-			if !present || id != "cancel_001" && id != "cancel_002" || enriched.Revision() != original.Revision()+1 {
+			if !present || id != winnerID || enriched.Revision() != original.Revision()+1 {
 				t.Fatal("durable cancellation winner changed")
+			}
+			originalAttempt, err := original.RetainedAttempt()
+			if err != nil || originalAttempt == nil {
+				t.Fatal("original fixture lost its retained attempt", err)
+			}
+			expectedAttempt, err := originalAttempt.WithCancellation(winnerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected, err := NewOccupiedEnvelope(original.Slot(), original.Revision()+1, expectedAttempt)
+			if err != nil || !enriched.Equal(expected) {
+				t.Fatal("cancellation changed the complete retained original", err)
+			}
+			limit := int64(len(recordEncoded(t, enriched)))
+			before, err := readBounded(ctx, lease.namespace.records, lease.stem+".json", limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A bounded acquisition refusal does not prove rejection of the
+			// conflicting ID. Check that ID after both contenders have joined.
+			_, err = lease.AppendCancellation(ctx, enriched, loserID)
+			requireStoreError(t, err, ErrChanged)
+			after, err := lease.Read(ctx)
+			if err != nil || !after.Equal(enriched) {
+				t.Fatal("losing cancellation changed the complete winner", err)
+			}
+			afterBytes, err := readBounded(ctx, lease.namespace.records, lease.stem+".json", limit)
+			if err != nil || !bytes.Equal(before, afterBytes) {
+				t.Fatal("losing cancellation changed persisted winner bytes", err)
 			}
 			if err := lease.Close(); err != nil {
 				t.Fatal(err)
@@ -1106,11 +1152,53 @@ func TestStoreNativeSelectedAnchorConcurrentAndInterrupted(t *testing.T) {
 			second.finish(t, false)
 			t.Fatal("concurrent safe existing anchor did not permit namespace election", secondDone.Code, secondDone.ErrorClass)
 		}
+		second.finish(t, false)
+		ctx := storeContext(t)
+		observeWinner := func() [4]fileStamp {
+			t.Helper()
+			n, err := openNamespace(ctx, location)
+			if err != nil {
+				t.Fatal("winner namespace admission failed", err)
+			}
+			defer func() {
+				if err := n.Close(); err != nil {
+					t.Fatal("winner namespace observation close failed", err)
+				}
+			}()
+			anchor, err := os.Open(location.anchor)
+			if err != nil {
+				t.Fatal("winner anchor observation open failed", err)
+			}
+			anchorStamp, check := nativeFileStamp(anchor, true, true)
+			closed := anchor.Close()
+			if check != nil || closed != nil {
+				t.Fatal("winner anchor observation failed", check, closed)
+			}
+			rootStamp, err := nativeFileStamp(n.root.file, true, true)
+			if err != nil {
+				t.Fatal("winner namespace identity unavailable", err)
+			}
+			lockStamp, err := nativeFileStamp(n.rootLock, false, true)
+			if err != nil {
+				t.Fatal("winner lock identity unavailable", err)
+			}
+			// openNamespace checks the exact canonical manifest and retains
+			// its identity. No observation handle survives this call.
+			return [4]fileStamp{anchorStamp, rootStamp, lockStamp, n.readyStamp}
+		}
+		winner := observeWinner()
 		first.continueActor(t)
 		done := storeActorDone(t, first)
-		second.finish(t, false)
-		if done.Code != ErrAlreadyInitialized.Code() {
+		if done.Code != ErrAlreadyInitialized.Code() && done.Code != ErrTimeout.Code() {
 			t.Fatal("first anchor creator replaced namespace winner", done.Code, done.ErrorClass)
+		}
+		if after := observeWinner(); after != winner {
+			t.Fatal("paused anchor creator changed the durable namespace winner")
+		}
+		_, err := BootstrapFirstUse(ctx, location, NamespaceNeverUsed)
+		requireStoreError(t, err, ErrAlreadyInitialized)
+		if after := observeWinner(); after != winner {
+			t.Fatal("repeated bootstrap changed the durable namespace winner")
 		}
 	})
 	t.Run("anchor-exit-no-admission", func(t *testing.T) {
