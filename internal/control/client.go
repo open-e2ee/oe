@@ -627,10 +627,16 @@ func decodeResponse(response *http.Response, output any) error {
 	limited := io.LimitReader(response.Body, 1<<20)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var problem apiError
-		_ = json.NewDecoder(limited).Decode(&problem)
+		decodeErr := json.NewDecoder(limited).Decode(&problem)
 		message := strings.TrimSpace(cmp.Or(problem.Message, problem.Error))
 		if message == "" {
 			message = http.StatusText(response.StatusCode)
+		}
+		if decodeErr == nil && response.StatusCode == http.StatusUnauthorized && problem.Code == "" && message == "Protected by Vercel Authentication" {
+			return &APIError{
+				Status: response.StatusCode, Code: "DEPLOYMENT_PROTECTION_REQUIRED",
+				Message: "Vercel deployment protection blocked the control API. Ask the deployment owner for a valid bypass and set OE_PROTECTION_BYPASS. Then retry.",
+			}
 		}
 		return &APIError{
 			Status: response.StatusCode, Code: problem.Code, Message: message,

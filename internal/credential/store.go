@@ -46,7 +46,7 @@ func (Keychain) Get(profile string) (Credential, error) {
 	if err := json.Unmarshal([]byte(encoded), &value); err != nil {
 		return Credential{}, fmt.Errorf("decode OS keychain credential: %w", err)
 	}
-	if value.AccessToken == "" {
+	if value.AccessToken == "" && strings.TrimSpace(value.ProtectionBypass) == "" {
 		return Credential{}, errors.New("OS keychain credential is empty")
 	}
 	value.Source = "keychain"
@@ -54,8 +54,8 @@ func (Keychain) Get(profile string) (Credential, error) {
 }
 
 func (Keychain) Set(profile string, value Credential) error {
-	if value.AccessToken == "" {
-		return errors.New("refuse to store an empty access token")
+	if value.AccessToken == "" && strings.TrimSpace(value.ProtectionBypass) == "" {
+		return errors.New("refuse to store an empty credential")
 	}
 	copyValue := value
 	copyValue.Source = ""
@@ -89,7 +89,27 @@ func Resolve(store Store, profile string) (Credential, error) {
 			Source:      "environment",
 		}, nil
 	}
-	return store.Get(profile)
+	value, err := store.Get(profile)
+	if err == nil && value.AccessToken == "" {
+		return Credential{}, ErrNotFound
+	}
+	return value, err
+}
+
+// DeleteSession removes session credentials but keeps the independent bypass
+// needed to reach the control API for a new login. Explicit logout uses Delete.
+func DeleteSession(store Store, profile string) error {
+	value, err := store.Get(profile)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(value.ProtectionBypass) != "" {
+		return store.Set(profile, Credential{ProtectionBypass: value.ProtectionBypass})
+	}
+	return store.Delete(profile)
 }
 
 // Location names where a credential comes from. Key is stable for a program
