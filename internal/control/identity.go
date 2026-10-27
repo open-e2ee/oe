@@ -16,17 +16,18 @@ var identityFailures = map[string]struct {
 	status  int
 	message string
 }{
-	"AUTHENTICATION_REQUIRED":      {401, "Run oe auth login first."},
-	"INVALID_SESSION":              {401, "Run oe auth login again."},
-	"ORGANIZATION_REQUIRED":        {409, "Select an Organization with oe org switch."},
-	"PROJECT_NOT_FOUND":            {404, "Relay project not found."},
-	"ENVIRONMENT_NOT_FOUND":        {404, "Relay environment not found."},
-	"IMPERSONATED_SESSION":         {403, "This session cannot perform the check."},
-	"AUTHORITY_UNAVAILABLE":        {503, "Current resource authority is unavailable."},
-	"IDENTITY_CHECK_INVALID":       {400, "The identity check input is invalid."},
-	"IDENTITY_PROFILE_UNSUPPORTED": {400, "This identity profile is not supported by this check."},
-	"IDENTITY_ASSERTION_INVALID":   {400, "The test assertion is invalid. Request a fresh assertion and check the public profile."},
-	"IDENTITY_CHECK_UNAVAILABLE":   {503, "The identity check is unavailable."},
+	"AUTHENTICATION_REQUIRED":        {401, "Run oe auth login first."},
+	"INVALID_SESSION":                {401, "Run oe auth login again."},
+	"ORGANIZATION_REQUIRED":          {409, "Select an Organization with oe org switch."},
+	"PROJECT_NOT_FOUND":              {404, "Relay project not found."},
+	"ENVIRONMENT_NOT_FOUND":          {404, "Relay environment not found."},
+	"IMPERSONATED_SESSION":           {403, "This session cannot perform the check."},
+	"AUTHORITY_UNAVAILABLE":          {503, "Current resource authority is unavailable."},
+	"IDENTITY_CHECK_INVALID":         {400, "The identity check input is invalid."},
+	"IDENTITY_PROFILE_UNSUPPORTED":   {400, "This identity profile is not supported by this check."},
+	"IDENTITY_ASSERTION_INVALID":     {400, "The test assertion is invalid. Request a fresh assertion and check the public profile."},
+	"IDENTITY_CHECK_UNAVAILABLE":     {503, "The identity check is unavailable."},
+	"DEPLOYMENT_PROTECTION_REQUIRED": {401, "Vercel deployment protection blocked the identity check. Set OE_PROTECTION_BYPASS to a valid bypass and retry."},
 }
 
 func identityFailure(code string) error {
@@ -61,6 +62,12 @@ func (c *Client) CheckIdentity(ctx context.Context, credential CredentialRequest
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
+	if c.protectionBypass != "" {
+		request.Header.Set("x-vercel-protection-bypass", c.protectionBypass)
+	}
+	if c.cliVersion != "" {
+		request.Header.Set("OpenE2EE-CLI-Version", c.cliVersion)
+	}
 	client := *c.http
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := client.Do(request)
@@ -73,10 +80,11 @@ func (c *Client) CheckIdentity(ctx context.Context, credential CredentialRequest
 		return result, identityFailure("IDENTITY_CHECK_UNAVAILABLE")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var failure struct {
-			Code string `json:"code"`
-		}
+		var failure apiError
 		if json.Unmarshal(data, &failure) == nil {
+			if failure.deploymentProtection(response.StatusCode) {
+				return result, identityFailure("DEPLOYMENT_PROTECTION_REQUIRED")
+			}
 			if allowed, ok := identityFailures[failure.Code]; ok && allowed.status == response.StatusCode {
 				return result, identityFailure(failure.Code)
 			}

@@ -636,19 +636,28 @@ func (e apiError) vercelProtectionEnvelope() bool {
 		json.Unmarshal(e.Protection, &protection) == nil && protection.VercelAuthEnabled
 }
 
+func (e apiError) deploymentProtection(status int) bool {
+	if status != http.StatusUnauthorized || e.Code != "" {
+		return false
+	}
+	var errorMessage string
+	legacyError := len(e.Error) == 0 || json.Unmarshal(e.Error, &errorMessage) == nil
+	return strings.TrimSpace(cmp.Or(e.Message, errorMessage)) == "Protected by Vercel Authentication" &&
+		(legacyError || e.vercelProtectionEnvelope())
+}
+
 func decodeResponse(response *http.Response, output any) error {
 	limited := io.LimitReader(response.Body, 1<<20)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var problem apiError
 		decodeErr := json.NewDecoder(limited).Decode(&problem)
 		var errorMessage string
-		legacyError := len(problem.Error) == 0 || json.Unmarshal(problem.Error, &errorMessage) == nil
+		_ = json.Unmarshal(problem.Error, &errorMessage)
 		message := strings.TrimSpace(cmp.Or(problem.Message, errorMessage))
 		if message == "" {
 			message = http.StatusText(response.StatusCode)
 		}
-		if decodeErr == nil && response.StatusCode == http.StatusUnauthorized && problem.Code == "" && message == "Protected by Vercel Authentication" &&
-			(legacyError || problem.vercelProtectionEnvelope()) {
+		if decodeErr == nil && problem.deploymentProtection(response.StatusCode) {
 			return &APIError{
 				Status: response.StatusCode, Code: "DEPLOYMENT_PROTECTION_REQUIRED",
 				Message: "Vercel deployment protection blocked the control API. Ask the deployment owner for a valid bypass and set OE_PROTECTION_BYPASS. Then retry.",
