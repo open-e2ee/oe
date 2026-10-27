@@ -38,13 +38,13 @@ class SessionTests(unittest.TestCase):
         self.owner = OWNER.IdentitySessionController(self.directory,self.directory,environment,time.monotonic()+15,
             stream_limit=65536,combined_limit=131072,stage_limit=1)
 
-    def run_child(self, source, limit=2, expected_failure=False):
+    def run_child(self, source, limit=2, expected_failure=False, progress=None):
         argv = [sys.executable,'-I','-c',source]
         if expected_failure:
             with self.assertRaisesRegex(RuntimeError,'A bounded stage failed'):
-                self.owner.run(argv,limit)
+                self.owner.run(argv,limit,progress=progress)
         else:
-            self.owner.run(argv,limit)
+            self.owner.run(argv,limit,progress=progress)
         self.assertEqual(len(self.owner.steps),1)
         row = self.owner.steps[0]
         self.assertEqual(row['closureDeadlineMonotonic']-row['closureStartedMonotonic'],5)
@@ -87,7 +87,14 @@ signal.signal(signal.SIGTERM,terminate)
 os.write(1,b'ready\\n')
 time.sleep(20)
 """
-        row = self.run_child(source,expected_failure=True)
+        checkpoints = []
+        row = self.run_child(source,expected_failure=True,progress=checkpoints.append)
+        before = [item for item in checkpoints if item.get('beforeSettlement') is True]
+        self.assertEqual(len(before),1)
+        self.assertIsNone(before[0]['leaderStatusBeforeSettlement'])
+        self.assertEqual(before[0]['stdoutBytes'],len(b'ready\n'))
+        self.assertEqual(before[0]['stderrBytes'],0)
+        self.assertLessEqual(before[0]['atMonotonic'],self.owner.groups[0]['observations'][0]['atMonotonic'])
         self.assertEqual(row['reason'],'PROCESS_DEADLINE')
         self.assertEqual(row['status'],0)
         self.assert_closed(row)

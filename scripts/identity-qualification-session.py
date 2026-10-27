@@ -209,13 +209,15 @@ class IdentitySessionController:
                     if len(chunk) > capacity: record_failure('CAPTURE_LIMIT')
                 if stream[1] > self.stream_limit or sum(value[1] for value in streams.values()) > self.combined_limit:
                     record_failure('OUTPUT_LIMIT')
-        def report_progress(ended=False):
+        def report_progress(ended=False, before_settlement=False):
             if progress is None: return
             now = time.monotonic()
             snapshot = {'atMonotonic':now,'sid':process.pid,'stage':number,
                 'startMonotonic':row['startMonotonic'],'effectiveDeadlineMonotonic':deadline,
                 'firstByteMonotonic':first_byte,'lastByteMonotonic':last_byte,
                 'stdoutBytes':streams['stdout'][1],'stderrBytes':streams['stderr'][1]}
+            if before_settlement:
+                snapshot.update({'beforeSettlement':True,'leaderStatusBeforeSettlement':process.poll()})
             if ended:
                 snapshot.update({'endedMonotonic':now,'ownedSessionEmpty':session['empty'],
                     'stdoutEOF':eof['stdout'],'stderrEOF':eof['stderr'],'leaderWaited':leader_waited,
@@ -241,6 +243,9 @@ class IdentitySessionController:
         finally:
             closure_started = time.monotonic()
             closure_deadline = closure_started+5
+            if progress is not None:
+                try: report_progress(before_settlement=True)
+                except BaseException as error: record_failure('NATIVE_DIAGNOSTIC_FAILURE',str(error))
             try: empty = self.finish_session(process,session,closure_deadline)
             except BaseException as error:
                 empty = False

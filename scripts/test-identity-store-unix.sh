@@ -4,7 +4,7 @@ set -euo pipefail
 [[ ${GITHUB_ACTIONS:-} == true && ${RUNNER_ENVIRONMENT:-} == github-hosted ]] || {
   echo 'A disposable GitHub-hosted runner is required.' >&2; exit 1;
 }
-[[ $# == 3 && $1 =~ ^(race|minimum|native)$ && $2 =~ ^(linux|darwin)$ && $3 =~ ^(amd64|arm64)$ ]] || exit 2
+[[ $# == 3 && $1 =~ ^(race|minimum|native|cleanup-diagnostic)$ && $2 =~ ^(linux|darwin)$ && $3 =~ ^(amd64|arm64)$ ]] || exit 2
 script_path=$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")
 python_path=$(command -v python3)
 if [[ $(id -u) != 0 ]]; then
@@ -44,9 +44,13 @@ if actual_os == 'darwin':
 if (actual_os, actual_arch) != (expected_os, expected_arch):
     raise SystemExit('The actual native OS/architecture differs from the job target.')
 intel_native = profile == 'native' and actual_os == 'darwin' and actual_arch == 'amd64'
-if intel_native: outer_deadline = started + 2400
-cleanup_reserve = 70 if intel_native else 30
-detach_limit = 60 if intel_native else 20
+cleanup_diagnostic = profile == 'cleanup-diagnostic'
+if cleanup_diagnostic and (actual_os,actual_arch) != ('darwin','amd64'):
+    raise SystemExit('Cleanup diagnosis requires an actual Darwin Intel host.')
+intel_cleanup = intel_native or cleanup_diagnostic
+if intel_cleanup: outer_deadline = started + 2400
+cleanup_reserve = 70 if intel_cleanup else 30
+detach_limit = 60 if intel_cleanup else 20
 nonce = uuid.uuid4().hex
 mount = pathlib.Path('/Volumes' if actual_os == 'darwin' else '/') / ('ca8-store-run-' + nonce)
 backing = proof / 'volume'
@@ -85,6 +89,20 @@ def owned_volume_backing_removal_allowed(successful, detach_status, closed, moun
     return (successful is True and type(detach_status) is int and detach_status == 0
         and closed is True and mount_state is False)
 
+def capture_source_inputs():
+    git = shutil.which('git',path=base_env['PATH'])
+    if not git: raise RuntimeError('The installed Git tool is missing.')
+    tracked = run([git,'-c','safe.directory='+str(root),'ls-files','-z'],capture=True).decode().split('\0')
+    files = {}
+    for name in tracked:
+        if not name: continue
+        path = root/name
+        if path.is_symlink() or not path.is_file() or root not in path.resolve().parents: raise RuntimeError('Uncertain tracked source input.')
+        files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    save('source-inputs.json',{'head':run([git,'-c','safe.directory='+str(root),'rev-parse','HEAD'],capture=True).decode().strip(),
+        'files':files,'python':sys.version,'pythonSHA256':hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest()})
+    return files
+
 def checkout_index_metadata():
     directory = root / '.git'
     if not stat.S_ISDIR(directory.lstat().st_mode): raise RuntimeError('Exact checkout Git directory required.')
@@ -107,8 +125,9 @@ session_supervisor = session_module.IdentitySessionController(root, proof, base_
     space_floor_reached=lambda: mounted and shutil.disk_usage(mount).free < 128*1024*1024)
 def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=None, phase=None, phase_deadline=None):
     phases = {'native': ['native-compile','native-tool-prepare','native-build-info','native-execution'],
-              'race': ['full-cli-prewarm','full-race-preparation','full-race-execution']}
-    if intel_native: phases['native'] += ['module-preparation','native-roster-discovery','native-partition-1','native-partition-2','native-partition-3']
+              'race': ['full-cli-prewarm','full-race-preparation','full-race-execution'],
+              'cleanup-diagnostic':['native-detach']}
+    if intel_native: phases['native'] += ['module-preparation','native-roster-discovery','native-partition-1','native-partition-2','native-partition-3','native-detach']
     if phase is not None and phase not in phases.get(profile, []):
         raise RuntimeError('Invalid test diagnostic phase.')
     diagnostic = None
@@ -121,13 +140,16 @@ def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=Non
         if len(diagnostic['samples']) >= 64: raise RuntimeError('Native diagnostic sample bound reached.')
         now = snapshot['atMonotonic']
         usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-        capacity = shutil.disk_usage(mount)
+        capacity = None if phase == 'native-detach' else shutil.disk_usage(mount)
         diagnostic.update({key:snapshot[key] for key in ['sid','stage','effectiveDeadlineMonotonic','firstByteMonotonic','lastByteMonotonic']})
         diagnostic['samples'].append({'atMonotonic':now,'atUnixSeconds':time.time(),
             'stdoutBytes':snapshot['stdoutBytes'],'stderrBytes':snapshot['stderrBytes'],
             'silenceSeconds':now-(snapshot['lastByteMonotonic'] or snapshot['startMonotonic']),
             'globalRemainingSeconds':outer_deadline-now,'loadAverage':list(os.getloadavg()),
-            'capacityBytes':{'total':capacity.total,'used':capacity.used,'free':capacity.free},
+            'capacityBytes':None if capacity is None else {'total':capacity.total,'used':capacity.used,'free':capacity.free},
+            'observedMountedState':os.path.ismount(mount) if phase == 'native-detach' else None,
+            'beforeSettlement':snapshot.get('beforeSettlement',False),
+            'leaderStatusBeforeSettlement':snapshot.get('leaderStatusBeforeSettlement'),
             'reapedChildren':{'userSeconds':usage.ru_utime,'systemSeconds':usage.ru_stime,
                 'maxRSS':usage.ru_maxrss,'inputBlocks':usage.ru_inblock,'outputBlocks':usage.ru_oublock}})
         if phase == 'module-preparation':
@@ -138,6 +160,48 @@ def run(argv, limit=30, env=None, capture=False, monitor_volume=True, *, cwd=Non
         save(f"native-stage-{snapshot['stage']:02d}-progress.json",diagnostic)
     return session_supervisor.run(argv,limit,env,capture,monitor_volume,
         cwd=cwd,phase_deadline=phase_deadline,progress=sample_progress if phase is not None else None)
+
+def post_detach_image_info(detach_stage):
+    receipt = {'state':'UNKNOWN','attempted':False,'image':str(image),'device':volume_device,
+        'scope':'POST_TERMINATION_ONLY','utilityStage':detach_stage,
+        'inFlightAttachment':'UNVERIFIED','earlierVolumeUsers':'UNVERIFIED'}
+    remaining = outer_deadline-time.monotonic()
+    receipt['remainingOwnerSeconds'] = remaining
+    if detach_stage >= len(steps) or not owned_closed() or steps[detach_stage].get('closureComplete') is not True:
+        receipt['reason'] = 'UTILITY_OR_PIPE_CLOSURE_UNCERTAIN'
+    elif remaining < 35 or len(steps) >= session_supervisor.stage_limit:
+        receipt['reason'] = 'METADATA_STAGE_NOT_ADMITTED'
+    else:
+        stage = len(steps)
+        receipt.update({'attempted':True,'stage':stage,'limitSeconds':30,
+            'utilityClosureEndedMonotonic':steps[detach_stage].get('closureEndedMonotonic'),
+            'ownerDeadlineMonotonic':outer_deadline,'executionDeadlineMonotonic':outer_deadline-5})
+        try:
+            raw = run(['/usr/bin/hdiutil','info','-plist'],30,env=cleanup_env,cwd=proof,
+                capture=True,monitor_volume=False,phase_deadline=outer_deadline-5)
+            info = plistlib.loads(raw)
+            entries = info.get('images') if isinstance(info,dict) else None
+            if not isinstance(entries,list): raise ValueError('Image list is missing.')
+            path_matches,device_matches = [],[]
+            for entry in entries:
+                if not isinstance(entry,dict) or not isinstance(entry.get('image-path'),str) or not isinstance(entry.get('system-entities'),list):
+                    raise ValueError('Image association is incomplete.')
+                entities = entry['system-entities']
+                if any(not isinstance(value,dict) or not isinstance(value.get('dev-entry'),str) for value in entities):
+                    raise ValueError('Image device association is incomplete.')
+                if entry['image-path'] == str(image): path_matches.append(entry)
+                if any(value['dev-entry'] == volume_device for value in entities): device_matches.append(entry)
+            receipt.update({'imagePathMatches':len(path_matches),'deviceMatches':len(device_matches)})
+            if len(path_matches) == 1 and len(device_matches) == 1 and path_matches[0] is device_matches[0]:
+                receipt.update({'state':'REPORTED_ATTACHED','systemEntities':path_matches[0]['system-entities']})
+            elif not path_matches and not device_matches:
+                receipt['state'] = 'NOT_REPORTED_ATTACHED'
+            else: receipt['reason'] = 'AMBIGUOUS_IMAGE_DEVICE_ASSOCIATION'
+        except BaseException as error: receipt['reason'] = str(error)
+        receipt.update({'status':steps[stage].get('status') if stage < len(steps) else None,
+            'closureComplete':steps[stage].get('closureComplete') if stage < len(steps) else False})
+    save('post-detach-image-info.json',receipt)
+    return receipt
 
 def native_executable_input(path):
     path = pathlib.Path(path)
@@ -342,106 +406,105 @@ try:
                      'XDG_CACHE_HOME':str(cache/'xdg'),'NODE_COMPILE_CACHE':str(cache/'node'),
                      'OE_IDENTITY_STORE_FIXTURE_ROOT':str(fixture),'OE_IDENTITY_STORE_EVIDENCE_ROOT':str(evidence),
                      'OE_IDENTITY_STORE_PRIVILEGED_FIXTURES':'1','OE_IDENTITY_STORE_FOREIGN_UID':str(caller_uid),'OE_OPERATION_ID':''})
-    go = shutil.which('go',path=base_env['PATH'])
-    if not go: raise RuntimeError('The installed Go tool is missing.')
-    save('native.json',{'uid':os.geteuid(),'gid':os.getegid(),'groups':os.getgroups(),'foreignUID':caller_uid,
-                       'os':actual_os,'arch':actual_arch,'platform':platform.platform(),'filesystem':filesystem,
-                       'ancestors':native_rows,'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
-                       'profile':profile,'sourceHashes':source_hashes,'volumeBytes':4*1024*1024*1024})
-    host = json.loads(run([go,'env','-json','GOHOSTOS','GOHOSTARCH','GOVERSION'],capture=True))
-    version = 'go1.26.10' if profile == 'minimum' else 'go1.27.3'
-    if (host['GOHOSTOS'],host['GOHOSTARCH'],host['GOVERSION']) != (expected_os,expected_arch,version): raise RuntimeError('Go host/version is not the exact native target.')
-    save('go-host.json',host)
-    node = shutil.which('node',path=base_env['PATH'])
-    if not node or run([node,'--version'],capture=True).decode().strip() != 'v24.22.1': raise RuntimeError('The maintained Node version is required.')
-    git = shutil.which('git',path=base_env['PATH'])
-    if not git: raise RuntimeError('The installed Git tool is missing.')
-    tracked = run([git,'-c','safe.directory='+str(root),'ls-files','-z'],capture=True).decode().split('\0')
-    source_files = {}
-    for name in tracked:
-        if not name: continue
-        path = root/name
-        if path.is_symlink() or not path.is_file() or root not in path.resolve().parents: raise RuntimeError('Uncertain tracked source input.')
-        source_files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-    save('source-inputs.json',{'head':run([git,'-c','safe.directory='+str(root),'rev-parse','HEAD'],capture=True).decode().strip(),'files':source_files, 'python':sys.version,'pythonSHA256':hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest()})
-    module_argv = [go,'mod','download','-json']
-    module_phase = None
-    if intel_native:
-        cache_spec = importlib.util.spec_from_file_location('identity_module_cache',root/'scripts/identity-module-cache.py')
-        cache_module = importlib.util.module_from_spec(cache_spec); cache_spec.loader.exec_module(cache_module)
-        module_cache = cache_module.ModuleCacheDiagnostic(cache/'modules',(root/'go.mod').read_bytes(),source_hashes['go.mod'])
-        module_argv.append('-x')
-        module_phase = 'module-preparation'
-        save('module-preparation-inputs.json',{'environmentKeys':sorted(base_env),
-            'sourceHashes':source_hashes,'cachePolicy':'fresh owned mounted cache; no restored dependency cache',
-            'limitSeconds':120,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
-            'cacheTargets':module_cache.targets})
-    run(module_argv,120,phase=module_phase)
-    if any(hashlib.sha256((root/p).read_bytes()).hexdigest() != value for p,value in source_hashes.items()): raise RuntimeError('Module preparation changed a frozen source file.')
-    base_env.update({'GOPROXY':'off','GOSUMDB':'off','GOFLAGS':'-mod=readonly'})
-    if profile == 'race':
-        compiler = shutil.which('cc',path=base_env['PATH'])
-        if actual_os != 'darwin' and not compiler: raise RuntimeError('An installed race compiler is required.')
-        if compiler: base_env['CC'] = compiler
-        base_env['CGO_ENABLED'] = '1'
-        # Acceptance builds the normal CLI inside the race suite. Prepare its
-        # cold dependencies before that existing bounded build runs.
-        warm_deadline = min(time.monotonic()+120,outer_deadline-630)
-        warm_remaining = warm_deadline-time.monotonic()
-        if warm_remaining <= 0: raise RuntimeError('No full-suite cold-build reserve remains.')
-        run([go,'build','-o',str(cache/'acceptance-oe'),'./cmd/oe'],warm_remaining,
-            phase='full-cli-prewarm',phase_deadline=warm_deadline)
-        preparation_deadline = min(time.monotonic()+120,outer_deadline-630)
-        preparation_remaining = preparation_deadline-time.monotonic()
-        if preparation_remaining <= 0: raise RuntimeError('No full-suite race preparation reserve remains.')
-        run([go,'test','-count=1','-json','-race','-timeout=9m','-run=^$','./...'],preparation_remaining,
-            phase='full-race-preparation',phase_deadline=preparation_deadline)
-        if any(fixture.iterdir()) or any(evidence.iterdir()):
-            raise RuntimeError('Race preparation changed the owned fixture or native evidence directory.')
-        if outer_deadline-time.monotonic() < 630: raise RuntimeError('Full race execution and cleanup reserve unavailable.')
-        run([go,'test','-count=1','-json','-race','-timeout=9m','./...'],600,phase='full-race-execution')
-    elif profile == 'minimum':
-        base_env['CGO_ENABLED'] = '0'
-        run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
+    if cleanup_diagnostic:
+        source_files = capture_source_inputs()
+        save('cleanup-diagnostic.json',{'scope':'NO_TEST_CREDIT','profile':profile,
+            'os':actual_os,'arch':actual_arch,'platform':platform.platform(),
+            'image':str(image),'device':volume_device,'mountedDevice':mounted_device,
+            'filesystem':filesystem,'ancestors':native_rows,'volumeBytes':4*1024*1024*1024,
+            'enginesInvoked':[],'nativeTestNodesRun':0})
     else:
-        base_env['CGO_ENABLED'] = '0'
-        cold_seconds,execution_reserve = (480,1800+cleanup_reserve) if intel_native else (120,630)
-        cold_deadline = min(time.monotonic()+cold_seconds,outer_deadline-execution_reserve)
-        def cold_limit():
-            remaining = cold_deadline-time.monotonic()
-            if remaining <= 0: raise RuntimeError('No cold-phase budget remains before the full native execution reserve.')
-            return remaining
-        test_binary = cache/'identityattempt.test'
-        compile_argv = [go,'test','-c','-o',str(test_binary),'./internal/identityattempt']
-        if intel_native: compile_argv.insert(3,'-x')
-        run(compile_argv,cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
-        tool_output = run([go,'tool','-n','test2json'],cold_limit(),capture=True,phase='native-tool-prepare',phase_deadline=cold_deadline).decode('utf-8',errors='strict').splitlines()
-        if len(tool_output) != 1 or len(tool_output[0]) > 4096: raise RuntimeError('Ambiguous maintained test2json input.')
-        test2json_path = pathlib.Path(tool_output[0])
-        binary_info = run([go,'version','-m',str(test_binary)],cold_limit(),capture=True,phase='native-build-info',phase_deadline=cold_deadline).decode('utf-8',errors='strict')
-        native_inputs = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
-                         'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
-                         'buildInfo':binary_info,'host':host,'CGO_ENABLED':'0',
-                         'sourceHashes':source_files,'coldPhaseSeconds':cold_seconds,'executionSeconds':600,
-                         'executionReserveSeconds':execution_reserve,'cleanupReserveSeconds':cleanup_reserve,
-                         'globalSeconds':2400 if intel_native else 800}
-        save('native-test-inputs-before.json',native_inputs)
-        if native_inputs['binary']['uid'] != 0: raise RuntimeError('Compiled test binary is not owned by the fixture caller.')
-        if any(hashlib.sha256((root/name).read_bytes()).hexdigest() != digest for name,digest in source_files.items()): raise RuntimeError('Native compilation changed frozen source inputs.')
-        if outer_deadline-time.monotonic() < execution_reserve: raise RuntimeError('Full native execution and cleanup reserve unavailable.')
-        package_dir = root/'internal/identityattempt'
-        execution_env = dict(base_env,PWD=str(package_dir),PATH=str(pathlib.Path(go).resolve().parent)+os.pathsep+base_env['PATH'])
+        go = shutil.which('go',path=base_env['PATH'])
+        if not go: raise RuntimeError('The installed Go tool is missing.')
+        save('native.json',{'uid':os.geteuid(),'gid':os.getegid(),'groups':os.getgroups(),'foreignUID':caller_uid,
+                           'os':actual_os,'arch':actual_arch,'platform':platform.platform(),'filesystem':filesystem,
+                           'ancestors':native_rows,'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
+                           'profile':profile,'sourceHashes':source_hashes,'volumeBytes':4*1024*1024*1024})
+        host = json.loads(run([go,'env','-json','GOHOSTOS','GOHOSTARCH','GOVERSION'],capture=True))
+        version = 'go1.26.10' if profile == 'minimum' else 'go1.27.3'
+        if (host['GOHOSTOS'],host['GOHOSTARCH'],host['GOVERSION']) != (expected_os,expected_arch,version): raise RuntimeError('Go host/version is not the exact native target.')
+        save('go-host.json',host)
+        node = shutil.which('node',path=base_env['PATH'])
+        if not node or run([node,'--version'],capture=True).decode().strip() != 'v24.22.1': raise RuntimeError('The maintained Node version is required.')
+        source_files = capture_source_inputs()
+        module_argv = [go,'mod','download','-json']
+        module_phase = None
         if intel_native:
-            run_intel_partitions(intel_module,intel_roster,cold_deadline,execution_env,package_dir)
+            cache_spec = importlib.util.spec_from_file_location('identity_module_cache',root/'scripts/identity-module-cache.py')
+            cache_module = importlib.util.module_from_spec(cache_spec); cache_spec.loader.exec_module(cache_module)
+            module_cache = cache_module.ModuleCacheDiagnostic(cache/'modules',(root/'go.mod').read_bytes(),source_hashes['go.mod'])
+            module_argv.append('-x')
+            module_phase = 'module-preparation'
+            save('module-preparation-inputs.json',{'environmentKeys':sorted(base_env),
+                'sourceHashes':source_hashes,'cachePolicy':'fresh owned mounted cache; no restored dependency cache',
+                'limitSeconds':120,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
+                'cacheTargets':module_cache.targets})
+        run(module_argv,120,phase=module_phase)
+        if any(hashlib.sha256((root/p).read_bytes()).hexdigest() != value for p,value in source_hashes.items()): raise RuntimeError('Module preparation changed a frozen source file.')
+        base_env.update({'GOPROXY':'off','GOSUMDB':'off','GOFLAGS':'-mod=readonly'})
+        if profile == 'race':
+            compiler = shutil.which('cc',path=base_env['PATH'])
+            if actual_os != 'darwin' and not compiler: raise RuntimeError('An installed race compiler is required.')
+            if compiler: base_env['CC'] = compiler
+            base_env['CGO_ENABLED'] = '1'
+            # Acceptance builds the normal CLI inside the race suite. Prepare its
+            # cold dependencies before that existing bounded build runs.
+            warm_deadline = min(time.monotonic()+120,outer_deadline-630)
+            warm_remaining = warm_deadline-time.monotonic()
+            if warm_remaining <= 0: raise RuntimeError('No full-suite cold-build reserve remains.')
+            run([go,'build','-o',str(cache/'acceptance-oe'),'./cmd/oe'],warm_remaining,
+                phase='full-cli-prewarm',phase_deadline=warm_deadline)
+            preparation_deadline = min(time.monotonic()+120,outer_deadline-630)
+            preparation_remaining = preparation_deadline-time.monotonic()
+            if preparation_remaining <= 0: raise RuntimeError('No full-suite race preparation reserve remains.')
+            run([go,'test','-count=1','-json','-race','-timeout=9m','-run=^$','./...'],preparation_remaining,
+                phase='full-race-preparation',phase_deadline=preparation_deadline)
+            if any(fixture.iterdir()) or any(evidence.iterdir()):
+                raise RuntimeError('Race preparation changed the owned fixture or native evidence directory.')
+            if outer_deadline-time.monotonic() < 630: raise RuntimeError('Full race execution and cleanup reserve unavailable.')
+            run([go,'test','-count=1','-json','-race','-timeout=9m','./...'],600,phase='full-race-execution')
+        elif profile == 'minimum':
+            base_env['CGO_ENABLED'] = '0'
+            run([go,'test','-count=1','-json','-timeout=9m','./...'],600)
         else:
-            run([go,'tool','test2json','-t','-p','github.com/open-e2ee/oe/internal/identityattempt',str(test_binary),
-                 '-test.paniconexit0','-test.v=test2json','-test.count=1','-test.timeout=9m'],600,
-                env=execution_env,cwd=package_dir,phase='native-execution')
-    if profile == 'minimum':
-        for target_os in ['darwin','linux','windows']:
-            for target_arch in ['amd64','arm64']:
-                env = dict(base_env, GOOS=target_os,GOARCH=target_arch)
-                run([go,'build','-trimpath','-o',str(cache/('oe-'+target_os+'-'+target_arch)),'./cmd/oe'],120,env)
+            base_env['CGO_ENABLED'] = '0'
+            cold_seconds,execution_reserve = (480,1800+cleanup_reserve) if intel_native else (120,630)
+            cold_deadline = min(time.monotonic()+cold_seconds,outer_deadline-execution_reserve)
+            def cold_limit():
+                remaining = cold_deadline-time.monotonic()
+                if remaining <= 0: raise RuntimeError('No cold-phase budget remains before the full native execution reserve.')
+                return remaining
+            test_binary = cache/'identityattempt.test'
+            compile_argv = [go,'test','-c','-o',str(test_binary),'./internal/identityattempt']
+            if intel_native: compile_argv.insert(3,'-x')
+            run(compile_argv,cold_limit(),phase='native-compile',phase_deadline=cold_deadline)
+            tool_output = run([go,'tool','-n','test2json'],cold_limit(),capture=True,phase='native-tool-prepare',phase_deadline=cold_deadline).decode('utf-8',errors='strict').splitlines()
+            if len(tool_output) != 1 or len(tool_output[0]) > 4096: raise RuntimeError('Ambiguous maintained test2json input.')
+            test2json_path = pathlib.Path(tool_output[0])
+            binary_info = run([go,'version','-m',str(test_binary)],cold_limit(),capture=True,phase='native-build-info',phase_deadline=cold_deadline).decode('utf-8',errors='strict')
+            native_inputs = {'binary':native_executable_input(test_binary),'test2json':native_executable_input(test2json_path),
+                             'goPath':go,'goSHA256':hashlib.sha256(pathlib.Path(go).read_bytes()).hexdigest(),
+                             'buildInfo':binary_info,'host':host,'CGO_ENABLED':'0',
+                             'sourceHashes':source_files,'coldPhaseSeconds':cold_seconds,'executionSeconds':600,
+                             'executionReserveSeconds':execution_reserve,'cleanupReserveSeconds':cleanup_reserve,
+                             'globalSeconds':2400 if intel_native else 800}
+            save('native-test-inputs-before.json',native_inputs)
+            if native_inputs['binary']['uid'] != 0: raise RuntimeError('Compiled test binary is not owned by the fixture caller.')
+            if any(hashlib.sha256((root/name).read_bytes()).hexdigest() != digest for name,digest in source_files.items()): raise RuntimeError('Native compilation changed frozen source inputs.')
+            if outer_deadline-time.monotonic() < execution_reserve: raise RuntimeError('Full native execution and cleanup reserve unavailable.')
+            package_dir = root/'internal/identityattempt'
+            execution_env = dict(base_env,PWD=str(package_dir),PATH=str(pathlib.Path(go).resolve().parent)+os.pathsep+base_env['PATH'])
+            if intel_native:
+                run_intel_partitions(intel_module,intel_roster,cold_deadline,execution_env,package_dir)
+            else:
+                run([go,'tool','test2json','-t','-p','github.com/open-e2ee/oe/internal/identityattempt',str(test_binary),
+                     '-test.paniconexit0','-test.v=test2json','-test.count=1','-test.timeout=9m'],600,
+                    env=execution_env,cwd=package_dir,phase='native-execution')
+        if profile == 'minimum':
+            for target_os in ['darwin','linux','windows']:
+                for target_arch in ['amd64','arm64']:
+                    env = dict(base_env, GOOS=target_os,GOARCH=target_arch)
+                    run([go,'build','-trimpath','-o',str(cache/('oe-'+target_os+'-'+target_arch)),'./cmd/oe'],120,env)
     if any(hashlib.sha256((root/p).read_bytes()).hexdigest() != value for p,value in source_hashes.items()): raise RuntimeError('Module files changed.')
     success = True
 except BaseException as error:
@@ -488,9 +551,11 @@ finally:
                 session_supervisor.base_env = cleanup_env
                 cleanup.update({'detachAttempted':True,'detachStage':len(steps),'environmentKeys':sorted(cleanup_env),
                     'temporary':str(cleanup_temporary),'cwd':str(proof),'device':volume_device})
+                detach_argv = ['/bin/umount',str(mount)] if actual_os == 'linux' else ['/usr/bin/hdiutil','detach',volume_device]
+                if intel_cleanup: detach_argv.insert(2,'-verbose')
                 try:
-                    run((['/bin/umount',str(mount)] if actual_os == 'linux' else ['/usr/bin/hdiutil','detach',volume_device]),
-                        detach_limit,env=cleanup_env,cwd=proof,monitor_volume=False)
+                    run(detach_argv,detach_limit,env=cleanup_env,cwd=proof,monitor_volume=False,
+                        phase='native-detach' if intel_cleanup else None)
                 except BaseException as error:
                     success = False; failure = (failure or '')+'; detach: '+str(error)
                     raise
@@ -499,6 +564,13 @@ finally:
                     stage = cleanup['detachStage']
                     cleanup['detachStatus'] = steps[stage].get('status') if stage < len(steps) else None
                     cleanup['detachClosureComplete'] = steps[stage].get('closureComplete') if stage < len(steps) else False
+                    if cleanup_diagnostic:
+                        cleanup['imageInfo'] = post_detach_image_info(stage)
+                        image_info = cleanup['imageInfo']
+                        if success and image_info['attempted'] and (image_info.get('status') != 0 or image_info.get('closureComplete') is not True):
+                            success = False; failure = 'The post-detach metadata stage did not complete successfully.'
+                        if success and image_info['state'] == 'REPORTED_ATTACHED':
+                            success = False; failure = 'The exact owned image remains reported attached after detach.'
                     save('volume-cleanup.json',cleanup)
                 if not owned_volume_backing_removal_allowed(success,cleanup['detachStatus'],owned_closed(),mounted):
                     raise RuntimeError('Detach exit, closure and absent mount are required before backing deletion.')
@@ -523,6 +595,14 @@ finally:
         cleanup['backingImagePreserved'] = None; cleanup['backingReadbackFailure'] = str(error)
         success = False; failure = (failure or '')+'; backing readback: '+str(error)
     save('volume-cleanup.json',cleanup)
+    if cleanup_diagnostic and 'source_files' in globals():
+        try:
+            if not owned_closed(): raise RuntimeError('Cleanup source readback requires complete process and pipe closure.')
+            after_source = {name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in source_files}
+            save('cleanup-source-inputs-after.json',{'files':after_source,'scope':'NO_TEST_CREDIT'})
+            if after_source != source_files: raise RuntimeError('Cleanup diagnosis changed a frozen source input.')
+        except BaseException as error:
+            success = False; failure = (failure or '')+'; cleanup source readback: '+str(error)
     try:
         index_after = checkout_index_metadata()
         save('checkout-index-after.json',index_after)
@@ -536,12 +616,14 @@ finally:
     closed = owned_closed()
     success = success and empty and closed
     save('result.json',{'success':success,'failure':failure,'groups':groups,'processObservers':process_observers,'ownedSessionsEmpty':empty,'mountedOwnedVolumePreserved':mounted,
+                        'profile':profile,'scope':'NO_TEST_CREDIT' if cleanup_diagnostic else 'EXISTING_STORE_QUALIFICATION',
                         'ownedProcessAndPipeClosureComplete':closed,'observedMountedState':mounted,
                         'backingImagePreserved':cleanup['backingImagePreserved'],'backingRemoved':cleanup['backingRemoved'],
                         'volumeDevice':volume_device,'mount':str(mount),'elapsedSeconds':time.monotonic()-started,
                         'checkoutIndexOwnerModePreserved':index_owner_mode_preserved,
                         'limits':'No ordinary-user/default-root, ENOSPC, hosted caller or hard-kernel-deadline qualification.'})
     # All files are new proof objects. Their final owner permits the runner's artifact step.
+    if not closed: raise SystemExit('Uncertain process or pipe closure prevents proof ownership handback. Preserve the owned VM state.')
     for path in sorted(proof.rglob('*'),reverse=True):
         if path.is_symlink(): raise RuntimeError('Unexpected proof link.')
         os.chown(path,caller_uid,-1)

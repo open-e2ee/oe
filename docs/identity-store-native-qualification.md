@@ -9,6 +9,8 @@ Each result requires its actual source hashes, raw test events and cleanup evide
 
 The workflow requires Go 1.27.3 and Node.js 24.22.1.
 The minimum Go job requires Go 1.26.10 instead.
+The manual cleanup diagnostic requires neither Go nor Node.
+
 The scripts require `GITHUB_ACTIONS=true` and `RUNNER_ENVIRONMENT=github-hosted`.
 They refuse a target that differs from the actual operating system or architecture.
 They give emulated processes no native qualification.
@@ -53,6 +55,7 @@ The other package, configuration, formatting and Homebrew gates remain present.
 | Minimum Go     | `minimum linux amd64`                                           | Full suite and six CGO0 builds |
 | Unix native    | `native <linux-or-darwin> <amd64-or-arm64>`                     | Native store package           |
 | Windows native | `-FixtureProfile native -ExpectedArchitecture <amd64-or-arm64>` | Native store package           |
+| Cleanup diagnostic | `cleanup-diagnostic darwin amd64` | Owned image cleanup only, `NO_TEST_CREDIT` |
 
 | Runner label       | Native target |
 | ------------------ | ------------- |
@@ -67,6 +70,12 @@ GitHub lists these labels and architectures in its [hosted runner reference](htt
 A label does not prove an individual job's prerequisites or actual architecture.
 Each wrapper checks the actual process and Go host before test dispatch.
 Cross-build results do not replace native execution.
+
+The manual `Owned volume cleanup diagnostic` workflow runs only on Darwin Intel.
+It reuses the fresh elevated hosted-VM, 4 GiB APFS image and exact device checks.
+It records source hashes and index ownership without invoking Go, Node, downloads or test partitions.
+Its result explicitly reports `NO_TEST_CREDIT`.
+A passing focused episode does not turn a failed native job green.
 
 ## Protected fixture namespace
 
@@ -143,6 +152,13 @@ Cleanup requires two complete empty session observations and checked observer cl
 The owner uses one five-second settlement deadline for session cleanup, leader wait and remaining pipe drain.
 
 Each receipt records actual leader wait, stdout EOF and stderr EOF separately from session emptiness.
+
+The existing progress callback also records one checkpoint before settlement signals.
+That checkpoint stays inside the same five-second settlement deadline.
+Intel detach samples record actual mount state.
+The pre-signal checkpoint records the leader's current status.
+They do not query image metadata or launch another child while the utility is live.
+
 An incomplete drain retains an explicit failure and never substitutes descriptor closure for EOF.
 Later cleanup errors do not replace the original stage failure.
 Fixture traversal requires session emptiness, actual leader wait and both EOFs.
@@ -173,6 +189,7 @@ The 60-second allowance is an operational limit, not a measured latency guarante
 The 70-second cleanup reserve is nominal and does not bound blocked kernel calls.
 
 The wrapper records a fresh mount observation after every detach outcome.
+Intel detach requests the utility's documented verbose progress output.
 It records backing-image preservation separately from the observed mount state.
 Only exit zero, complete process and pipe closure, and an absent mount permit backing deletion.
 A failed attempt retains its backing image even if the mount proves absent.
@@ -180,6 +197,25 @@ A failed attempt retains its backing image even if the mount proves absent.
 The wrapper deletes only its new backing image and mount directory.
 Native evidence and cleanup records remain in the uploaded artifact.
 The scripts never detach an unrelated disk or repair a user directory.
+
+The cleanup-only profile can query `hdiutil info -plist` once after complete utility closure.
+It requires a free stage slot and 35 seconds remaining in the unchanged absolute owner deadline.
+The query uses the existing 30-second metadata limit and reserves five seconds for settlement.
+Its execution deadline cannot exceed the owner deadline minus those five seconds.
+This optional admission does not increase the 70-second nominal native cleanup reserve.
+The existing stage, output and 4 MiB stdout-capture caps still apply.
+
+The receipt binds only the exact new image path and recorded device.
+Missing, malformed, unadmitted or ambiguous metadata stays `UNKNOWN`.
+A report that the exact image remains attached prevents its backing deletion.
+Other image-info outcomes do not replace the ordinary detach exit and closure requirements.
+Post-termination metadata cannot prove earlier attachment state or identify an earlier volume user.
+No concurrent observer, recursive live-utility execution or volume-user census runs.
+
+If process or pipe closure is uncertain, the wrapper persists its result before refusing proof traversal.
+It does not walk the proof tree to transfer ownership in that state.
+Root-owned evidence may then remain inaccessible to the unprivileged artifact uploader.
+Its later hosted custody remains unverified.
 
 ## Evidence limits
 

@@ -1,0 +1,30 @@
+name: Owned volume cleanup diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup-diagnostic:
+    runs-on: macos-26-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cleanup-only Intel diagnostic
+        id: cleanup
+        shell: bash
+        run: bash scripts/test-identity-store-unix.sh cleanup-diagnostic darwin amd64
+      - name: Preserve owned diagnostic evidence
+        if: always() && steps.cleanup.outputs.evidence-path != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: identity-owned-volume-cleanup-darwin-amd64
+          path: |
+            ${{ steps.cleanup.outputs.evidence-path }}
+            !${{ steps.cleanup.outputs.evidence-path }}/volume/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
