@@ -126,11 +126,14 @@ func (r *runner) identityStore(ctx context.Context, slot identityattempt.Slot, n
 	}
 	switch observation.State() {
 	case identityattempt.AbsentNamespace:
-		if !namespaceFirstUse || !slotFirstUse {
+		if !slotFirstUse {
 			return nil, identityattempt.ErrFirstUseRequired
 		}
 		if r.getenv("OE_OPERATION_ID") != "" {
 			return nil, identityattempt.ErrOperationIDUnretained
+		}
+		if !namespaceFirstUse {
+			return store.InitializeForFirstSlot(ctx, slot, identityattempt.SlotNeverUsed)
 		}
 		store, err = r.identityAttempts.BootstrapFirstUse(ctx, identityattempt.NamespaceNeverUsed)
 		if err != nil {

@@ -121,6 +121,34 @@ func BootstrapFirstUse(ctx context.Context, location Location, declaration First
 	if os.Getenv("OE_OPERATION_ID") != "" {
 		return nil, ErrOperationIDUnretained
 	}
+	return createNamespace(ctx, location)
+}
+
+// InitializeForFirstSlot creates absent storage only to enroll the declared unused slot.
+// It makes no claim about namespace history and gives no authority to other slots.
+func (s *Store) InitializeForFirstSlot(ctx context.Context, slot Slot, declaration FirstUse) (*Lease, error) {
+	if err := boundedContext(ctx); err != nil {
+		return nil, err
+	}
+	if s == nil || s.location.validate() != nil {
+		return nil, ErrLocation
+	}
+	if _, err := recordLimit(slot); err != nil {
+		return nil, err
+	}
+	if declaration != SlotNeverUsed {
+		return nil, ErrFirstUseRequired
+	}
+	if os.Getenv("OE_OPERATION_ID") != "" {
+		return nil, ErrOperationIDUnretained
+	}
+	if _, err := createNamespace(ctx, s.location); err != nil {
+		return nil, err
+	}
+	return s.EnrollFirstUse(ctx, slot, declaration)
+}
+
+func createNamespace(ctx context.Context, location Location) (*Store, error) {
 	acquisition, stop := context.WithDeadline(ctx, remainingDeadline(ctx, acquisitionLimit))
 	defer stop()
 	root, created, err := nativeOpenLocation(acquisition, location, true)

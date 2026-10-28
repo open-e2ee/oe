@@ -451,6 +451,120 @@ func TestPublicCommandActualStoreSelectionSettlesAndReturnsOriginalID(t *testing
 	}
 }
 
+func TestPublicCommandActualStoreFreshSlotInitializesAbsentNamespaceWithoutGlobalDeclaration(t *testing.T) {
+	f := newCommandFixture(t, `{"mode":"device-owned"}`)
+	exit, out, stderr := f.run("identity", "select", "--dry-run")
+	if exit != 0 || len(f.requests("preview")) != 1 || len(f.requests("select")) != 0 ||
+		f.observation(identityattempt.Selection).State() != identityattempt.AbsentNamespace {
+		t.Fatal("read-only preview did not qualify the absent namespace fixture", exit, out, stderr)
+	}
+	exit, out, stderr = f.run("identity", "select", "--confirm-slot-never-used")
+	if exit != 0 || len(f.requests("select")) != 1 {
+		t.Fatal("a fresh addressed slot could not initialize absent storage without a global history declaration", exit, out, stderr)
+	}
+	if f.factory.bootstraps != 0 {
+		t.Fatal("scoped initialization asserted global namespace non-use")
+	}
+	if f.retained(identityattempt.Selection) != nil {
+		t.Fatal("the exact applied receipt did not settle the addressed original")
+	}
+	for _, kind := range []identityattempt.Kind{identityattempt.KeysOnly, identityattempt.Lifecycle} {
+		if f.observation(kind).State() != identityattempt.AbsentSlot {
+			t.Fatal("scoped initialization enrolled another kind", kind)
+		}
+		exit, out, stderr = f.run("identity", "operation", "status", "--kind", string(kind))
+		if exit == 0 || f.observation(kind).State() != identityattempt.AbsentSlot {
+			t.Fatal("another absent slot gained continuation or enrollment", kind, exit, out, stderr)
+		}
+	}
+}
+
+func TestPublicCommandActualStoreScopedFirstUseKeepsExactPendingOriginal(t *testing.T) {
+	f := newCommandFixture(t, commandClerk)
+	f.lose = "select"
+	exit, out, stderr := f.run("identity", "select", "--confirm-slot-never-used")
+	if exit == 0 || len(f.requests("select")) != 1 || f.factory.bootstraps != 0 {
+		t.Fatal("scoped lost-reply fixture did not qualify", exit, out, stderr)
+	}
+	original := f.retained(identityattempt.Selection)
+	if original == nil {
+		t.Fatal("scoped initialization lost its pending original")
+	}
+	f.writeDesired(commandFirebase)
+	exit, out, stderr = f.run("identity", "select", "--confirm-slot-never-used")
+	retained := f.retained(identityattempt.Selection)
+	if exit == 0 || len(f.requests("select")) != 1 || retained == nil || !retained.Equal(*original) {
+		t.Fatal("a repeated first-use declaration replaced the pending original", exit, out, stderr)
+	}
+	exit, out, stderr = f.run("identity", "operation", "retry", "--kind", "selection")
+	packets := f.requests("select")
+	if exit != 0 || len(packets) != 2 || !bytes.Equal(packets[0].body, packets[1].body) || f.retained(identityattempt.Selection) != nil {
+		t.Fatal("scoped first use changed exact retained retry", exit, out, stderr)
+	}
+}
+
+func TestPublicCommandActualStoreScopedFirstUseKeepsRequiredDeclarationsAndConsent(t *testing.T) {
+	for _, name := range []string{"no-declaration", "namespace-only", "operation-id", "production-consent"} {
+		t.Run(name, func(t *testing.T) {
+			f := newCommandFixture(t, commandClerk)
+			args := []string{"identity", "select"}
+			switch name {
+			case "namespace-only":
+				args = append(args, "--confirm-state-never-used")
+			case "operation-id":
+				args = append(args, "--confirm-slot-never-used")
+				f.environment["OE_OPERATION_ID"] = "unretained-original"
+			case "production-consent":
+				args = append(args, "--confirm-slot-never-used")
+				f.environmentKind = "production"
+			}
+			exit, out, stderr := f.run(args...)
+			if exit == 0 || len(f.requests("select")) != 0 || f.factory.bootstraps != 0 ||
+				f.observation(identityattempt.Selection).State() != identityattempt.AbsentNamespace {
+				t.Fatal("scoped first use bypassed a required declaration or consent", exit, out, stderr)
+			}
+			if name == "production-consent" {
+				exit, out, stderr = f.run(append(args, "--yes")...)
+				if exit != 0 || len(f.requests("select")) != 1 || f.factory.bootstraps != 0 {
+					t.Fatal("explicit Production consent did not reach scoped first use", exit, out, stderr)
+				}
+			}
+		})
+	}
+}
+
+func TestPublicCommandActualStoreScopedFirstUseForKeysLifecycleAndConfig(t *testing.T) {
+	for _, name := range []string{"keys", "suspend", "activate", "config"} {
+		t.Run(name, func(t *testing.T) {
+			f := newCommandFixture(t, commandClerk)
+			kind, action := identityattempt.Selection, "select"
+			args := []string{"config", "push", "--confirm-slot-never-used"}
+			switch name {
+			case "keys":
+				path := filepath.Join(f.directory, "public-keys.json")
+				if err := os.WriteFile(path, []byte("["+strings.Replace(keyWire, "key-one", "key-two", 1)+"]"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				kind, action = identityattempt.KeysOnly, "keys-replace"
+				args = []string{"identity", "keys", "rotate", "--keys", path, "--confirm-slot-never-used"}
+			case "suspend", "activate":
+				f.dependencies.In = strings.NewReader(commandPrivateTarget)
+				kind, action = identityattempt.Lifecycle, "apply"
+				args = []string{"identity", "lifecycle", name, "--target-stdin", "--confirm-slot-never-used"}
+			}
+			exit, out, stderr := f.run(args...)
+			if exit != 0 || len(f.requests(action)) != 1 || f.factory.bootstraps != 0 || f.retained(kind) != nil {
+				t.Fatal("scoped first use did not settle the exact command", exit, out, stderr)
+			}
+			for _, other := range []identityattempt.Kind{identityattempt.Selection, identityattempt.KeysOnly, identityattempt.Lifecycle} {
+				if other != kind && f.observation(other).State() != identityattempt.AbsentSlot {
+					t.Fatal("the command enrolled another slot", other)
+				}
+			}
+		})
+	}
+}
+
 func TestPublicCommandActualStoreLostReplyReplaysExactOriginal(t *testing.T) {
 	f := newCommandFixture(t, commandClerk)
 	f.lose = "select"

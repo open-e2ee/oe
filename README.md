@@ -191,6 +191,27 @@ Confirm separate accounts, repeat-member stability, message decryption, key rota
 The Console check accepts drafts before the first account admission.
 This CLI check can validate a draft for an existing project without changing it.
 
+## Identity operation storage
+
+Identity writes retain their exact original command before dispatch. An unresolved
+command blocks a replacement in the same slot. A slot identifies the control URL,
+Organization, project slug, environment and operation kind.
+
+Use `--confirm-slot-never-used` only when that exact slot has never existed.
+With an explicit `--env sandbox` or `--env production`, this declaration can
+create absent local storage for that slot, including through `config push`.
+It makes no claim about the storage history of other projects or operation kinds.
+A new project ID does not prove a fresh slot if its project slug was reused.
+
+`--confirm-state-never-used` retains its stronger meaning: the entire selected
+local namespace has never existed. It is not required for a fresh slot alone.
+Neither declaration recovers a missing original or permits a reset. Keep unknown
+slot history unresolved. Absence on disk does not prove that a slot was unused.
+
+An initialized slot needs neither declaration. Dry-run accepts neither declaration
+and creates no operation storage. Production writes still require `--yes` or the
+existing interactive confirmation.
+
 ## Use from a coding agent
 
 A coding agent can do each task in this section with `oe` and no console page.

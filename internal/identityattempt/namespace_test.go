@@ -356,6 +356,165 @@ func TestStoreExplicitFirstUseDeclarations(t *testing.T) {
 	requireStoreError(t, err, ErrFirstUseRequired)
 }
 
+func TestStoreScopedInitializationEnrollsOnlyDeclaredSlot(t *testing.T) {
+	for _, kind := range []Kind{Selection, KeysOnly, Lifecycle} {
+		t.Run(string(kind), func(t *testing.T) {
+			location := storeFixtureLocation(t)
+			store, err := Open(location)
+			if err != nil {
+				t.Fatal(err)
+			}
+			slot := recordSlot(t, kind)
+			lease, err := store.InitializeForFirstSlot(storeContext(t), slot, SlotNeverUsed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, readErr := lease.Read(storeContext(t))
+			closeErr := lease.Close()
+			attempt, attemptErr := value.RetainedAttempt()
+			if readErr != nil || closeErr != nil || attemptErr != nil || attempt != nil ||
+				value.Revision() != 1 || !value.Slot().Equal(slot) {
+				t.Fatal("scoped initialization did not retain the exact vacant slot", readErr, closeErr, attemptErr)
+			}
+			for _, other := range []Kind{Selection, KeysOnly, Lifecycle} {
+				if other == kind {
+					continue
+				}
+				otherSlot := recordSlot(t, other)
+				observed, err := store.Inspect(storeContext(t), otherSlot)
+				if err != nil || observed.State() != AbsentSlot {
+					t.Fatal("another slot was enrolled", other, err)
+				}
+				_, err = store.BeginExisting(storeContext(t), otherSlot)
+				requireStoreError(t, err, ErrFirstUseRequired)
+			}
+			_, err = store.InitializeForFirstSlot(storeContext(t), slot, SlotNeverUsed)
+			requireStoreError(t, err, ErrAlreadyInitialized)
+		})
+	}
+}
+
+func TestStoreScopedInitializationRefusesBeforeCreation(t *testing.T) {
+	for _, name := range []string{"no-declaration", "namespace-declaration", "invalid-declaration", "invalid-slot", "operation-id", "canceled"} {
+		t.Run(name, func(t *testing.T) {
+			location := storeFixtureLocation(t)
+			store, err := Open(location)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(storeContext(t))
+			defer cancel()
+			slot, declaration := recordSlot(t, Selection), SlotNeverUsed
+			want := ErrFirstUseRequired
+			switch name {
+			case "no-declaration":
+				declaration = 0
+			case "namespace-declaration":
+				declaration = NamespaceNeverUsed
+			case "invalid-declaration":
+				declaration = 255
+			case "invalid-slot":
+				slot = Slot{}
+				want = ErrFormat
+			case "operation-id":
+				t.Setenv("OE_OPERATION_ID", "unretained-original")
+				want = ErrOperationIDUnretained
+			case "canceled":
+				cancel()
+				want = ErrTimeout
+			}
+			_, err = store.InitializeForFirstSlot(ctx, slot, declaration)
+			requireStoreError(t, err, want)
+			if _, err := os.Lstat(location.path()); !os.IsNotExist(err) {
+				t.Fatal("refused scoped initialization created storage")
+			}
+		})
+	}
+}
+
+func TestStoreScopedInitializationDoesNotRecoverLostOtherSlot(t *testing.T) {
+	store, location, originalLease, original := storeOccupied(t, Selection)
+	if err := originalLease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(location.path()); err != nil {
+		t.Fatal("owned complete namespace loss fixture failed")
+	}
+	oldSlot := original.Slot()
+	freshSlot, err := NewSlot(oldSlot.ControlBase(), oldSlot.OrganizationID(), "fresh-project", oldSlot.Environment(), oldSlot.Kind())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := store.InitializeForFirstSlot(storeContext(t), freshSlot, SlotNeverUsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.BeginExisting(storeContext(t), original.Slot())
+	requireStoreError(t, err, ErrFirstUseRequired)
+	lock, record := storePaths(t, location, original.Slot())
+	for _, path := range []string{lock, record} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatal("another slot's lost witnesses were recreated")
+		}
+	}
+}
+
+func TestStoreScopedInitializationKeepsInterruptedCreationUncertain(t *testing.T) {
+	for _, stage := range []string{"root-directory-created", "root-lock-created", "directories-created", "slot-lock-created"} {
+		t.Run(stage, func(t *testing.T) {
+			location := storeFixtureLocation(t)
+			store := &Store{location}
+			store.location.observer = &storeStageFailure{stage: stage}
+			slot := recordSlot(t, Selection)
+			_, err := store.InitializeForFirstSlot(storeContext(t), slot, SlotNeverUsed)
+			requireStoreError(t, err, ErrPersistence)
+			store.location.observer = nil
+			_, err = store.BeginExisting(storeContext(t), slot)
+			requireStoreError(t, err, ErrUncertain)
+			_, err = store.InitializeForFirstSlot(storeContext(t), slot, SlotNeverUsed)
+			requireStoreError(t, err, ErrAlreadyInitialized)
+		})
+	}
+}
+
+func TestStoreScopedInitializationHasOneConcurrentCreator(t *testing.T) {
+	location := storeFixtureLocation(t)
+	store, err := Open(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), leaseLimit)
+	defer cancel()
+	slot := recordSlot(t, Selection)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			lease, err := store.InitializeForFirstSlot(ctx, slot, SlotNeverUsed)
+			if err == nil {
+				err = lease.Close()
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	succeeded := 0
+	for range 2 {
+		if err := <-results; err == nil {
+			succeeded++
+		} else if !errors.Is(err, ErrAlreadyInitialized) {
+			t.Error("concurrent creator changed the refusal", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatal("scoped initialization did not have exactly one creator", succeeded)
+	}
+}
+
 func TestStoreNamespaceWitnessLossRefuses(t *testing.T) {
 	for _, target := range []string{"root.lock", "store.json", "locks", "v1"} {
 		t.Run(target, func(t *testing.T) {
