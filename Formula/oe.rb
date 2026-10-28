@@ -1,8 +1,8 @@
 class Oe < Formula
   desc "Command-line tools for OpenE2EE projects"
   homepage "https://github.com/open-e2ee/oe"
-  url "https://github.com/open-e2ee/oe/archive/refs/tags/v3.8.2.tar.gz"
-  sha256 "c06d2fde67169cc0c675f25ff01381389e41bd406f9db5844a1082f823f5943f"
+  url "https://github.com/open-e2ee/oe/archive/refs/tags/v3.8.3.tar.gz"
+  sha256 "cbb0bedede54da53dee1feb9682f3a2eaf5933aebcb050532f19a5cc0ae91846"
   license "Apache-2.0"
   head "https://github.com/open-e2ee/oe.git", branch: "main"
 
