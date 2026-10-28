@@ -52,7 +52,7 @@ def checked_roster(value):
             and len(set(nodes)) == 859 and set(parents) <= set(nodes), 'INTEL_NODE_ROSTER')
     require(isinstance(partitions, list) and len(partitions) == 3
             and all(isinstance(p, list) for p in partitions)
-            and [len(p) for p in partitions] == [26, 43, 60]
+            and [len(p) for p in partitions] == [42, 28, 59]
             and sum(partitions, []) == parents, 'INTEL_PARTITION_UNION')
     benchmarks = value['benchmarks']
     require(isinstance(benchmarks, list) and not benchmarks, 'INTEL_BENCHMARK_POLICY')
