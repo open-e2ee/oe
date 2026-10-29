@@ -21,6 +21,30 @@ func publicLifecycleResult(t *testing.T, status string) identity.LifecycleStatus
 }
 
 func TestPublicExecutionErrorsKeepTheExactSafeRetainedNextStep(t *testing.T) {
+	for _, environment := range []string{"sandbox", "production"} {
+		for _, kind := range []identityattempt.Kind{identityattempt.Selection, identityattempt.KeysOnly, identityattempt.Lifecycle} {
+			t.Run("unretained-"+string(kind)+"-"+environment, func(t *testing.T) {
+				f := publicIdentityTestFixture(t, "")
+				attempts := f.dependencies.IdentityAttempts.(*identityCountingFactory)
+				attempts.failure = identityattempt.ErrOperationIDUnretained
+				exit, out, stderr := f.run(t, "--env", environment, "identity", "operation", "status", "--kind", string(kind))
+				var refusal struct {
+					Code  string `json:"code"`
+					Error string `json:"error"`
+					Next  string `json:"next"`
+				}
+				if json.Unmarshal([]byte(out), &refusal) != nil || exit != exitFailure || stderr != "" || refusal.Code != "IDENTITY_OPERATION_ID_UNRETAINED" {
+					t.Fatal("unretained operation lost its failure contract", exit, out, stderr)
+				}
+				if refusal.Next != "oe identity current --env "+environment || !strings.Contains(refusal.Error, "The requested operation ID is not retained") || strings.Contains(refusal.Error, "Preserve the retained attempt") {
+					t.Fatal("unretained operation loops to status or claims a retained attempt", out)
+				}
+				if f.count("current") != 1 || f.count("preview") != 0 || attempts.opens != 1 || attempts.bootstraps != 0 {
+					t.Fatal("unretained status caused new preparation or enrollment", f.calls, attempts)
+				}
+			})
+		}
+	}
 	for _, kind := range []identityattempt.Kind{identityattempt.Selection, identityattempt.KeysOnly, identityattempt.Lifecycle} {
 		failure := identityExecutionFailure(&control.APIError{Code: "IDENTITY_RESULT_INVALID"}, kind, "production")
 		value, ok := errors.AsType[*problem](failure)
