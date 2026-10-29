@@ -30,7 +30,7 @@ func (v *identityCommandOptions) flags(flags *flag.FlagSet, dryRun, firstUse boo
 	}
 	if firstUse {
 		flags.BoolVar(&v.namespaceFirstUse, "confirm-state-never-used", false, "declare that the selected local namespace never existed")
-		flags.BoolVar(&v.slotFirstUse, "confirm-slot-never-used", false, "declare that the addressed kind slot never existed")
+		flags.BoolVar(&v.slotFirstUse, "confirm-slot-never-used", false, "declare that the addressed kind slot never existed. This can create absent storage for that slot")
 	}
 }
 

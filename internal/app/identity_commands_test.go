@@ -306,6 +306,34 @@ func TestPublicIdentityDryRunRejectsFirstUseAndPrivateArguments(t *testing.T) {
 	}
 }
 
+func TestPublicIdentityScopedFirstUseRequiresLiteralEnvironment(t *testing.T) {
+	for _, source := range []string{"default", "environment-variable", "literal"} {
+		t.Run(source, func(t *testing.T) {
+			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+			args := []string{"identity", "select", "--confirm-slot-never-used"}
+			if source == "environment-variable" {
+				f.dependencies.Getenv = func(key string) string {
+					if key == "OE_ENV" {
+						return "sandbox"
+					}
+					return ""
+				}
+			} else if source == "literal" {
+				args = append(args, "--env", "sandbox")
+			}
+			exit, out, stderr := f.run(t, args...)
+			attempts := f.dependencies.IdentityAttempts.(*identityCountingFactory)
+			if source == "literal" {
+				if exit == 0 || f.count("preview") != 1 || attempts.opens != 1 {
+					t.Fatal("literal environment did not reach the owned factory", exit, out, stderr)
+				}
+			} else if exit != exitUsage || f.count("current") != 0 || attempts.opens != 0 {
+				t.Fatal("scoped first use accepted an inferred environment", exit, out, stderr)
+			}
+		})
+	}
+}
+
 func TestPublicIdentityKeysDryRunUsesSeparateActualRead(t *testing.T) {
 	f := publicIdentityTestFixture(t, configuredExecutionWire)
 	path := filepath.Join(t.TempDir(), "public-keys.json")

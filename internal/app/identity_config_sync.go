@@ -136,7 +136,7 @@ func (r *runner) inspectConfigIdentityState(ctx context.Context, address identit
 		}
 		switch observation.State() {
 		case identityattempt.AbsentNamespace:
-			if !options.namespaceFirstUse || !options.slotFirstUse {
+			if !options.slotFirstUse {
 				return identityattempt.ErrFirstUseRequired
 			}
 		case identityattempt.AbsentSlot:
