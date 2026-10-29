@@ -81,6 +81,11 @@ func identityPublicFailure(err error) error {
 }
 
 func identityExecutionFailure(err error, kind identityattempt.Kind, environment string) error {
+	if errors.Is(err, identityattempt.ErrOperationIDUnretained) {
+		return identityCommandProblem("IDENTITY_OPERATION_ID_UNRETAINED",
+			"The requested operation ID is not retained in this local slot. Preserve any original operation evidence and read the installed configuration.",
+			"oe identity current --env "+environment, exitFailure)
+	}
 	failure := identityPublicFailure(err)
 	if value, ok := errors.AsType[*problem](failure); ok && value.next == "oe help identity" {
 		copy := *value
