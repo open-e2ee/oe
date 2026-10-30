@@ -191,6 +191,30 @@ Confirm separate accounts, repeat-member stability, message decryption, key rota
 The Console check accepts drafts before the first account admission.
 This CLI check can validate a draft for an existing project without changing it.
 
+## Identity lifecycle limits
+
+For normal key rotation, add the new public key while keeping the old key.
+Start signing with the new key on your backend.
+Remove the old key after its assertions expire, including clock tolerance.
+`oe identity keys rotate --keys PATH` replaces the complete public key set.
+Key removal does not revoke existing device credentials.
+Registered devices can still renew with a device proof.
+
+`oe identity lifecycle suspend --target-stdin` refuses registration, linking,
+renewal, recovery and identified requests for the target. It keeps account data
+and devices. Stop issuing assertions for suspended members in your application.
+`oe identity lifecycle activate --target-stdin` prepares a new change, subject to
+current authority guards. `oe identity operation resume --kind lifecycle`
+continues the retained lifecycle change. Permanently revoked devices stay revoked.
+
+Previously issued anonymous capabilities, attachment URLs, sender certificates
+and group tokens keep their independent expiry and policy.
+Relay cannot recall downloaded or decrypted content.
+Provider sign-in cannot recover a lost device-owned account key.
+Read the [key rotation limits](https://docs.open-e2ee.dev/relay/custom-token#key-rotation-and-revocation-limits)
+and [account lifecycle procedure](https://docs.open-e2ee.dev/relay/device-lifecycle-and-recovery#suspend-and-continue-an-account-change)
+before a change.
+
 ## Identity operation storage
 
 Identity writes retain their exact original command before dispatch. An unresolved

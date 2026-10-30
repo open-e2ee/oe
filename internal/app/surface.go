@@ -39,6 +39,17 @@ const (
 	exitTemporary      = 6
 )
 
+const identityLifecycleHelp = "For normal key rotation, add the new public key while keeping the old key. " +
+	"Start signing with the new key. Remove the old key after its assertions expire, including clock tolerance. " +
+	"Key removal does not revoke existing device credentials. Registered devices can still renew with a device proof.\n\n" +
+	"Suspension refuses registration, linking, renewal, recovery and identified requests. It keeps account data and devices. " +
+	"Stop issuing assertions for suspended members in your application. " +
+	"Use oe identity lifecycle activate for a new change, subject to current authority guards. " +
+	"Use oe identity operation resume to continue the retained lifecycle change. Permanently revoked devices stay revoked.\n\n" +
+	"Previously issued anonymous capabilities, attachment URLs, sender certificates and group tokens keep their independent expiry and policy. " +
+	"Relay cannot recall downloaded or decrypted content. Provider sign-in cannot recover a lost device-owned account key. " +
+	"See https://docs.open-e2ee.dev/relay for the key rotation and account lifecycle procedures."
+
 var commandSurface = []commandSpec{
 	{"new", "Create a project and its Sandbox environment, then write open-e2ee.config.ts, the Relay connection in .env.local, and the @open-e2ee/oe devDependency.", []string{
 		"oe new [signal-relay] [--project SLUG] [--name NAME] [--env-var NAME] [--dry-run]",
@@ -56,7 +67,7 @@ var commandSurface = []commandSpec{
 	{"doctor", "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
 		"oe doctor [--env sandbox|production] [--wait] [--timeout DURATION]",
 	}},
-	{"identity", "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle. Current and dry-run read installed authority. Selection, keys rotation and lifecycle use exact retained operations. Production changes need explicit consent. First-use declarations need literal --env.", []string{
+	{"identity", "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle. Current and dry-run read installed authority. Selection, keys rotation and lifecycle use exact retained operations. Production changes need explicit consent. First-use declarations need literal --env.\n\n" + identityLifecycleHelp, []string{
 		"oe identity check --profile PATH [--assertion-stdin] [--env sandbox|production]",
 		"oe identity current [--env sandbox|production]",
 		"oe identity select [--dry-run] [--yes] [--confirm-state-never-used] [--confirm-slot-never-used] [--env sandbox|production]",
