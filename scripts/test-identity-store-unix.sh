@@ -85,6 +85,23 @@ def owned_closed():
         and all(row.get('empty') is True for row in groups)
         and all(row.get('empty') is True for row in process_observers))
 
+def unclosed_diagnostic(failure, steps, groups, process_observers):
+    """Parent observations for a failed run whose proof cannot change owner."""
+    stage_fields = ('limitSeconds','status','reason','ownedSessionEmpty','stdoutEOF','stderrEOF',
+        'leaderWaited','leaderWaitStatus','closureComplete','secondaryFailures','diagnosticFailure')
+    group_fields = ('sid','leaderPID','empty','failure','leaderStatus','leaderWaited','leaderWaitStatus')
+    observer_fields = ('pid','sid','empty','status','failure')
+    return {'scope':'INCOMPLETE_CLOSURE_NO_TEST_CREDIT','failure':failure,
+        'proofOwnershipHandback':False,
+        'steps':[dict(stage=index,executable=str(row['argv'][0]).rsplit('/',1)[-1],
+            **{key:row.get(key) for key in stage_fields})
+            for index,row in enumerate(steps) if row.get('closureComplete') is not True],
+        'groups':[{key:row.get(key) for key in group_fields}
+            for row in groups if row.get('empty') is not True],
+        'processObservers':[{key:row.get(key) for key in observer_fields}
+            for row in process_observers
+            if row.get('empty') is not True or row.get('status') != 0 or row.get('failure') is not None]}
+
 def owned_volume_backing_removal_allowed(successful, detach_status, closed, mount_state):
     return (successful is True and type(detach_status) is int and detach_status == 0
         and closed is True and mount_state is False)
@@ -623,7 +640,10 @@ finally:
                         'checkoutIndexOwnerModePreserved':index_owner_mode_preserved,
                         'limits':'No ordinary-user/default-root, ENOSPC, hosted caller or hard-kernel-deadline qualification.'})
     # All files are new proof objects. Their final owner permits the runner's artifact step.
-    if not closed: raise SystemExit('Uncertain process or pipe closure prevents proof ownership handback. Preserve the owned VM state.')
+    if not closed:
+        # The runner cannot read the private proof when ownership stays with this owner.
+        print(json.dumps(unclosed_diagnostic(failure,steps,groups,process_observers)),flush=True)
+        raise SystemExit('Uncertain process or pipe closure prevents proof ownership handback. Preserve the owned VM state.')
     for path in sorted(proof.rglob('*'),reverse=True):
         if path.is_symlink(): raise RuntimeError('Unexpected proof link.')
         os.chown(path,caller_uid,-1)

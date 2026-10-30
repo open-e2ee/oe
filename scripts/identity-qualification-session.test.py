@@ -1,6 +1,8 @@
 """Actual unprivileged child and pure backing-decision regressions."""
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -144,6 +146,28 @@ time.sleep(20)
             self.assertFalse(row['stderrEOF'])
             self.assertFalse(row['closureComplete'])
             self.assertIn('SESSION_CLOSURE_UNCERTAIN',[item['reason'] for item in row['secondaryFailures']])
+            source = (ROOT/'scripts/test-identity-store-unix.sh').read_text().split("<<'PY'\n",1)[1].rsplit('\nPY\n',1)[0]
+            tree = ast.parse(source)
+            declarations = [node for node in tree.body if isinstance(node,ast.FunctionDef)
+                and node.name == 'unclosed_diagnostic']
+            guard = next(node for node in ast.walk(tree) if isinstance(node,ast.If)
+                and isinstance(node.test,ast.UnaryOp) and isinstance(node.test.op,ast.Not)
+                and isinstance(node.test.operand,ast.Name) and node.test.operand.id == 'closed')
+            namespace = {'json':json,'closed':False,'failure':'A bounded stage failed; see raw evidence.',
+                'steps':self.owner.steps,'groups':self.owner.groups,
+                'process_observers':self.owner.process_observers}
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), self.assertRaisesRegex(SystemExit,'ownership handback'):
+                exec(compile(ast.Module(body=declarations+[guard],type_ignores=[]),'<actual closed guard>','exec'),namespace)
+            diagnostic = json.loads(output.getvalue())
+            self.assertEqual(diagnostic['failure'],namespace['failure'])
+            self.assertEqual(diagnostic['steps'][0]['reason'],'PROCESS_DEADLINE')
+            self.assertFalse(diagnostic['steps'][0]['closureComplete'])
+            self.assertFalse(diagnostic['groups'][0]['empty'])
+            self.assertNotIn('argv',diagnostic['steps'][0])
+            self.assertNotIn('import time; time.sleep(20)',output.getvalue())
+            self.assertFalse(diagnostic['proofOwnershipHandback'])
+            self.assertIsNone(children[0].poll(),'diagnostic reporting cannot substitute for owned cleanup')
         finally:
             # This fixture owns one actual direct child and no descendants.
             receipts = []
