@@ -91,9 +91,11 @@ func (r *runner) identityContext(ctx context.Context, project string, kind ident
 	if projectValue.Slug != project {
 		return identityExecutionContext{}, errIdentityExecution
 	}
-	if r.environment == "sandbox" && projectValue.Sandbox == nil ||
-		r.environment == "production" && (projectValue.Production == nil || projectValue.Production.State != control.ProductionActive) {
+	if r.environment == "sandbox" && projectValue.Sandbox == nil {
 		return identityExecutionContext{}, errIdentityExecution
+	}
+	if r.environment == "production" && (projectValue.Production == nil || projectValue.Production.State != control.ProductionActive) {
+		return identityExecutionContext{}, r.environmentNotActive(project, projectValue.Writer, r.environment)
 	}
 	slot, err := identityattempt.NewSlot(base, session.Organization.ID, project, r.environment, kind)
 	if err != nil {
