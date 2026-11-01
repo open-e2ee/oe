@@ -122,6 +122,13 @@ func (r *runner) identityConfiguration() (string, config.Config, error) {
 		if failure, ok := errors.AsType[*problem](err); ok && failure.code == "CONFIG_NOT_FOUND" {
 			return "", config.Config{}, identityCommandProblem("CONFIG_NOT_FOUND", "Link this directory to an existing project.", "oe link", exitFailure)
 		}
+		if failure, ok := errors.AsType[*config.Error](err); ok && failure.Code == "NODE_REQUIRED" {
+			return "", config.Config{}, &problem{
+				code: "NODE_REQUIRED", exit: exitPersonAction, next: "oe doctor",
+				message:   "oe needs Node.js 22.18 or later with type stripping enabled on PATH.",
+				actionURL: "https://nodejs.org/en/download",
+			}
+		}
 		return "", config.Config{}, identityCommandProblem("CONFIG_INVALID", "The public project configuration is invalid.", "oe help config", exitUsage)
 	}
 	return path, value, nil
