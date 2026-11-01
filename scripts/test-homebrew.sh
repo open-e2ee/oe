@@ -6,9 +6,12 @@ temp_base=${TMPDIR:-/tmp}
 temp_base=${temp_base%/}
 test_root=$(mktemp -d "$temp_base/oe-homebrew.XXXXXX")
 tap_name="open-e2ee/oe-local-$$"
+# Keep formula trust in this fixture's temporary configuration.
+export XDG_CONFIG_HOME="$test_root/config"
 
 cleanup() {
   brew uninstall --formula --force --ignore-dependencies "$tap_name/oe" >/dev/null 2>&1 || true
+  brew untrust --formula "$tap_name/oe" >/dev/null 2>&1 || true
   brew untap --force "$tap_name" >/dev/null 2>&1 || true
   if [[ -n "$test_root" && "$test_root" == "$temp_base"/oe-homebrew.* ]]; then
     rm -r "$test_root"
@@ -19,6 +22,7 @@ trap cleanup EXIT
 brew tap-new --no-git "$tap_name"
 tap_root=$(brew --repository "$tap_name")
 cp "$repository_root/Formula/oe.rb" "$tap_root/Formula/oe.rb"
+brew trust --formula "$tap_name/oe"
 brew audit --strict "$tap_name/oe"
 HOMEBREW_NO_AUTO_UPDATE=1 brew fetch --force "$tap_name/oe"
 
