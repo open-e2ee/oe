@@ -380,6 +380,44 @@ func TestPublicIdentityReadMissingConfigurationNamesExistingLink(t *testing.T) {
 	}
 }
 
+func TestPublicIdentityMissingNodeReportsRuntimePrerequisite(t *testing.T) {
+	f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+	t.Setenv("PATH", t.TempDir())
+	for _, args := range [][]string{
+		{"identity", "current"},
+		{"identity", "select", "--dry-run"},
+		{"identity", "operation", "status", "--kind", "selection"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			exit, out, stderr := f.run(t, args...)
+			refusal := decodeEvent(t, []byte(out))
+			if exit != exitPersonAction || refusal.Code != "NODE_REQUIRED" || refusal.Next != "oe doctor" ||
+				refusal.Action.URL != "https://nodejs.org/en/download" ||
+				!strings.Contains(refusal.Error, "Node.js 22.18 or later") || stderr != "" {
+				t.Fatal("missing Node did not report its prerequisite", exit, out, stderr)
+			}
+		})
+	}
+	if f.count("/v1/auth/session") != 0 {
+		t.Fatal("missing Node reached authority")
+	}
+	f.requireNoMutation(t)
+}
+
+func TestPublicIdentityInvalidConfigurationKeepsSafeFailure(t *testing.T) {
+	f := publicIdentityTestFixture(t, "")
+	if err := os.WriteFile(f.path, []byte(`throw new Error("PRIVATE_CONFIG_SENTINEL");`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exit, out, stderr := f.run(t, "identity", "current")
+	refusal := decodeEvent(t, []byte(out))
+	if exit != exitUsage || refusal.Code != "CONFIG_INVALID" || refusal.Next != "oe help config" ||
+		strings.Contains(out+stderr, "PRIVATE_CONFIG_SENTINEL") || f.count("/v1/auth/session") != 0 {
+		t.Fatal("invalid config lost its safe failure", exit, out, stderr)
+	}
+	f.requireNoMutation(t)
+}
+
 func TestPublicIdentityConfigClassificationUsesExactPolicy(t *testing.T) {
 	base := executionDecode[identity.CurrentContext](t, currentExecutionWire)
 	desired := executionDecode[identity.SelectionTarget](t, configuredExecutionWire)
