@@ -18,7 +18,7 @@ var identityFailures = map[string]struct {
 }{
 	"AUTHENTICATION_REQUIRED":        {401, "Run oe auth login first."},
 	"INVALID_SESSION":                {401, "Run oe auth login again."},
-	"ORGANIZATION_REQUIRED":          {409, "Select an Organization with oe org switch."},
+	"ORGANIZATION_REQUIRED":          {409, "Choose an Organization with oe org switch."},
 	"PROJECT_NOT_FOUND":              {404, "Relay project not found."},
 	"ENVIRONMENT_NOT_FOUND":          {404, "Relay environment not found."},
 	"IMPERSONATED_SESSION":           {403, "This session cannot perform the check."},
