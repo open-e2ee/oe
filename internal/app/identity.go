@@ -86,7 +86,7 @@ func identityCommandFailure(err error) error {
 		case "AUTHENTICATION_REQUIRED", "INVALID_SESSION":
 			code, message, next, exit = failure.Code, "Run oe auth login to check identity.", "oe auth login", exitAuthentication
 		case "ORGANIZATION_REQUIRED":
-			code, message, next = failure.Code, "Select an Organization with oe org switch.", "oe org switch"
+			code, message, next = failure.Code, "Choose an Organization with oe org switch.", "oe org switch"
 		case "PROJECT_NOT_FOUND", "ENVIRONMENT_NOT_FOUND":
 			code, message = failure.Code, "The addressed Relay resource is unavailable."
 		case "IDENTITY_CHECK_INVALID", "IDENTITY_PROFILE_UNSUPPORTED", "IDENTITY_ASSERTION_INVALID":
