@@ -197,6 +197,9 @@ For normal key rotation, add the new public key while keeping the old key.
 Start signing with the new key on your backend.
 Remove the old key after its assertions expire, including clock tolerance.
 `oe identity keys rotate --keys PATH` replaces the complete public key set.
+For a config-writer project, `open-e2ee.config.ts` can declare the keys in `environments.<env>.identity.keys`.
+In that case, edit that field and run `oe config push`.
+`oe identity keys rotate` then refuses with `IDENTITY_CONFIG_WRITER`, because the next push would restore the file keys.
 Key removal does not revoke existing device credentials.
 Registered devices can still renew with a device proof.
 

@@ -58,6 +58,7 @@ type identityExecutionContext struct {
 	slot       identityattempt.Slot
 	credential control.CredentialRequest
 	transport  control.IdentityTransport
+	writer     string
 }
 
 // identityContext uses actual existing credential, Session and project reads.
@@ -108,7 +109,7 @@ func (r *runner) identityContext(ctx context.Context, project string, kind ident
 	if transport == nil {
 		return identityExecutionContext{}, errIdentityExecution
 	}
-	return identityExecutionContext{slot, credential, transport}, nil
+	return identityExecutionContext{slot, credential, transport, projectValue.Writer}, nil
 }
 
 func (r *runner) identityStore(ctx context.Context, slot identityattempt.Slot, namespaceFirstUse, slotFirstUse bool) (*identityattempt.Lease, error) {

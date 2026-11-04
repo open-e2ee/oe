@@ -139,17 +139,22 @@ func (r *runner) readIdentityCurrent(ctx context.Context, project string, kind i
 	if err != nil {
 		return address, identity.CurrentContext{}, err
 	}
+	value, err := readAddressedIdentityCurrent(ctx, address, kind)
+	return address, value, err
+}
+
+func readAddressedIdentityCurrent(ctx context.Context, address identityExecutionContext, kind identityattempt.Kind) (identity.CurrentContext, error) {
 	var current control.AddressedCurrent
+	var err error
 	if kind == identityattempt.KeysOnly {
 		current, err = address.transport.KeysCurrent(ctx, address.credential)
 	} else {
 		current, err = address.transport.Current(ctx, address.credential)
 	}
 	if err != nil {
-		return address, identity.CurrentContext{}, err
+		return identity.CurrentContext{}, err
 	}
-	value, err := current.Context()
-	return address, value, err
+	return current.Context()
 }
 
 func (r *runner) identityCurrentCommand(ctx context.Context) error {
@@ -304,6 +309,14 @@ func readIdentityPublicFile(path string, result any) error {
 	return nil
 }
 
+// configOwnsIdentityKeys reports whether the next config push applies the
+// file keys as a keys-only change (planIdentityConfig). A rotation outside the
+// file would then be reverted by that push.
+func configOwnsIdentityKeys(value config.Config, environment string) bool {
+	target, err := value.IdentityFor(environment)
+	return err == nil && target != nil && target.Keys != nil && target.Provider == nil
+}
+
 func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	options := identityCommandOptions{}
 	flags := newFlags("identity keys rotate")
@@ -320,7 +333,15 @@ func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	address, current, err := r.readIdentityCurrent(ctx, configuration.Project, identityattempt.KeysOnly)
+	address, err := r.identityContext(ctx, configuration.Project, identityattempt.KeysOnly)
+	if err != nil {
+		return err
+	}
+	if address.writer == "config" && configOwnsIdentityKeys(configuration, r.environment) {
+		return identityCommandProblem("IDENTITY_CONFIG_WRITER", config.Filename+" owns the "+r.environment+" identity keys. Edit environments."+r.environment+".identity.keys, then run oe config push.",
+			"oe config push --dry-run --env "+r.environment, exitFailure)
+	}
+	current, err := readAddressedIdentityCurrent(ctx, address, identityattempt.KeysOnly)
 	if err != nil {
 		return err
 	}
