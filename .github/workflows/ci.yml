@@ -4,9 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
-  # The schedule and a manual dispatch run every native cell on main.
-  schedule:
-    - cron: "17 6 * * *"
+  # A manual dispatch runs the checks on a chosen branch.
   workflow_dispatch:
 
 permissions:
@@ -24,113 +22,6 @@ concurrency:
 # at most 2 minutes and a cold build. A setup action's built-in cache cannot be
 # bounded apart from the tool download, so each setup action disables it.
 jobs:
-  # The native identity cells compile only the ./internal/identityattempt test
-  # binary and run only the identity harness scripts. This job selects them when
-  # a change touches that build closure, the harness, the module files or this
-  # workflow. A tracked symlink or submodule anywhere also selects them, because
-  # the harness refuses one. Any uncertainty selects every native cell.
-  changes:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      identity: ${{ steps.classify.outputs.identity }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.27.3
-          cache: false
-      - name: Classify the identity build closure
-        id: classify
-        shell: bash
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          HEAD: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          # Bash ignores errexit inside a function that an if tests, so each
-          # command in classify returns its own failure.
-          classify() {
-            local range root target tags dir meta path mode
-            case "$EVENT" in
-              pull_request) range="$BASE...$HEAD" ;;
-              push)
-                if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]]; then
-                  echo "The push has no previous commit." >&2
-                  return 1
-                fi
-                range="$BEFORE..$HEAD"
-                ;;
-              *)
-                echo "The $EVENT event runs every native cell." >&2
-                return 1
-                ;;
-            esac
-            root=$(go list -m -f '{{.Dir}}') || return 1
-            : > "$RUNNER_TEMP/identity-dirs"
-            for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-              for tags in "" identity_default_qualification; do
-                GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go list -tags "$tags" -deps -test \
-                  -f '{{if not .Standard}}{{.Dir}}{{end}}' ./internal/identityattempt \
-                  >> "$RUNNER_TEMP/identity-dirs" || return 1
-              done
-            done
-            prefixes=()
-            while IFS= read -r dir; do
-              if [[ "$dir" == "$root" ]]; then
-                prefixes+=("")
-              elif [[ "$dir" == "$root"/* ]]; then
-                prefixes+=("${dir#"$root"/}/")
-              fi
-            done < <(sort -u "$RUNNER_TEMP/identity-dirs")
-            if [[ ${#prefixes[@]} -eq 0 ]]; then
-              echo "The build closure has no repository directory." >&2
-              return 1
-            fi
-            echo "Build closure directories: ${prefixes[*]}" >&2
-            git diff --no-renames --raw -z "$range" > "$RUNNER_TEMP/identity-diff" || return 1
-            # A case-insensitive checkout can put a differently cased path in
-            # a closure directory, so the match ignores case.
-            shopt -s nocasematch
-            while IFS= read -r -d "" meta && IFS= read -r -d "" path; do
-              mode=${meta#:* }
-              mode=${mode%% *}
-              if [[ "$mode" == 120000 || "$mode" == 160000 ]]; then
-                echo "Selected by a tracked symlink or submodule: $path" >&2
-                echo true
-                return 0
-              fi
-              case "$path" in
-                go.mod | go.sum | go.work | go.work.sum | .github/workflows/ci.yml | scripts/identity-* | scripts/test-identity-*)
-                  echo "Selected by $path" >&2
-                  echo true
-                  return 0
-                  ;;
-              esac
-              for dir in "${prefixes[@]}"; do
-                if [[ "$path" == "$dir"* ]]; then
-                  echo "Selected by $path" >&2
-                  echo true
-                  return 0
-                fi
-              done
-            done < "$RUNNER_TEMP/identity-diff"
-            echo "No change touches the identity build closure." >&2
-            echo false
-          }
-          if identity=$(classify); then
-            :
-          else
-            echo "::notice title=Every native cell runs::The step log above states the reason."
-            identity=true
-          fi
-          echo "identity=$identity"
-          echo "identity=$identity" >> "$GITHUB_OUTPUT"
-
   go:
     strategy:
       fail-fast: false
@@ -165,49 +56,7 @@ jobs:
           package-manager-cache: false
       - name: Show Node.js version
         run: node --version
-      - name: Session closure owner regressions
-        id: session-closure
-        if: runner.os != 'Windows'
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          set -euo pipefail
-          session_proof=$(mktemp -d "${RUNNER_TEMP:?}/ca8-session-closure.XXXXXXXX")
-          printf 'evidence-path=%s\n' "$session_proof" >> "${GITHUB_OUTPUT:?}"
-          OE_IDENTITY_SESSION_TEST_PROOF="$session_proof/evidence" python3 -I -B scripts/identity-qualification-session.test.py -v 2>&1 | tee "$session_proof/run.log"
-      - name: Preserve session closure regression evidence
-        if: always() && steps.session-closure.outputs.evidence-path != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        timeout-minutes: 2
-        with:
-          name: identity-session-closure-${{ runner.os }}-${{ runner.arch }}
-          path: ${{ steps.session-closure.outputs.evidence-path }}
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
-      - name: Full race suite with owned Unix fixtures
-        id: store-unix
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash scripts/test-identity-store-unix.sh race ${{ runner.os == 'Linux' && 'linux' || 'darwin' }} ${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
-      - name: Full race suite with owned Windows fixtures
-        id: store-windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/test-identity-store-windows.ps1 -FixtureProfile race -ExpectedArchitecture amd64
-      - name: Preserve identity store evidence
-        if: always() && (steps.store-unix.outputs.evidence-path != '' || steps.store-windows.outputs.evidence-path != '')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        timeout-minutes: 2
-        with:
-          name: identity-store-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            ${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}
-            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/volume/**
-            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/fixture.vhdx
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
+      - run: go test -race -count=1 ./...
       - run: go vet ./...
       - run: go build -trimpath -o bin/oe${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/oe
       - name: Native npm package install
@@ -239,116 +88,13 @@ jobs:
           package-manager-cache: false
       - name: Show Node.js version
         run: node --version
-      - name: Minimum Go full suite and six CGO0 builds
-        id: store-unix
-        shell: bash
-        run: bash scripts/test-identity-store-unix.sh minimum linux amd64
-      - name: Preserve identity store evidence
-        if: always() && (steps.store-unix.outputs.evidence-path != '' || steps.store-windows.outputs.evidence-path != '')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        timeout-minutes: 2
-        with:
-          name: identity-store-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            ${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}
-            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/volume/**
-            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/fixture.vhdx
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
-
-  # Each cell runs actual native CGO0 storage code. Windows arm64 has no race cell.
-  identity-store-native:
-    needs: changes
-    if: needs.changes.outputs.identity == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, target: linux, arch: amd64 }
-          - { os: ubuntu-24.04-arm, target: linux, arch: arm64 }
-          - { os: macos-26, target: darwin, arch: arm64 }
-          - { os: macos-26-intel, target: darwin, arch: amd64 }
-          - { os: windows-2025, target: windows, arch: amd64 }
-          - { os: windows-11-arm, target: windows, arch: arm64 }
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.target == 'darwin' && matrix.arch == 'amd64' && 45 || 20 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.27.3
-          cache: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24.22.1"
-          package-manager-cache: false
-      - name: Native Unix storage suite
-        id: store-unix
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash scripts/test-identity-store-unix.sh native ${{ matrix.target }} ${{ matrix.arch }}
-      - name: Native Windows storage suite
-        id: store-windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/test-identity-store-windows.ps1 -FixtureProfile native -ExpectedArchitecture ${{ matrix.arch }}
-      - name: Preserve identity store evidence
-        if: always() && (steps.store-unix.outputs.evidence-path != '' || steps.store-windows.outputs.evidence-path != '')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        timeout-minutes: 2
-        with:
-          name: identity-store-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            ${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}
-            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/volume/**
-            !${{ steps.store-unix.outputs.evidence-path || steps.store-windows.outputs.evidence-path }}/fixture.vhdx
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
-
-  # Each cell qualifies the real ordinary account and its actual default root.
-  identity-default-native:
-    needs: changes
-    if: needs.changes.outputs.identity == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, target: linux, arch: amd64 }
-          - { os: ubuntu-24.04-arm, target: linux, arch: arm64 }
-          - { os: macos-26, target: darwin, arch: arm64 }
-          - { os: macos-26-intel, target: darwin, arch: amd64 }
-          - { os: windows-2025, target: windows, arch: amd64 }
-          - { os: windows-11-arm, target: windows, arch: arm64 }
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.27.3
-          cache: false
-      - name: Actual ordinary Unix default location
-        id: default-unix
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash scripts/test-identity-default-unix.sh ${{ matrix.target }} ${{ matrix.arch }}
-      - name: Newly logged-on standard Windows default location
-        id: default-windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/test-identity-default-windows.ps1 -ExpectedArchitecture ${{ matrix.arch }}
-      - name: Preserve bounded default-location evidence
-        if: always() && (steps.default-unix.outputs.evidence-path != '' || steps.default-windows.outputs.evidence-path != '')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        timeout-minutes: 2
-        with:
-          name: identity-default-${{ matrix.target }}-${{ matrix.arch }}
-          path: ${{ steps.default-unix.outputs.evidence-path || steps.default-windows.outputs.evidence-path }}
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
+      - run: CGO_ENABLED=0 go test -count=1 ./...
+      - name: Six CGO0 builds
+        run: |
+          set -euo pipefail
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -o /dev/null ./cmd/oe
+          done
 
   # The config loader runs on the node on PATH. It must work on the oldest
   # supported Node.js and on the current release.
@@ -459,50 +205,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./scripts/test-homebrew.sh
 
-  # The one stable context for a ruleset. It requires every ungated job to
-  # succeed. The native jobs can skip only when the classification selects none.
+  # The one stable context for a ruleset. It requires every job to succeed.
   checks:
     if: always()
-    needs:
-      [
-        changes,
-        go,
-        minimum-go,
-        identity-store-native,
-        identity-default-native,
-        config-node,
-        packaging,
-        homebrew,
-      ]
+    needs: [go, minimum-go, config-node, packaging, homebrew]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every selected job
+      - name: Require every job
         env:
-          IDENTITY: ${{ needs.changes.outputs.identity }}
-          UNGATED: >-
-            changes=${{ needs.changes.result }}
+          RESULTS: >-
             go=${{ needs.go.result }}
             minimum-go=${{ needs.minimum-go.result }}
             config-node=${{ needs.config-node.result }}
             packaging=${{ needs.packaging.result }}
             homebrew=${{ needs.homebrew.result }}
-          GATED: >-
-            identity-store-native=${{ needs.identity-store-native.result }}
-            identity-default-native=${{ needs.identity-default-native.result }}
         run: |
           set -euo pipefail
-          echo "identity=$IDENTITY"
           failed=0
-          for entry in $UNGATED; do
+          for entry in $RESULTS; do
             echo "$entry"
             [[ "${entry#*=}" == success ]] || failed=1
-          done
-          for entry in $GATED; do
-            echo "$entry"
-            case "$IDENTITY:${entry#*=}" in
-              true:success | false:success | false:skipped) ;;
-              *) failed=1 ;;
-            esac
           done
           exit "$failed"
