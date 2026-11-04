@@ -2,14 +2,11 @@ package app
 
 import (
 	"context"
-	"errors"
-	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
-	"github.com/open-e2ee/oe/internal/envfile"
 	"github.com/open-e2ee/oe/internal/identity"
 	"github.com/open-e2ee/oe/internal/identityattempt"
 )
@@ -157,180 +154,155 @@ func (r *runner) inspectConfigIdentityState(ctx context.Context, address identit
 	return nil
 }
 
-func configIdentityData(environment string, retention *pushEntry, status string, operation *identityCommandResult) map[string]any {
+// identityEntry is the push entry of an environment whose section declares
+// identity. The retention entry holds the Relay policy changes.
+func identityEntry(retention *pushEntry, status string, operation *identityCommandResult) *pushEntry {
 	identityData := map[string]any{"status": status, "serviceReadiness": "unverified"}
 	if operation != nil {
 		identityData["operation"] = operation
 	}
-	return map[string]any{"environments": map[string]any{environment: map[string]any{
-		"retention": retention, "identity": identityData,
-	}}}
+	return &pushEntry{Retention: retention, Identity: identityData}
 }
 
-func (r *runner) configPushIdentity(ctx context.Context, path string, value config.Config, options identityCommandOptions) error {
-	if !r.environmentExplicit || r.validateIdentityOptions(options) != nil {
-		return identityInputFailure()
-	}
-	if r.getenv("OE_OPERATION_ID") != "" {
-		return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "Use the exact retained-operation command to confirm an operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
-	}
-	target, err := value.IdentityFor(r.environment)
-	if err != nil || target == nil {
-		return identityInputFailure()
-	}
-	policy, err := controlPolicy(value, r.environment)
-	if err != nil {
-		return err
-	}
-	connection, err := envfile.Detect(filepath.Dir(path), "")
-	if err != nil {
-		return err
-	}
-	scope := "deploy:write"
-	if options.dryRun {
-		scope = "project:read"
-	}
-	access, err := r.access(ctx, scope, false)
-	if err != nil {
-		return err
-	}
-	project, err := r.getProject(ctx, access, value.Project)
-	if err != nil {
-		return err
-	}
-	if project.Writer != "config" {
-		return identityCommandProblem("CONSOLE_WRITER", "The Console owns this project's desired policy.", "oe project show", exitFailure)
-	}
-	inactive := r.environment == "production" && (project.Production == nil || project.Production.State != control.ProductionActive)
-	if inactive && (options.namespaceFirstUse || options.slotFirstUse) {
-		return identityInputFailure()
-	}
-	push := &pusher{r: r, yes: options.yes, value: value, directory: filepath.Dir(path), variable: connection.Variable,
-		access: access, project: project, policies: map[string]control.RelayPolicyRequest{r.environment: policy}}
-	if inactive {
-		retention := push.environment(ctx, r.environment, options.dryRun)
-		data := configIdentityData(r.environment, retention, "blocked", nil)
-		if retention.failure != nil {
-			retention.failure.data = data
-			return retention.failure
+// section applies one environment section. When the run manages identity, a
+// section that declares identity takes the identity step.
+func (p *pusher) section(ctx context.Context, environment string, dryRun bool) *pushEntry {
+	if p.identity != nil {
+		target, err := p.value.IdentityFor(environment)
+		if err != nil {
+			return (&pushEntry{Changes: []control.Change{}}).stop("failed", classify(identityInputFailure(), p.command(p.yes), environment))
 		}
-		failure := identityCommandProblem("IDENTITY_ACTIVATION_REQUIRED", "Identity needs a fresh preview after the existing Production activation phase.",
-			"oe config push --dry-run --env production", exitPersonAction)
-		failure.data = data
-		return failure
+		if target != nil {
+			return p.identityEnvironment(ctx, environment, *target, dryRun)
+		}
+	}
+	return p.environment(ctx, environment, dryRun)
+}
+
+// identityEnvironment applies the retention policy and then the declared
+// identity of one environment. It writes no output; the run reports every
+// environment once.
+func (p *pusher) identityEnvironment(ctx context.Context, environment string, target identity.SelectionTarget, dryRun bool) *pushEntry {
+	options := *p.identity
+	addressed := *p.r
+	addressed.environment = environment
+	r := &addressed
+	failed := func(entry *pushEntry, status string, err error) *pushEntry {
+		return entry.stop(status, classify(err, p.command(p.yes), environment))
+	}
+	inactive := environment == "production" && (p.project.Production == nil || p.project.Production.State != control.ProductionActive)
+	if inactive && (options.namespaceFirstUse || options.slotFirstUse) {
+		return failed(identityEntry(nil, "blocked", nil), "blocked", identityInputFailure())
+	}
+	if inactive {
+		retention := p.environment(ctx, environment, dryRun)
+		entry := identityEntry(retention, "blocked", nil)
+		if retention.failure != nil {
+			return entry.stop(retention.Status, retention.failure)
+		}
+		return entry.stop("blocked", identityCommandProblem("IDENTITY_ACTIVATION_REQUIRED", "Identity needs a fresh preview after the existing Production activation phase.",
+			"oe config push --dry-run --env production", exitPersonAction))
 	}
 	identityContext, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	address, approved, err := r.readIdentityCurrent(identityContext, value.Project, identityattempt.Selection)
+	address, approved, err := r.readIdentityCurrent(identityContext, p.value.Project, identityattempt.Selection)
 	if err != nil {
-		return identityPublicFailure(err)
+		return failed(identityEntry(nil, "blocked", nil), "failed", identityPublicFailure(err))
 	}
-	change, err := planIdentityConfig(approved, *target)
+	change, err := planIdentityConfig(approved, target)
 	if err != nil {
-		return err
+		return failed(identityEntry(nil, "blocked", nil), "failed", err)
 	}
 	if change.kind == identityattempt.KeysOnly {
-		keysAddress, keysCurrent, keysErr := r.readIdentityCurrent(identityContext, value.Project, identityattempt.KeysOnly)
+		keysAddress, keysCurrent, keysErr := r.readIdentityCurrent(identityContext, p.value.Project, identityattempt.KeysOnly)
 		if keysErr != nil || !sameIdentityApprovalContext(approved, keysCurrent) {
-			return identityPublicFailure(errIdentityExecution)
+			return failed(identityEntry(nil, "blocked", nil), "failed", identityPublicFailure(errIdentityExecution))
 		}
 		address = keysAddress
 	}
 	if !change.unchanged {
 		if _, err = identityPreview(identityContext, address, approved, change.target, change.keys); err != nil {
-			return identityPublicFailure(err)
+			return failed(identityEntry(nil, "blocked", nil), "failed", identityPublicFailure(err))
 		}
 	}
-	plan, err := push.plan(ctx, r.environment)
+	plan, err := p.plan(ctx, environment)
 	if err != nil {
-		return err
+		return failed(identityEntry(nil, "blocked", nil), "failed", err)
 	}
 	retention := &pushEntry{Status: "unchanged", Changes: slices.Clone(plan.Changes)}
 	status := "unchanged"
 	if !change.unchanged {
 		status = "planned"
 	}
-	if options.dryRun {
+	if dryRun {
 		if len(plan.Changes) > 0 {
 			retention.Status = "planned"
 		}
-		return r.out.Success("config push", "Dry run. No provider or service state changed.", configIdentityData(r.environment, retention, status, nil))
+		entry := identityEntry(retention, status, nil)
+		entry.Status = "unchanged"
+		if retention.Status == "planned" || status == "planned" {
+			entry.Status = "planned"
+		}
+		return entry
 	}
 	if err := r.inspectConfigIdentityState(identityContext, address, change, options); err != nil {
-		return identityPublicFailure(err)
+		return failed(identityEntry(retention, "blocked", nil), "blocked", identityPublicFailure(err))
 	}
 	if !change.unchanged {
-		if err := r.approveIdentity("oe config push --env "+r.environment, options); err != nil {
-			return err
+		if err := r.approveIdentity("oe config push --env "+environment, options); err != nil {
+			return failed(identityEntry(retention, "blocked", nil), "blocked", err)
 		}
 	}
-	if r.environment == "production" && len(plan.Changes) > 0 {
-		blocked, err := push.consent(ctx, plan, false, "")
+	if environment == "production" && len(plan.Changes) > 0 {
+		blocked, err := p.consent(ctx, plan, false, "")
 		if err != nil {
-			return err
+			return failed(identityEntry(retention, "blocked", nil), "failed", err)
 		}
 		if blocked != nil {
-			return blocked
+			return identityEntry(retention, "blocked", nil).stop("blocked", blocked)
 		}
 	}
-	lock, err := lockProject(ctx, filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
 	if len(plan.Changes) > 0 {
-		deployed, err := push.apply(ctx, plan, r.environment)
+		deployed, err := p.apply(ctx, plan, environment)
 		if err != nil {
-			failure := classify(err, push.command(push.yes), r.environment)
-			failure.data = configIdentityData(r.environment, retention, "blocked", nil)
-			return failure
+			return failed(identityEntry(retention, "blocked", nil), "failed", err)
 		}
 		retention.Status, retention.Revision = "applied", deployed.Revision
 	}
 	if change.unchanged {
-		return r.out.Success("config push", "The declared identity is unchanged.", configIdentityData(r.environment, retention, "unchanged", nil))
+		entry := identityEntry(retention, "unchanged", nil)
+		entry.Status = retention.Status
+		return entry
 	}
 	finalContext, finalCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer finalCancel()
-	freshAddress, fresh, err := r.readIdentityCurrent(finalContext, value.Project, change.kind)
+	freshAddress, fresh, err := r.readIdentityCurrent(finalContext, p.value.Project, change.kind)
 	if err != nil || !sameIdentityApprovalContext(approved, fresh) {
-		failure := identityCommandProblem("IDENTITY_CONTEXT_CHANGED", "The approved identity context changed. Retention and identity have separate outcomes.",
-			"oe config push --dry-run --env "+r.environment, exitFailure)
-		failure.data = configIdentityData(r.environment, retention, "blocked", nil)
-		return failure
+		return identityEntry(retention, "blocked", nil).stop("blocked", identityCommandProblem("IDENTITY_CONTEXT_CHANGED",
+			"The approved identity context changed. Retention and identity have separate outcomes.", "oe config push --dry-run --env "+environment, exitFailure))
 	}
 	if _, err := identityPreview(finalContext, freshAddress, fresh, change.target, change.keys); err != nil {
-		failure, ok := errors.AsType[*problem](identityPublicFailure(err))
-		if !ok {
-			return errIdentityExecution
-		}
-		failure.data = configIdentityData(r.environment, retention, "blocked", nil)
-		return failure
+		return failed(identityEntry(retention, "blocked", nil), "blocked", identityPublicFailure(err))
 	}
 	action := identityattempt.SelectionApplyAction
 	if change.kind == identityattempt.KeysOnly {
 		action = identityattempt.KeysReplaceAction
 	}
-	result, err := r.executeIdentity(finalContext, identityExecutionInput{Project: value.Project, Kind: change.kind, Action: action,
+	result, err := r.executeIdentity(finalContext, identityExecutionInput{Project: p.value.Project, Kind: change.kind, Action: action,
 		Target: change.target, Keys: change.keys, Approved: &approved, Consent: true,
 		NamespaceFirstUse: options.namespaceFirstUse, SlotFirstUse: options.slotFirstUse})
 	if err != nil {
-		failure, ok := errors.AsType[*problem](identityExecutionFailure(err, change.kind, r.environment))
-		if !ok {
-			return errIdentityExecution
-		}
-		failure.data = configIdentityData(r.environment, retention, "failed", nil)
-		return failure
+		return failed(identityEntry(retention, "failed", nil), "failed", identityExecutionFailure(err, change.kind, environment))
 	}
 	operation, err := projectIdentityExecution(change.kind, result)
 	if err != nil {
-		return err
+		return failed(identityEntry(retention, "failed", nil), "failed", err)
 	}
-	operation.Environment = r.environment
-	data := configIdentityData(r.environment, retention, operation.Status, &operation)
+	operation.Environment = environment
+	entry := identityEntry(retention, operation.Status, &operation)
 	if failure := identityResultFailure(operation); failure != nil {
-		failure.data = data
-		return failure
+		return entry.stop("failed", failure)
 	}
-	return r.out.Success("config push", "The exact identity command receipt is settled. Current service readiness remains unverified.", data)
+	entry.Status = "applied"
+	return entry
 }

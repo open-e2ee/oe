@@ -338,12 +338,18 @@ func (f *commandFixture) writeLifecycleResult(w io.Writer, body map[string]json.
 
 func (f *commandFixture) run(args ...string) (int, string, string) {
 	f.t.Helper()
+	return f.runPlain(append([]string{"--env", f.environmentKind}, args...)...)
+}
+
+// runPlain runs a command without the injected --env of run.
+func (f *commandFixture) runPlain(args ...string) (int, string, string) {
+	f.t.Helper()
 	var stdout, stderr bytes.Buffer
 	dependencies := f.dependencies
 	dependencies.Out, dependencies.Err = &stdout, &stderr
 	ctx, cancel := context.WithTimeout(context.Background(), commandFixtureTimeout)
 	defer cancel()
-	command := append([]string{"--json", "--control-url", f.server.URL, "--env", f.environmentKind}, args...)
+	command := append([]string{"--json", "--control-url", f.server.URL}, args...)
 	exit := app.Run(ctx, command, dependencies)
 	if ctx.Err() != nil {
 		f.t.Log("native command fixture context ended:", ctx.Err())
@@ -1011,7 +1017,7 @@ func TestPublicCommandActualStoreProductionIdentityAndRetentionConsent(t *testin
 				t.Fatal("identity approval bypassed the separate Production retention prompt", exit, stdout.String(), stderr.String())
 			}
 			if !approveRetention {
-				if exit != 1 || !strings.Contains(stderr.String(), "error: the Production push was cancelled\n") ||
+				if exit != 1 || !strings.Contains(stderr.String(), "error: Production: the Production push was cancelled.\n") ||
 					len(f.requests("/v1/deploys")) != 0 || len(f.requests("select")) != 0 || len(f.requests("prepare")) != 0 || f.factory.bootstraps != 0 {
 					t.Fatal("declined retention allowed a deploy, identity dispatch or first use", exit, stdout.String(), stderr.String())
 				}
@@ -1068,5 +1074,33 @@ func TestPublicCommandActualStoreRefreshedAdmissionCheckTime(t *testing.T) {
 	f.mu.Unlock()
 	if checkedAt < 3 || f.retained(identityattempt.Selection) != nil {
 		t.Fatal("timestamp fixture did not cross independent reads or settle the original command")
+	}
+}
+
+func TestPublicCommandActualStoreIdentityPlainPushReachesBothEnvironments(t *testing.T) {
+	f := newCommandFixture(t, commandFirebase)
+	exit, out, stderr := f.run("config", "push", "--confirm-slot-never-used")
+	if exit != 0 {
+		t.Fatal("Sandbox slot did not initialize", exit, out, stderr)
+	}
+	f.environmentKind = "production"
+	exit, out, stderr = f.run("config", "push", "--yes", "--confirm-slot-never-used")
+	if exit != 0 {
+		t.Fatal("Production slot did not initialize", exit, out, stderr)
+	}
+	exit, out, stderr = f.runPlain("config", "push", "--yes")
+	var result struct {
+		Data struct {
+			Environments map[string]struct {
+				Status string `json:"status"`
+			} `json:"environments"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if exit != 0 || len(f.requests("select")) != 4 ||
+		result.Data.Environments["sandbox"].Status != "applied" || result.Data.Environments["production"].Status != "applied" {
+		t.Fatal("plain config push did not apply identity to both environments", exit, out, stderr)
 	}
 }

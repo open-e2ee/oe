@@ -139,11 +139,19 @@ func TestPublicIdentityPullReplacementNeedsExistingConsent(t *testing.T) {
 	}
 }
 
-func TestPublicIdentityPushRequiresLiteralSingleEnvironment(t *testing.T) {
-	for _, source := range []string{"default", "OE_ENV", "literal"} {
+func TestPublicIdentityPushAppliesEveryDeclaredEnvironment(t *testing.T) {
+	entry := func(t *testing.T, result event, name string) map[string]any {
+		t.Helper()
+		environments, _ := result.Data["environments"].(map[string]any)
+		value, _ := environments[name].(map[string]any)
+		if value == nil {
+			t.Fatal("push did not report the environment", name, result)
+		}
+		return value
+	}
+	for _, source := range []string{"default", "OE_ENV"} {
 		t.Run(source, func(t *testing.T) {
 			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
-			args := []string{"config", "push", "--dry-run"}
 			if source == "OE_ENV" {
 				f.dependencies.Getenv = func(key string) string {
 					if key == "OE_ENV" {
@@ -152,20 +160,69 @@ func TestPublicIdentityPushRequiresLiteralSingleEnvironment(t *testing.T) {
 					return ""
 				}
 			}
-			if source == "literal" {
-				args = append(args, "--env", "sandbox")
+			exit, out, stderr := f.run(t, "config", "push", "--dry-run")
+			if exit != 0 || f.count("preview") != 2 || f.count("/v1/projects/sample/deploys/plan") != 2 {
+				t.Fatal("plain identity push did not preview every declared environment", exit, out, stderr)
 			}
-			exit, out, stderr := f.run(t, args...)
-			if source == "literal" {
-				if exit != 0 || f.count("preview") != 1 {
-					t.Fatal("identity-only diff vanished behind empty retention plan", exit, out, stderr)
-				}
-			} else if exit != exitUsage || f.count("current") != 0 || f.count("/v1/projects/sample/deploys/plan") != 0 {
-				t.Fatal("implicit multi-environment identity push accepted", exit, out, stderr)
+			result := decodeEvent(t, []byte(out))
+			for _, name := range []string{"sandbox", "production"} {
+				entry(t, result, name)
 			}
 			f.requireNoMutation(t)
 		})
 	}
+	t.Run("literal", func(t *testing.T) {
+		f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+		exit, out, stderr := f.run(t, "config", "push", "--dry-run", "--env", "sandbox")
+		if exit != 0 || f.count("preview") != 1 {
+			t.Fatal("identity-only diff vanished behind empty retention plan", exit, out, stderr)
+		}
+		f.requireNoMutation(t)
+	})
+	t.Run("sandbox-failure-skips-production", func(t *testing.T) {
+		f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+		exit, out, stderr := f.run(t, "config", "push", "--yes")
+		result := decodeEvent(t, []byte(out))
+		production := entry(t, result, "production")
+		if exit == 0 || result.Code != "STORE_LOCATION" || production["status"] != "skipped" || production["reason"] != "sandbox_not_applied" ||
+			f.count("preview") != 1 || f.count("/v1/deploys") != 0 {
+			t.Fatal("a Sandbox identity failure did not skip Production", exit, out, stderr)
+		}
+	})
+	t.Run("sandbox-only-file", func(t *testing.T) {
+		f := publicIdentityTestFixture(t, "")
+		source := config.New("sample")
+		target := executionDecode[identity.SelectionTarget](t, `{"mode":"device-owned"}`)
+		source.Environments.Sandbox.Identity = &target
+		source.Environments.Production = nil
+		if err := os.Remove(f.path); err != nil {
+			t.Fatal(err)
+		}
+		if err := config.Create(f.path, source); err != nil {
+			t.Fatal(err)
+		}
+		exit, out, stderr := f.run(t, "config", "push", "--dry-run")
+		if exit != 0 || f.count("preview") != 1 {
+			t.Fatal("a Sandbox-only identity file did not preview Sandbox", exit, out, stderr)
+		}
+		production := entry(t, decodeEvent(t, []byte(out)), "production")
+		if production["status"] != "skipped" || production["reason"] != "not_in_file" {
+			t.Fatal("an active Production without a section was not reported as kept", out)
+		}
+		f.requireNoMutation(t)
+	})
+	t.Run("inactive-production", func(t *testing.T) {
+		f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+		f.project.Production.State = control.ProductionInactive
+		f.project.Production.Revision = ""
+		f.project.Production.BlockedBy = ""
+		exit, out, stderr := f.run(t, "config", "push", "--dry-run")
+		result := decodeEvent(t, []byte(out))
+		if exit != exitPersonAction || result.Code != "IDENTITY_ACTIVATION_REQUIRED" || entry(t, result, "sandbox")["identity"] == nil || f.count("preview") != 1 {
+			t.Fatal("inactive Production did not keep its separate activation phase", exit, out, stderr)
+		}
+		f.requireNoMutation(t)
+	})
 }
 
 func TestPublicIdentityPushDoesNotReuseGenericOperationEnvironment(t *testing.T) {

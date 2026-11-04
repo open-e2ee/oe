@@ -89,7 +89,7 @@
       },
       {
         "name": "config",
-        "summary": "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing. Optional identity fields apply only to their environment. Pull --identity adds those fields explicitly. Identity push needs literal --env. Inactive Production activates before a later identity preview.",
+        "summary": "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing. Optional identity fields apply only to their environment. Pull --identity adds those fields explicitly. The identity first-use declarations need a literal --env. Inactive Production activates before a later identity preview.",
         "usage": [
           "oe config push [--env sandbox|production] [--yes] [--dry-run] [--confirm-state-never-used] [--confirm-slot-never-used]",
           "oe config pull [--identity] [--env sandbox|production] [--yes] [--dry-run]"
