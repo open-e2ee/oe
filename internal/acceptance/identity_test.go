@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +48,7 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 	}
 	var mutex sync.Mutex
 	actions := []string{}
+	writer := "config"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer owned_binary_token" {
 			t.Error("built-binary credential changed")
@@ -68,7 +70,10 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 				Organization: control.SessionOrganization{ID: "owned_org", Name: "Owned fixture"}})
 		case "/v1/projects/loaded-chat":
 			receipts := true
-			_ = json.NewEncoder(w).Encode(control.Project{Slug: "loaded-chat", Writer: "config",
+			mutex.Lock()
+			projectWriter := writer
+			mutex.Unlock()
+			_ = json.NewEncoder(w).Encode(control.Project{Slug: "loaded-chat", Writer: projectWriter,
 				Sandbox: &control.ProjectEnvironment{State: "active", Revision: "1", RelayReceipts: &receipts,
 					DeliveryRetentionSeconds: 86400, AttachmentRetentionSeconds: 86400,
 					RelayURL: "https://relay.example/signal/v1/connection/pk_owned"}})
@@ -123,7 +128,7 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 		}
 		return total
 	}
-	run := func(args ...string) []byte {
+	invoke := func(args ...string) ([]byte, string, error) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -141,14 +146,19 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 		var stderr bytes.Buffer
 		command.Stderr = &stderr
 		data, err := command.Output()
+		if bytes.Contains(data, []byte("owned_binary_token")) {
+			t.Fatal("built-binary output exposed its credential")
+		}
+		return data, stderr.String(), err
+	}
+	run := func(args ...string) []byte {
+		t.Helper()
+		data, stderr, err := invoke(args...)
 		var result struct {
 			Status string `json:"status"`
 		}
-		if err != nil || json.Unmarshal(data, &result) != nil || result.Status != "ok" || stderr.Len() != 0 {
-			t.Fatalf("built-binary command %v failed: %v\n%s\n%s", args, err, data, stderr.String())
-		}
-		if bytes.Contains(data, []byte("owned_binary_token")) {
-			t.Fatal("built-binary output exposed its credential")
+		if err != nil || json.Unmarshal(data, &result) != nil || result.Status != "ok" || stderr != "" {
+			t.Fatalf("built-binary command %v failed: %v\n%s\n%s", args, err, data, stderr)
 		}
 		return data
 	}
@@ -184,6 +194,19 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 	if err := os.WriteFile(keys, []byte("["+binaryIdentityKey+"]"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	data, stderr, err := invoke("identity", "keys", "rotate", "--keys", keys, "--dry-run", "--env", "sandbox")
+	var refusal struct {
+		Code string `json:"code"`
+		Next string `json:"next"`
+	}
+	exit, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || exit.ExitCode() != 1 || json.Unmarshal(data, &refusal) != nil || refusal.Code != "IDENTITY_CONFIG_WRITER" ||
+		refusal.Next != "oe config push --dry-run --env sandbox" || stderr != "" || count("preview") != 1 || count("keys-read") != 0 {
+		t.Fatalf("built-binary config-owned keys rotation was not refused: %v\n%s\n%s", err, data, stderr)
+	}
+	mutex.Lock()
+	writer = "console"
+	mutex.Unlock()
 	run("identity", "keys", "rotate", "--keys", keys, "--dry-run", "--env", "sandbox")
 	if count("preview") != 2 || count("keys-read") != 1 {
 		t.Fatal("built-binary dry-run did not use its actual read/preview routes")

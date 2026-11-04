@@ -596,7 +596,7 @@ func TestPublicCommandActualStoreLostReplyReplaysExactOriginal(t *testing.T) {
 }
 
 func TestPublicCommandActualStoreKeysUsesSeparateKind(t *testing.T) {
-	f := newCommandFixture(t, configuredWire)
+	f := newCommandFixture(t, commandClerk)
 	path := filepath.Join(f.directory, "public-keys.json")
 	if err := os.WriteFile(path, []byte("["+strings.Replace(keyWire, "key-one", "key-two", 1)+"]"), 0600); err != nil {
 		t.Fatal(err)

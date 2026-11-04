@@ -336,6 +336,9 @@ func TestPublicIdentityScopedFirstUseRequiresLiteralEnvironment(t *testing.T) {
 
 func TestPublicIdentityKeysDryRunUsesSeparateActualRead(t *testing.T) {
 	f := publicIdentityTestFixture(t, configuredExecutionWire)
+	// A config-writer file with ES256 keys owns rotation; this read path is the
+	// console-writer one.
+	f.project.Writer = "console"
 	path := filepath.Join(t.TempDir(), "public-keys.json")
 	if err := os.WriteFile(path, []byte("["+keyExecutionWire+"]"), 0600); err != nil {
 		t.Fatal(err)
@@ -494,4 +497,38 @@ func TestPublicNativeDraftCheckRemainsExplicitlyUnsupported(t *testing.T) {
 		}
 		f.requireNoMutation(t)
 	}
+}
+
+func TestPublicIdentityKeysRotateRefusedWhenConfigOwnsKeys(t *testing.T) {
+	keys := func(t *testing.T) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "public-keys.json")
+		if err := os.WriteFile(path, []byte("["+keyExecutionWire+"]"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, mode := range []string{"--dry-run", "--yes"} {
+		t.Run(mode, func(t *testing.T) {
+			f := publicIdentityTestFixture(t, configuredExecutionWire)
+			exit, out, stderr := f.run(t, "identity", "keys", "rotate", "--keys", keys(t), "--env", "sandbox", mode)
+			result := decodeEvent(t, []byte(out))
+			if exit != exitFailure || result.Code != "IDENTITY_CONFIG_WRITER" || result.Next != "oe config push --dry-run --env sandbox" {
+				t.Fatal("config-owned keys rotation was not refused", exit, out, stderr)
+			}
+			if f.count("keys-read") != 0 || f.count("preview") != 0 {
+				t.Fatal("refusal reached the keys read or preview")
+			}
+			f.requireNoMutation(t)
+		})
+	}
+	t.Run("console-writer", func(t *testing.T) {
+		f := publicIdentityTestFixture(t, configuredExecutionWire)
+		f.project.Writer = "console"
+		exit, out, stderr := f.run(t, "identity", "keys", "rotate", "--keys", keys(t), "--env", "sandbox", "--dry-run")
+		if exit != 0 || f.count("preview") != 1 {
+			t.Fatal("console-writer keys dry-run changed", exit, out, stderr)
+		}
+		f.requireNoMutation(t)
+	})
 }
