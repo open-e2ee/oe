@@ -241,6 +241,8 @@ Cancel a selection or keys operation with
 `oe identity operation cancel --kind K --operation-id ID`.
 A cancel sends its own operation ID. For a cancel, `OE_OPERATION_ID` sets that
 ID, and it cannot equal `--operation-id`.
+A failed cancel reports its own ID in `data.cancellationOperationId`. To repeat
+that cancel, set `OE_OPERATION_ID` to that ID.
 Production writes still require `--yes` or the existing interactive confirmation.
 
 A dry-run and a `CONFIRMATION_REQUIRED` refusal show the exact identity change.

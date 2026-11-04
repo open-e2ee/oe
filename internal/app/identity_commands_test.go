@@ -27,6 +27,9 @@ const publicObservationWire = `{"operationId":"read_one","scope":` + scopeExecut
 // the canonical mutation body that created it.
 type publicIdentityOperation struct {
 	action, body, result string
+	// state is the selection or keys-only state, and cancel is the body of
+	// the first cancel. Relay refuses a cancel with another body.
+	state, cancel string
 }
 
 // This loopback fixture qualifies actual Go parsing and transport only.
@@ -52,6 +55,9 @@ type publicIdentityFixture struct {
 	state, status string
 	// lose stores the operation of the action and then loses its reply.
 	lose map[string]bool
+	// fenceTarget answers the no-ID lifecycle target read as Console answers
+	// a Relay RECOVERY_FENCED reply: 502 IDENTITY_RESULT_INVALID.
+	fenceTarget bool
 }
 
 func publicIdentityTestFixture(t *testing.T, desired string) *publicIdentityFixture {
@@ -202,6 +208,10 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(identity.PreviewResult{Kind: request.Kind, ExpectedConfigurationVersion: request.ExpectedConfigurationVersion,
 				Target: request.Target, Keys: request.Keys, Current: current, NativeCapabilities: f.capabilities})
 		case "target":
+			if f.fenceTarget {
+				f.fail(w, 502, "IDENTITY_RESULT_INVALID")
+				return
+			}
 			value := executionDecode[identity.TargetObservation](f.t, publicObservationWire)
 			value.Scope.EnvironmentKind = environment
 			_ = json.NewEncoder(w).Encode(value)
@@ -214,7 +224,7 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 			f.mu.Lock()
 			operation, held := f.operations[id]
 			if !held {
-				operation = publicIdentityOperation{action: action, body: string(canonical), result: selectionExecutionResult(id, f.state, action == "keys-replace")}
+				operation = publicIdentityOperation{action: action, body: string(canonical), state: f.state, result: selectionExecutionResult(id, f.state, action == "keys-replace")}
 				f.operations[id] = operation
 			}
 			f.mu.Unlock()
@@ -226,17 +236,32 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 		case "selection-operation":
 			f.replay(w, "select", text("selectionOperationId"))
 		case "selection-cancel", "keys-cancel":
+			// Relay keeps the first cancel body, refuses another one, and
+			// cancels only a prepared or fenced operation. Console answers
+			// each Relay 409 with IDENTITY_CONFLICT.
+			canonical, err := json.Marshal(body)
+			if err != nil {
+				f.t.Error("cancel body invalid", action)
+			}
 			id := text("selectionOperationId")
 			kind := map[string]string{"selection-cancel": "select", "keys-cancel": "keys-replace"}[action]
 			f.mu.Lock()
 			operation, held := f.operations[id]
-			if held && operation.action == kind {
+			held = held && operation.action == kind
+			refused := held && (operation.cancel != "" && operation.cancel != string(canonical) ||
+				operation.cancel == "" && operation.state != "prepared" && operation.state != "fenced")
+			if held && !refused && operation.cancel == "" {
+				operation.state, operation.cancel = "aborted", string(canonical)
 				operation.result = selectionExecutionResult(id, "aborted", kind == "keys-replace")
 				f.operations[id] = operation
 			}
 			f.mu.Unlock()
-			if !held || operation.action != kind {
+			if !held {
 				f.fail(w, 404, "IDENTITY_OPERATION_NOT_FOUND")
+				return
+			}
+			if refused {
+				f.fail(w, 409, "IDENTITY_CONFLICT")
 				return
 			}
 			f.reply(w, action, operation.result)

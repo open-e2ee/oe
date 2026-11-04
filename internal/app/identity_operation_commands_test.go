@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -446,27 +448,43 @@ func TestIdentityPendingSelectionNamesRepeatAndCancelAborts(t *testing.T) {
 	}
 }
 
+// A fenced lifecycle reply models a loss at reserve or commit. Relay then
+// answers the no-ID target read with RECOVERY_FENCED, and only the prepared ID
+// that the failure printed recovers the operation.
 func TestIdentityLostLifecycleReplyRecoversByStatusAndResume(t *testing.T) {
-	f := publicIdentityTestFixture(t, "")
-	f.lose["apply"] = true
-	f.dependencies.In = strings.NewReader(publicTargetWire)
-	exit, out, stderr := f.run(t, "identity", "lifecycle", "suspend", "--target-stdin", "--env", "sandbox")
-	failure := decodeEvent(t, []byte(out))
-	if exit != exitTemporary || failure.Code != "IDENTITY_UNAVAILABLE" || failure.Data["operationId"] != preparedExecutionID || failure.Data["kind"] != "lifecycle" ||
-		failure.Next != "oe identity operation status --kind lifecycle --operation-id "+preparedExecutionID+" --env sandbox" {
-		t.Fatal("a lost lifecycle reply did not name its prepared operation", exit, out, stderr)
-	}
-	f.lose["apply"] = false
-	exit, out, stderr = f.run(t, strings.Fields(strings.TrimPrefix(failure.Next, "oe "))...)
-	continuation := decodeEvent(t, []byte(out))
-	if exit != exitTemporary || continuation.Code != "IDENTITY_CONTINUATION_REQUIRED" ||
-		continuation.Next != "oe identity operation resume --kind lifecycle --operation-id "+preparedExecutionID+" --env sandbox" {
-		t.Fatal("status did not name the resume of the same operation", exit, out, stderr)
-	}
-	exit, out, stderr = f.run(t, strings.Fields(strings.TrimPrefix(continuation.Next, "oe "))...)
-	if exit != 0 || publicOperation(t, out)["operationId"] != preparedExecutionID || publicOperation(t, out)["status"] != "converged" ||
-		f.count("resume") != 1 || f.count("prepare") != 1 || f.count("apply") != 1 {
-		t.Fatal("resume did not continue the same lifecycle operation", exit, out, stderr)
+	for _, fenced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "finish", true: "fenced"}[fenced], func(t *testing.T) {
+			f := publicIdentityTestFixture(t, "")
+			f.lose["apply"] = true
+			f.dependencies.In = strings.NewReader(publicTargetWire)
+			exit, out, stderr := f.run(t, "identity", "lifecycle", "suspend", "--target-stdin", "--env", "sandbox")
+			failure := decodeEvent(t, []byte(out))
+			if exit != exitTemporary || failure.Code != "IDENTITY_UNAVAILABLE" || failure.Data["operationId"] != preparedExecutionID || failure.Data["kind"] != "lifecycle" ||
+				failure.Next != "oe identity operation status --kind lifecycle --operation-id "+preparedExecutionID+" --env sandbox" {
+				t.Fatal("a lost lifecycle reply did not name its prepared operation", exit, out, stderr)
+			}
+			f.lose["apply"] = false
+			if fenced {
+				f.fenceTarget = true
+				f.dependencies.In = strings.NewReader(publicTargetWire)
+				exit, out, stderr := f.run(t, "identity", "operation", "status", "--kind", "lifecycle", "--target-stdin", "--env", "sandbox")
+				if exit == 0 || decodeEvent(t, []byte(out)).Code != "IDENTITY_RESULT_INVALID" || f.count("resume") != 0 {
+					t.Fatal("the no-ID read did not meet the fence", exit, out, stderr)
+				}
+			}
+			before := f.count("target")
+			exit, out, stderr = f.run(t, strings.Fields(strings.TrimPrefix(failure.Next, "oe "))...)
+			continuation := decodeEvent(t, []byte(out))
+			if exit != exitTemporary || continuation.Code != "IDENTITY_CONTINUATION_REQUIRED" ||
+				continuation.Next != "oe identity operation resume --kind lifecycle --operation-id "+preparedExecutionID+" --env sandbox" {
+				t.Fatal("status did not name the resume of the same operation", exit, out, stderr)
+			}
+			exit, out, stderr = f.run(t, strings.Fields(strings.TrimPrefix(continuation.Next, "oe "))...)
+			if exit != 0 || publicOperation(t, out)["operationId"] != preparedExecutionID || publicOperation(t, out)["status"] != "converged" ||
+				f.count("resume") != 1 || f.count("prepare") != 1 || f.count("apply") != 1 || f.count("target") != before {
+				t.Fatal("resume did not continue the same lifecycle operation by its ID alone", exit, out, stderr)
+			}
+		})
 	}
 }
 
@@ -531,25 +549,29 @@ func TestIdentityInvalidOperationEnvironmentSendsNothing(t *testing.T) {
 	if err := os.WriteFile(path, []byte("["+keyExecutionWire+"]"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{
-		{"identity", "select", "--env", "sandbox"},
-		{"identity", "keys", "rotate", "--keys", path, "--env", "sandbox"},
-		{"identity", "operation", "cancel", "--kind", "selection", "--operation-id", "held_exact_001", "--env", "sandbox"},
-		{"identity", "operation", "cancel", "--kind", "keys-only", "--operation-id", "held_keys_001", "--env", "sandbox"},
+	for name, args := range map[string][]string{
+		"select":        {"identity", "select", "--env", "sandbox"},
+		"keys rotate":   {"identity", "keys", "rotate", "--keys", path, "--env", "sandbox"},
+		"cancel select": {"identity", "operation", "cancel", "--kind", "selection", "--operation-id", "held_exact_001", "--env", "sandbox"},
+		"cancel keys":   {"identity", "operation", "cancel", "--kind", "keys-only", "--operation-id", "held_keys_001", "--env", "sandbox"},
 	} {
-		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
-			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
-			f.operationEnvironment("bad id")
-			exit, out, stderr := f.run(t, args...)
-			if exit != exitUsage || decodeEvent(t, []byte(out)).Code != "IDENTITY_INPUT_INVALID" {
-				t.Fatal("an invalid OE_OPERATION_ID was not a usage error", exit, out, stderr)
-			}
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			if len(f.calls) != 0 {
-				t.Fatal("an invalid OE_OPERATION_ID sent a request", f.calls)
-			}
-		})
+		// A trim makes each padded value the valid ID held_other_001, so its
+		// refusal proves that the CLI never normalizes the key.
+		for _, value := range []string{"bad id", "short", " held_other_001", "held_other_001 ", "held_other_001\n", "\theld_other_001"} {
+			t.Run(name+" "+strconv.Quote(value), func(t *testing.T) {
+				f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+				f.operationEnvironment(value)
+				exit, out, stderr := f.run(t, args...)
+				if exit != exitUsage || decodeEvent(t, []byte(out)).Code != "IDENTITY_INPUT_INVALID" {
+					t.Fatal("an invalid OE_OPERATION_ID was not a usage error", exit, out, stderr)
+				}
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if len(f.calls) != 0 {
+					t.Fatal("an invalid OE_OPERATION_ID sent a request", f.calls)
+				}
+			})
+		}
 	}
 }
 
@@ -570,5 +592,154 @@ func TestIdentityCancelRefusesItsOwnOperationID(t *testing.T) {
 				t.Fatal("a cancel with its own operation ID sent a request", f.calls)
 			}
 		})
+	}
+}
+
+// cancelBodies records the body of each cancel request that reaches the fixture.
+func (f *publicIdentityFixture) cancelBodies() *[]map[string]any {
+	bodies := &[]map[string]any{}
+	f.hook = func(action string, r *http.Request) {
+		if action != "selection-cancel" && action != "keys-cancel" {
+			return
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			f.t.Error(err)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(data))
+		var body map[string]any
+		if json.Unmarshal(data, &body) != nil {
+			f.t.Error("cancel body did not parse")
+		}
+		f.mu.Lock()
+		*bodies = append(*bodies, body)
+		f.mu.Unlock()
+	}
+	return bodies
+}
+
+func TestIdentityLostKeysReplyRecoversByStatusAndReplay(t *testing.T) {
+	f := publicIdentityTestFixture(t, configuredExecutionWire)
+	f.project.Writer = "console"
+	path := filepath.Join(t.TempDir(), "public-keys.json")
+	if err := os.WriteFile(path, []byte("["+keyExecutionWire+"]"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.lose["keys-replace"] = true
+	exit, out, stderr := f.run(t, "identity", "keys", "rotate", "--keys", path, "--env", "sandbox")
+	failure := decodeEvent(t, []byte(out))
+	id, _ := failure.Data["operationId"].(string)
+	if exit != exitTemporary || failure.Code != "IDENTITY_UNAVAILABLE" || !strings.HasPrefix(id, "oe_") || failure.Data["kind"] != "keys-only" ||
+		failure.Next != "oe identity operation status --kind keys-only --operation-id "+id+" --env sandbox" {
+		t.Fatal("a lost keys reply did not name its operation", exit, out, stderr)
+	}
+	f.lose["keys-replace"] = false
+	exit, out, stderr = f.run(t, strings.Fields(strings.TrimPrefix(failure.Next, "oe "))...)
+	if exit != 0 || publicOperation(t, out)["operationId"] != id || publicOperation(t, out)["status"] != "applied" {
+		t.Fatal("status by the reported ID did not read the server keys operation", exit, out, stderr)
+	}
+	f.operationEnvironment(id)
+	exit, out, stderr = f.run(t, "identity", "keys", "rotate", "--keys", path, "--env", "sandbox")
+	if exit != 0 || publicOperation(t, out)["operationId"] != id || f.operationCount("keys-replace") != 1 || f.count("keys-replace") != 2 {
+		t.Fatal("the repeat with the reported ID did not replay", exit, out, stderr)
+	}
+}
+
+func TestIdentityAppliedCancellationRefusalReportsBothIDs(t *testing.T) {
+	for _, provider := range []struct{ name, wire string }{{"clerk", publicClerkWire}, {"firebase", publicFirebaseWire}} {
+		t.Run(provider.name, func(t *testing.T) {
+			f := publicIdentityTestFixture(t, provider.wire)
+			f.state = "prepared"
+			exit, out, stderr := f.run(t, "identity", "select", "--env", "sandbox")
+			operation, _ := decodeEvent(t, []byte(out)).Data["operation"].(map[string]any)
+			id, _ := operation["operationId"].(string)
+			if exit != exitTemporary || !strings.HasPrefix(id, "oe_") {
+				t.Fatal("the selection did not stay prepared", exit, out, stderr)
+			}
+			f.mu.Lock()
+			held := f.operations[id]
+			held.state = "applied"
+			f.operations[id] = held
+			f.mu.Unlock()
+			bodies := f.cancelBodies()
+			exit, out, stderr = f.run(t, "identity", "operation", "cancel", "--kind", "selection", "--operation-id", id, "--env", "sandbox")
+			refusal := decodeEvent(t, []byte(out))
+			cancellation, _ := refusal.Data["cancellationOperationId"].(string)
+			if exit != exitFailure || refusal.Code != "IDENTITY_CONFLICT" || refusal.Data["operationId"] != id ||
+				!strings.HasPrefix(cancellation, "oe_") || cancellation == id ||
+				!strings.Contains(refusal.Error, "The cancel has operation ID "+cancellation+" and targets operation "+id+".") ||
+				!strings.Contains(refusal.Error, "OE_OPERATION_ID="+cancellation+" oe identity operation cancel --kind selection --operation-id "+id+" --env sandbox") {
+				t.Fatal("the applied cancellation refusal did not report both IDs", exit, out, stderr)
+			}
+			f.operationEnvironment(cancellation)
+			exit, out, stderr = f.run(t, "identity", "operation", "cancel", "--kind", "selection", "--operation-id", id, "--env", "sandbox")
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if exit != exitFailure || decodeEvent(t, []byte(out)).Code != "IDENTITY_CONFLICT" || len(*bodies) != 2 || !reflect.DeepEqual((*bodies)[0], (*bodies)[1]) ||
+				(*bodies)[0]["operationId"] != cancellation || f.operations[id].state != "applied" {
+				t.Fatal("the repeated cancel did not send the same cancel", exit, out, stderr)
+			}
+		})
+	}
+}
+
+func TestIdentityUnknownCancellationTargetReportsBothIDsWithoutARepeat(t *testing.T) {
+	f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+	exit, out, stderr := f.run(t, "identity", "operation", "cancel", "--kind", "selection", "--operation-id", "held_none_001", "--env", "sandbox")
+	refusal := decodeEvent(t, []byte(out))
+	cancellation, _ := refusal.Data["cancellationOperationId"].(string)
+	if exit != exitFailure || refusal.Code != "IDENTITY_OPERATION_NOT_FOUND" || refusal.Data["operationId"] != "held_none_001" || !strings.HasPrefix(cancellation, "oe_") ||
+		!strings.Contains(refusal.Error, "The cancel has operation ID "+cancellation+" and targets operation held_none_001.") ||
+		strings.Contains(refusal.Error, "To repeat") || refusal.Next != "oe identity current --env sandbox" {
+		t.Fatal("an unknown cancel target did not report both IDs without a repeat", exit, out, stderr)
+	}
+}
+
+func TestIdentityCancellationSendsSelectionIDAndCurrentPreconditionForBothProviders(t *testing.T) {
+	for _, provider := range []struct{ name, wire string }{{"clerk", publicClerkWire}, {"firebase", publicFirebaseWire}} {
+		for _, kind := range []string{"selection", "keys-only"} {
+			t.Run(provider.name+" "+kind, func(t *testing.T) {
+				f := publicIdentityTestFixture(t, provider.wire)
+				f.state = "prepared"
+				id := "held_keys_001"
+				if kind == "selection" {
+					exit, out, stderr := f.run(t, "identity", "select", "--env", "sandbox")
+					operation, _ := decodeEvent(t, []byte(out)).Data["operation"].(map[string]any)
+					id, _ = operation["operationId"].(string)
+					if exit != exitTemporary || !strings.HasPrefix(id, "oe_") {
+						t.Fatal("the selection did not stay prepared", exit, out, stderr)
+					}
+				} else {
+					f.operations[id] = publicIdentityOperation{action: "keys-replace", state: "prepared", result: selectionExecutionResult(id, "prepared", true)}
+				}
+				// A cancel needs no native capability.
+				f.capabilities = identity.NativeCapabilities{Clerk: "closed", Firebase: "closed"}
+				bodies := f.cancelBodies()
+				exit, out, stderr := f.run(t, "identity", "operation", "cancel", "--kind", kind, "--operation-id", id, "--env", "sandbox")
+				if exit != 0 || publicOperation(t, out)["operationId"] != id || publicOperation(t, out)["status"] != "aborted" {
+					t.Fatal("the cancel did not abort the server operation", exit, out, stderr)
+				}
+				current, err := f.current.Clone()
+				if err != nil {
+					t.Fatal(err)
+				}
+				current.Precondition.Scope.EnvironmentKind = "sandbox"
+				var precondition any
+				if data, err := json.Marshal(current.Precondition); err != nil || json.Unmarshal(data, &precondition) != nil {
+					t.Fatal("the current precondition did not encode", err)
+				}
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if len(*bodies) != 1 {
+					t.Fatal("the cancel was not sent once", len(*bodies))
+				}
+				body := (*bodies)[0]
+				cancellation, _ := body["operationId"].(string)
+				if body["selectionOperationId"] != id || !strings.HasPrefix(cancellation, "oe_") || cancellation == id ||
+					!reflect.DeepEqual(body["precondition"], precondition) {
+					t.Fatal("the cancel did not send the selection ID and the current precondition", body)
+				}
+			})
+		}
 	}
 }

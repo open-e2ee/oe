@@ -92,7 +92,10 @@ var errIdentityDeadline = errors.New("The identity command deadline passed.")
 type identityOperationFailure struct {
 	kind identity.Kind
 	id   string
-	err  error
+	// cancellation is the own operation ID of a failed cancel. Relay keeps the
+	// first cancel ID of an operation, so only this ID repeats the cancel.
+	cancellation string
+	err          error
 }
 
 func (e *identityOperationFailure) Error() string { return e.err.Error() }
@@ -286,13 +289,13 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 		if input.Action == identity.SelectionCancelAction {
 			value, err := address.transport.SelectionCancel(ctx, address.credential, current, identity.CancellationOperationID(cancellation), selectionID)
 			if err != nil {
-				return result, identityOperationError(kind, input.OperationID, err)
+				return result, &identityOperationFailure{kind: kind, id: input.OperationID, cancellation: string(cancellation), err: err}
 			}
 			return identityExecutionResult{Disposition: identity.ClassifySelectionResult(selectionID, value), Selection: &value}, nil
 		}
 		value, err := address.transport.KeysCancel(ctx, address.credential, current, identity.CancellationOperationID(cancellation), selectionID)
 		if err != nil {
-			return result, identityOperationError(kind, input.OperationID, err)
+			return result, &identityOperationFailure{kind: kind, id: input.OperationID, cancellation: string(cancellation), err: err}
 		}
 		return identityExecutionResult{Disposition: identity.ClassifyKeysResult(selectionID, value), Keys: &value}, nil
 	case identity.LifecycleStatusAction:
