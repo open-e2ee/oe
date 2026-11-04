@@ -385,3 +385,39 @@ func TestPublicIdentityPushDryRunShowsIdentityChange(t *testing.T) {
 	}
 	f.requireNoMutation(t)
 }
+
+func TestPublicIdentityPushRefusesProfileChangeForInUseEnvironment(t *testing.T) {
+	const anchor = "https://docs.open-e2ee.dev/relay/identity#in-use-environments"
+	pending, err := identity.Text("oe_pending_selection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mark   func(*identity.Inventory)
+		detail string
+	}{
+		{"ever-admitted", func(v *identity.Inventory) { v.EverAdmitted = true }, anchor},
+		{"pending-operation", func(v *identity.Inventory) { v.PendingOperationID = &pending }, "has no final result"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+			tc.mark(&f.current.Configuration.Inventory)
+			exit, out, stderr := f.run(t, "config", "push", "--env", "sandbox")
+			result := decodeEvent(t, []byte(out))
+			if exit != exitFailure || result.Code != "IDENTITY_MIGRATION_REQUIRED" || result.Next != "oe identity current" {
+				t.Fatal("in-use profile change lost its stable refusal", exit, out, stderr)
+			}
+			if !strings.Contains(result.Error, tc.detail) || strings.Contains(out+stderr, "existing migration flow") {
+				t.Fatalf("refusal detail %q does not contain %q or names the retired migration flow", result.Error, tc.detail)
+			}
+			if tc.name == "pending-operation" && strings.Contains(result.Error, anchor) {
+				t.Fatal("a pending operation without account history was called in use", result.Error)
+			}
+			if f.count("preview") != 0 {
+				t.Fatal("refused profile change reached preview")
+			}
+			f.requireNoMutation(t)
+		})
+	}
+}
