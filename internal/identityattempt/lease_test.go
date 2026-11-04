@@ -87,7 +87,6 @@ func storeResolveSettled(t *testing.T, lease *Lease, value Envelope) Resolution 
 }
 
 func TestStoreFullCASAndDetachedRead(t *testing.T) {
-	t.Fatal("canary")
 	for _, kind := range []Kind{Selection, KeysOnly, Lifecycle} {
 		t.Run(string(kind), func(t *testing.T) {
 			_, _, lease, original := storeOccupied(t, kind)
