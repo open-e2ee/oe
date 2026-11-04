@@ -1104,3 +1104,36 @@ func TestPublicCommandActualStoreIdentityPlainPushReachesBothEnvironments(t *tes
 		t.Fatal("plain config push did not apply identity to both environments", exit, out, stderr)
 	}
 }
+
+func TestPublicCommandActualStoreProductionConsentNextIsRunnable(t *testing.T) {
+	f := newCommandFixture(t, commandFirebase)
+	f.environmentKind = "production"
+	exit, out, stderr := f.run("config", "push", "--confirm-slot-never-used")
+	var result struct {
+		Code string `json:"code"`
+		Next string `json:"next"`
+		Data struct {
+			Environments map[string]struct {
+				Identity struct {
+					Changes []struct {
+						Path   string `json:"path"`
+						Action string `json:"action"`
+					} `json:"changes"`
+				} `json:"identity"`
+			} `json:"environments"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err, out)
+	}
+	changes := result.Data.Environments["production"].Identity.Changes
+	if exit != 2 || result.Code != "CONFIRMATION_REQUIRED" || result.Next != "oe config push --env production --confirm-slot-never-used --yes" ||
+		len(changes) != 1 || changes[0].Path != "environments.production.identity" || changes[0].Action != "replace" ||
+		len(f.requests("select")) != 0 || f.factory.bootstraps != 0 {
+		t.Fatal("the Production consent did not name a runnable next with the change", exit, out, stderr)
+	}
+	exit, out, stderr = f.runPlain(strings.Fields(result.Next)[1:]...)
+	if exit != 0 || len(f.requests("select")) != 1 || f.retained(identityattempt.Selection) != nil {
+		t.Fatal("the consent next did not run", exit, out, stderr)
+	}
+}

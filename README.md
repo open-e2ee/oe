@@ -239,6 +239,15 @@ An initialized slot needs neither declaration. Dry-run accepts neither declarati
 and creates no operation storage. Production writes still require `--yes` or the
 existing interactive confirmation.
 
+A dry-run and a `CONFIRMATION_REQUIRED` refusal show the exact identity change.
+`oe identity select` and `oe identity keys rotate` return it in `data.changes`.
+`oe config push` returns it in `data.environments.<env>.identity.changes`.
+Each change has a `path`, an `action`, the installed public identity in `from`,
+and the declared value in `to`. A keys-only change has the path
+`environments.<env>.identity.keys`. A person at a terminal sees the change
+before the Production prompt. The `next` of `CONFIRMATION_REQUIRED` is the
+command that ran, with `--yes` added.
+
 ## Use from a coding agent
 
 A coding agent can do each task in this section with `oe` and no console page.

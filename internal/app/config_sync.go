@@ -243,17 +243,22 @@ func (p pullPlan) text(heading string) string {
 	var text strings.Builder
 	text.WriteString(heading)
 	for _, name := range p.names {
-		for _, change := range p.environments[name].Changes {
-			to, _ := json.Marshal(change.To)
-			if change.Action == "add" {
-				fmt.Fprintf(&text, "\n  add %s: %s", change.Path, to)
-				continue
-			}
-			from, _ := json.Marshal(change.From)
-			fmt.Fprintf(&text, "\n  replace %s: %s -> %s", change.Path, from, to)
-		}
+		writeChanges(&text, p.environments[name].Changes)
 	}
 	return text.String()
+}
+
+// writeChanges writes each change on its own line.
+func writeChanges(text *strings.Builder, changes []pullChange) {
+	for _, change := range changes {
+		to, _ := json.Marshal(change.To)
+		if change.Action == "add" {
+			fmt.Fprintf(text, "\n  add %s: %s", change.Path, to)
+			continue
+		}
+		from, _ := json.Marshal(change.From)
+		fmt.Fprintf(text, "\n  replace %s: %s -> %s", change.Path, from, to)
+	}
 }
 
 // pushEntry is the result of oe config push for one environment. failure is
@@ -710,6 +715,12 @@ func (p *pusher) command(yes bool) string {
 		line += " --yes"
 	}
 	return line
+}
+
+// identityCommand is the command line of this run with its first-use
+// declarations and without --yes.
+func (p *pusher) identityCommand() string {
+	return strings.Join(append([]string{p.command(false)}, p.identity.firstUseArguments()...), " ")
 }
 
 // consoleURL is the console page of the signal-relay projects, on the host

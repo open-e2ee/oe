@@ -67,7 +67,9 @@ func (r *runner) identityLifecycleCommand(ctx context.Context, args []string) er
 		}
 		return r.out.Success("identity lifecycle "+action, "The target was observed. No lifecycle operation was prepared or applied.", data)
 	}
-	if err := r.approveIdentity("oe identity lifecycle "+action+" --target-stdin", options); err != nil {
+	// The target stays private, so the consent shows no change.
+	command := commandLine(append([]string{"identity", "lifecycle", action, "--target-stdin", "--env", r.environment}, options.firstUseArguments()...))
+	if err := r.approveIdentity(command, nil, options); err != nil {
 		return err
 	}
 	if err := r.requireIdentityVacant(ctx, address.slot); err != nil {

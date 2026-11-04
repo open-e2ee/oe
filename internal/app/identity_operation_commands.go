@@ -164,7 +164,8 @@ func (r *runner) identityOperationCommand(ctx context.Context, args []string) er
 		if _, err := r.identityContext(ctx, configuration.Project, kind); err != nil {
 			return err
 		}
-		if err := r.approveIdentity("oe identity operation "+verb+" --kind "+string(kind), options); err != nil {
+		command := commandLine([]string{"identity", "operation", verb, "--kind", string(kind), "--env", r.environment})
+		if err := r.approveIdentity(command, nil, options); err != nil {
 			return err
 		}
 	}

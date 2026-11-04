@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -103,6 +104,28 @@ func planIdentityConfig(current identity.CurrentContext, target identity.Selecti
 		return identityConfigChange{}, errIdentityExecution
 	}
 	return identityConfigChange{kind: identityattempt.Selection, target: &copy}, nil
+}
+
+// identityChanges gives the identity change of one environment in the shape
+// of a config pull change. From is the public projection of the installed
+// identity, so a change holds no field that the projection leaves out. A
+// keys-only change names the keys alone. No target and no keys, or a target
+// equal to the installed identity, give no change.
+func identityChanges(environment string, current identity.CurrentContext, target *identity.SelectionTarget, keys *identity.ReplacementKeys) ([]pullChange, error) {
+	installed, err := config.ProjectInstalledIdentity(current.Configuration)
+	if err != nil {
+		return nil, identityCommandProblem("IDENTITY_CONFIG_UNREPRESENTABLE", "The installed identity cannot form a supported config write.", "oe identity current --env "+environment, exitFailure)
+	}
+	path := "environments." + environment + ".identity"
+	switch {
+	case keys != nil && installed.Keys != nil:
+		return []pullChange{{Path: path + ".keys", Action: "replace", From: *installed.Keys, To: *keys}}, nil
+	case keys != nil:
+		return []pullChange{{Path: path + ".keys", Action: "add", To: *keys}}, nil
+	case target != nil && !installed.Equal(*target):
+		return []pullChange{{Path: path, Action: "replace", From: installed, To: *target}}, nil
+	}
+	return []pullChange{}, nil
 }
 
 func (r *runner) inspectConfigIdentityState(ctx context.Context, address identityExecutionContext, change identityConfigChange, options identityCommandOptions) error {
@@ -225,6 +248,10 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 			return failed(identityEntry(nil, "blocked", nil), "failed", identityPublicFailure(err))
 		}
 	}
+	changes, err := identityChanges(environment, approved, change.target, change.keys)
+	if err != nil {
+		return failed(identityEntry(nil, "blocked", nil), "failed", err)
+	}
 	plan, err := p.plan(ctx, environment)
 	if err != nil {
 		return failed(identityEntry(nil, "blocked", nil), "failed", err)
@@ -239,6 +266,7 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 			retention.Status = "planned"
 		}
 		entry := identityEntry(retention, status, nil)
+		entry.Identity["changes"] = changes
 		entry.Status = "unchanged"
 		if retention.Status == "planned" || status == "planned" {
 			entry.Status = "planned"
@@ -249,8 +277,16 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 		return failed(identityEntry(retention, "blocked", nil), "blocked", identityPublicFailure(err))
 	}
 	if !change.unchanged {
-		if err := r.approveIdentity("oe config push --env "+environment, options); err != nil {
-			return failed(identityEntry(retention, "blocked", nil), "blocked", err)
+		if err := r.approveIdentity(p.identityCommand(), changes, options); err != nil {
+			// The entry, not the run, holds the change of its environment.
+			entry := identityEntry(retention, "blocked", nil)
+			entry.Identity["changes"] = changes
+			if refusal, ok := errors.AsType[*problem](err); ok {
+				copy := *refusal
+				copy.data = nil
+				err = &copy
+			}
+			return failed(entry, "blocked", err)
 		}
 	}
 	if environment == "production" && len(plan.Changes) > 0 {
