@@ -230,7 +230,7 @@ oe identity operation status --kind K --operation-id ID --env E
 
 Without `--operation-id`, status reads the current selection or keys operation.
 For lifecycle, status without an ID needs `--target-stdin` and reports the
-current operation of the bound account.
+bound account's current operation.
 
 To repeat one selection or keys-only mutation, run the same command again with
 `OE_OPERATION_ID=ID`. The server replays the same input and refuses changed input
