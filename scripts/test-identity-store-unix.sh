@@ -632,7 +632,9 @@ finally:
     empty = all(row['empty'] for row in groups) and all(row['empty'] for row in process_observers)
     closed = owned_closed()
     success = success and empty and closed
-    save('result.json',{'success':success,'failure':failure,'groups':groups,'processObservers':process_observers,'ownedSessionsEmpty':empty,'mountedOwnedVolumePreserved':mounted,
+    # A failed run names its class. Only a closed Go test stage failure is class test.
+    failure_class, failure_text = (None,None) if success else session_module.failure_summary(steps,proof,failure,closed)
+    save('result.json',{'success':success,'failure':failure,'failureClass':failure_class,'groups':groups,'processObservers':process_observers,'ownedSessionsEmpty':empty,'mountedOwnedVolumePreserved':mounted,
                         'profile':profile,'scope':'NO_TEST_CREDIT' if cleanup_diagnostic else 'EXISTING_STORE_QUALIFICATION',
                         'ownedProcessAndPipeClosureComplete':closed,'observedMountedState':mounted,
                         'backingImagePreserved':cleanup['backingImagePreserved'],'backingRemoved':cleanup['backingRemoved'],
@@ -643,12 +645,15 @@ finally:
     if not closed:
         # The runner cannot read the private proof when ownership stays with this owner.
         print(json.dumps(unclosed_diagnostic(failure,steps,groups,process_observers)),flush=True)
-        raise SystemExit('Uncertain process or pipe closure prevents proof ownership handback. Preserve the owned VM state.')
+        print(session_module.failure_annotation(failure_class,failure_text),flush=True)
+        raise SystemExit(3)
     for path in sorted(proof.rglob('*'),reverse=True):
         if path.is_symlink(): raise RuntimeError('Unexpected proof link.')
         os.chown(path,caller_uid,-1)
     os.chown(proof,caller_uid,-1)
-raise SystemExit(0 if success else 1)
+if not success: print(session_module.failure_annotation(failure_class,failure_text),flush=True)
+# Exit 1 is a Go test failure. Exit 3 is a harness failure.
+raise SystemExit(0 if success else 1 if failure_class == 'test' else 3)
 PY
 fi
 echo 'Run this wrapper as the disposable runner account; it elevates its own fixture process.' >&2

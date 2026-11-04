@@ -22,6 +22,8 @@ $timer = [Diagnostics.Stopwatch]::StartNew()
 $stages = [Collections.Generic.List[object]]::new()
 $success = $false
 $failure = $null
+$stageFailureIndex = $null
+$stageFailureText = $null
 $attached = $false
 $attachmentState = 'not-created'
 $diskNumber = $null
@@ -101,6 +103,62 @@ function Resolve-NativeExecutable([string]$Name) {
     $item = Get-Item -LiteralPath $path -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The selected native executable is a reparse point.' }
     return $item.FullName
+}
+function Format-WorkflowCommandMessage([string]$Value) {
+    return $Value.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+}
+function Limit-FailureText([string]$Value) {
+    if ($Value.Length -le 2000) { return $Value }
+    return $Value.Substring(0,1997)+'...'
+}
+function Test-StageClean($Row) {
+    return [bool]($Row.result -and $Row.result.status -eq 0 -and $Row.result.jobEmpty -and $Row.result.errors.Count -eq 0)
+}
+function Get-StageLabel([int]$Index) {
+    $row=$stages[$Index]
+    $status='none'; $reason='NO_RESULT'
+    if ($row.result) {
+        $status=$row.result.status; $reason='None'
+        if ($row.result.status -ne 0) { $reason='PROCESS_EXIT_NONZERO' }
+        if (-not $row.result.jobEmpty) { $reason='JOB_NOT_EMPTY' }
+        if ($row.result.errors.Count -gt 0) { $reason=@($row.result.errors | ForEach-Object { ([string]$_ -split "`r?`n")[0] }) -join ' / ' }
+    }
+    return ('stage {0:d2} {1} status={2} reason={3}' -f $Index,[IO.Path]::GetFileName([string]$row.executable),$status,$reason)
+}
+# Failing test names and their last output lines from retained test2json stdout.
+function Get-GoTestFailureText([string]$Path) {
+    $failed=[Collections.Generic.List[string]]::new(); $packages=[Collections.Generic.List[string]]::new()
+    $output=@{}
+    try {
+        foreach ($line in [IO.File]::ReadLines($Path)) {
+            if (-not $line.StartsWith('{')) { continue }
+            try { $record=ConvertFrom-Json -InputObject $line -ErrorAction Stop } catch { continue }
+            # A build event names 'pkg [pkg.test]'. Its package is the first word.
+            $package=([string]$(if ($record.Package) { $record.Package } else { $record.ImportPath })).Split(' ')[0]
+            $key=if ($record.Test) { $package.Split('/')[-1]+'.'+[string]$record.Test } else { $package.Split('/')[-1]+' package' }
+            if ($record.Action -in @('output','build-output')) {
+                $text=([string]$record.Output).Trim()
+                if (-not $text -or $text -match '^(=== |--- |FAIL\t|ok )' -or $text -in @('FAIL','PASS')) { continue }
+                if (-not $output.ContainsKey($key)) { $output[$key]=[Collections.Generic.Queue[string]]::new() }
+                $output[$key].Enqueue($text)
+                if ($output[$key].Count -gt 5) { [void]$output[$key].Dequeue() }
+            } elseif ($record.Action -eq 'fail' -and $record.Test) {
+                if (-not $failed.Contains($key)) { $failed.Add($key) }
+            } elseif ($record.Action -in @('fail','build-fail')) {
+                if (-not $packages.Contains($key)) { $packages.Add($key) }
+            }
+        }
+    } catch { return "retained stdout unreadable: $($_.Exception.Message)" }
+    $failingPackages=@($failed | ForEach-Object { $_.Split('.')[0]+' package' })
+    $packages=@($packages | Where-Object { $_ -notin $failingPackages })
+    $parts=[Collections.Generic.List[string]]::new()
+    if ($failed.Count -gt 0) { $parts.Add('failed: '+($failed -join ', ')) }
+    elseif ($packages.Count -gt 0) { $parts.Add('failed: '+($packages -join ', ')) }
+    foreach ($key in @($failed)+$packages) {
+        if ($output.ContainsKey($key)) { $parts.Add($key+': '+(@($output[$key]) -join ' | ')) }
+    }
+    if ($parts.Count -eq 0) { return 'no test2json fail event was retained' }
+    return $parts -join '; '
 }
 function Run-Stage([string]$Executable,[string[]]$Arguments,[int]$Seconds=30,[bool]$MonitorVolume=$true) {
     Assert-Phase
@@ -208,7 +266,12 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash -ne $originalModules[$name]) { throw 'A frozen module file changed.' }
     }
     $success=$true
-} catch { $failure=$_.Exception.ToString() }
+} catch {
+    $failure=$_.Exception.ToString()
+    if ($_.Exception.Message -eq 'A bounded native stage failed. Preserve its raw evidence.' -and $stages.Count -gt 0) {
+        $stageFailureIndex=$stages.Count-1; $stageFailureText=$failure
+    }
+}
 finally {
     try { [IdentityStoreFixture]::RestoreFixturePrivileges() } catch { $success=$false; $failure+="`nPrivilege cleanup: $_" }
     try {
@@ -236,8 +299,31 @@ finally {
             }
         }
     } catch { $success=$false; $failure+="`nVolume cleanup: $_" }
-    Save-Proof 'result.json' @{ success=$success; failure=$failure; elapsedSeconds=$timer.Elapsed.TotalSeconds;
+    # A failed run names its class. Only a closed Go test stage failure is class test.
+    $failureClass=$null; $failureText=$null
+    if (-not $success) {
+        try {
+            $failureClass='harness'
+            $failedStages=@(for ($index=0; $index -lt $stages.Count; $index++) { if (-not (Test-StageClean $stages[$index])) { $index } })
+            $row=if ($null -ne $stageFailureIndex) { $stages[$stageFailureIndex] } else { $null }
+            if ($row -and $failure -ceq $stageFailureText -and $failedStages.Count -eq 1 -and $failedStages[0] -eq $stageFailureIndex -and
+                $row.executable -eq $go -and $row.argv.Count -gt 0 -and $row.argv[0] -eq 'test' -and
+                $row.result.status -ne 0 -and $row.result.jobEmpty -and $row.result.errors.Count -eq 0) {
+                $failureClass='test'
+                $failureText=(Get-StageLabel $stageFailureIndex)+'; '+(Get-GoTestFailureText ((Join-Path $proof ('{0:d2}' -f $stageFailureIndex))+'.stdout'))
+            } else {
+                $failureText=(@($(if ($failure) { $failure } else { 'no failure text was recorded' }))+@($failedStages | ForEach-Object { Get-StageLabel $_ })) -join '; '
+            }
+        } catch { $failureClass='harness'; $failureText="Failure summary: $($_.Exception.Message)" }
+        $failureText=Limit-FailureText $failureText
+    }
+    Save-Proof 'result.json' @{ success=$success; failure=$failure; failureClass=$failureClass; elapsedSeconds=$timer.Elapsed.TotalSeconds;
         ownedVolumePreserved=($attachmentState -in @('attached','unknown')); attachmentState=$attachmentState; image=$image; diskNumber=$diskNumber;
         limits='No ordinary-user/default-root, native ENOSPC, hosted-caller or hard-kernel-deadline qualification.' }
 }
-if (-not $success) { throw 'Native qualification stopped. Preserve all bounded raw and partial evidence.' }
+if (-not $success) {
+    Write-Host ('::error title=identity-store harness::'+(Format-WorkflowCommandMessage "${failureClass}: $failureText"))
+    # Exit 1 is a Go test failure. Exit 3 is a harness failure.
+    if ($failureClass -eq 'test') { exit 1 }
+    exit 3
+}
