@@ -244,6 +244,9 @@ func (r *runner) identitySelectCommand(ctx context.Context, args []string) error
 	if parseFlags(flags, "identity", args) != nil {
 		return identityInputFailure()
 	}
+	if err := r.identityOperationEnvironment(identity.SelectionApplyAction, ""); err != nil {
+		return err
+	}
 	_, configuration, err := r.identityConfiguration()
 	if err != nil {
 		return err
@@ -310,6 +313,9 @@ func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	path := flags.String("keys", "", "public replacement-key JSON file")
 	if parseFlags(flags, "identity", args) != nil || *path == "" {
 		return identityInputFailure()
+	}
+	if err := r.identityOperationEnvironment(identity.KeysReplaceAction, ""); err != nil {
+		return err
 	}
 	var keys identity.ReplacementKeys
 	if err := readIdentityPublicFile(*path, &keys); err != nil {

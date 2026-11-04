@@ -236,8 +236,11 @@ To repeat one selection or keys-only mutation, run the same command again with
 `OE_OPERATION_ID=ID`. The server replays the same input and refuses changed input
 with `IDENTITY_CONFLICT`. Lifecycle refuses `OE_OPERATION_ID`. Continue a lifecycle
 change with `oe identity operation resume --kind lifecycle --operation-id ID`.
+
 Cancel a selection or keys operation with
 `oe identity operation cancel --kind K --operation-id ID`.
+A cancel sends its own operation ID. For a cancel, `OE_OPERATION_ID` sets that
+ID, and it cannot equal `--operation-id`.
 Production writes still require `--yes` or the existing interactive confirmation.
 
 A dry-run and a `CONFIRMATION_REQUIRED` refusal show the exact identity change.

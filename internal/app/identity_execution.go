@@ -105,18 +105,36 @@ func identityOperationError(kind identity.Kind, id string, err error) error {
 	return &identityOperationFailure{kind: kind, id: id, err: err}
 }
 
+// identityOperationEnvironment checks OE_OPERATION_ID for one selection or
+// keys-only mutation before any network read. A cancel sends its own
+// operation ID, so that ID cannot be the ID of the operation it cancels.
+func (r *runner) identityOperationEnvironment(action identity.Action, cancelled string) error {
+	value := r.getenv("OE_OPERATION_ID")
+	if value == "" {
+		return nil
+	}
+	if identity.SelectionOperationID(value).Validate() != nil {
+		return identityCommandProblem("IDENTITY_INPUT_INVALID", "OE_OPERATION_ID must be 8 to 96 letters, digits, underscores or hyphens.", "oe help identity", exitUsage)
+	}
+	if action.Cancel() && value == cancelled {
+		return identityCommandProblem("IDENTITY_OPERATION_CONFLICT",
+			"OE_OPERATION_ID "+value+" equals the --operation-id "+cancelled+" of the operation to cancel. A cancel needs its own operation ID. Unset OE_OPERATION_ID, or set it to a new ID.",
+			"oe help identity", exitUsage)
+	}
+	return nil
+}
+
 // identityMutationOperationID resolves the idempotency key of one selection or
 // keys-only mutation. OE_OPERATION_ID repeats an earlier command, and the
 // server replays its result while the command is the same.
-func (r *runner) identityMutationOperationID() (identity.SelectionOperationID, error) {
-	value := r.getenv("OE_OPERATION_ID")
-	if value == "" {
-		return identityNewID()
+func (r *runner) identityMutationOperationID(action identity.Action, cancelled string) (identity.SelectionOperationID, error) {
+	if err := r.identityOperationEnvironment(action, cancelled); err != nil {
+		return "", err
 	}
-	if identity.SelectionOperationID(value).Validate() != nil {
-		return "", identityCommandProblem("IDENTITY_INPUT_INVALID", "OE_OPERATION_ID must be 8 to 96 letters, digits, underscores or hyphens.", "oe help identity", exitUsage)
+	if value := r.getenv("OE_OPERATION_ID"); value != "" {
+		return identity.SelectionOperationID(value), nil
 	}
-	return identity.SelectionOperationID(value), nil
+	return identityNewID()
 }
 
 // identityLifecycleOperationIDRefusal refuses OE_OPERATION_ID on a lifecycle
@@ -144,6 +162,16 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 		if err := r.identityLifecycleOperationIDRefusal(); err != nil {
 			return result, err
 		}
+	}
+	// The mutation key is resolved before any network read, so an invalid
+	// OE_OPERATION_ID is a usage error that sends nothing.
+	var mutationID identity.SelectionOperationID
+	if input.Action == identity.SelectionApplyAction || input.Action == identity.KeysReplaceAction || input.Action.Cancel() {
+		id, err := r.identityMutationOperationID(input.Action, input.OperationID)
+		if err != nil {
+			return result, err
+		}
+		mutationID = id
 	}
 	newTarget := !input.Action.Status() && !input.Action.Cancel() && input.Action != identity.LifecycleResumeAction
 	if newTarget {
@@ -222,10 +250,7 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 		if !sameIdentityApprovalContext(observed.Current, contextValue) || !sameIdentityApprovalContext(observed.Current, *input.Approved) || !identityNativeAvailable(input.Target, observed) {
 			return result, errIdentityExecution
 		}
-		id, err := r.identityMutationOperationID()
-		if err != nil {
-			return result, err
-		}
+		id := mutationID
 		if input.Action == identity.SelectionApplyAction {
 			value, err := address.transport.SelectionApply(ctx, address.credential, identity.SelectionCommand{OperationID: id,
 				ExpectedConfigurationVersion: preview.ExpectedConfigurationVersion, Target: *input.Target, Precondition: contextValue.Precondition})
@@ -257,10 +282,7 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 		}
 		return identityExecutionResult{Disposition: identity.ClassifyKeysResult(selectionID, value), Keys: &value}, nil
 	case identity.SelectionCancelAction, identity.KeysCancelAction:
-		cancellation, err := r.identityMutationOperationID()
-		if err != nil {
-			return result, err
-		}
+		cancellation := mutationID
 		if input.Action == identity.SelectionCancelAction {
 			value, err := address.transport.SelectionCancel(ctx, address.credential, current, identity.CancellationOperationID(cancellation), selectionID)
 			if err != nil {

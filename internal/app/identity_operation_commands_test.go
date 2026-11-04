@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -489,6 +491,83 @@ func TestIdentitySettledRefusalDoesNotBecomeSuccess(t *testing.T) {
 			exit, out, stderr := f.run(t, "identity", "select", "--env", "sandbox")
 			if exit != exitFailure || decodeEvent(t, []byte(out)).Code != "IDENTITY_OPERATION_REFUSED" || f.operationCount("select") != 1 {
 				t.Fatal("a settled refusal became success", exit, out, stderr)
+			}
+		})
+	}
+}
+
+func TestIdentityFixtureRejectsBodiesOutsideTheConsoleSchema(t *testing.T) {
+	f := publicIdentityTestFixture(t, "")
+	f.operations["held_exact_001"] = publicIdentityOperation{action: "select", result: selectionExecutionResult("held_exact_001", "prepared", false)}
+	post := func(field string) (int, string) {
+		t.Helper()
+		body := `{"action":"selection-operation","` + field + `":"held_exact_001","precondition":{}}`
+		request, err := http.NewRequest(http.MethodPost, f.server.URL+"/v1/projects/sample/identity?action=selection-operation&environment=sandbox", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer owned_public_token")
+		response, err := f.server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		data, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, string(data)
+	}
+	if status, body := post("selectedOperationId"); status != 400 || !strings.Contains(body, `"IDENTITY_INPUT_INVALID"`) {
+		t.Fatal("the fixture accepted a field that the Console schema refuses", status, body)
+	}
+	if status, body := post("selectionOperationId"); status != 200 || !strings.Contains(body, "held_exact_001") {
+		t.Fatal("the fixture refused the Console selection status field", status, body)
+	}
+}
+
+func TestIdentityInvalidOperationEnvironmentSendsNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "public-keys.json")
+	if err := os.WriteFile(path, []byte("["+keyExecutionWire+"]"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"identity", "select", "--env", "sandbox"},
+		{"identity", "keys", "rotate", "--keys", path, "--env", "sandbox"},
+		{"identity", "operation", "cancel", "--kind", "selection", "--operation-id", "held_exact_001", "--env", "sandbox"},
+		{"identity", "operation", "cancel", "--kind", "keys-only", "--operation-id", "held_keys_001", "--env", "sandbox"},
+	} {
+		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+			f.operationEnvironment("bad id")
+			exit, out, stderr := f.run(t, args...)
+			if exit != exitUsage || decodeEvent(t, []byte(out)).Code != "IDENTITY_INPUT_INVALID" {
+				t.Fatal("an invalid OE_OPERATION_ID was not a usage error", exit, out, stderr)
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.calls) != 0 {
+				t.Fatal("an invalid OE_OPERATION_ID sent a request", f.calls)
+			}
+		})
+	}
+}
+
+func TestIdentityCancelRefusesItsOwnOperationID(t *testing.T) {
+	for _, kind := range []string{"selection", "keys-only"} {
+		t.Run(kind, func(t *testing.T) {
+			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+			f.operationEnvironment("held_exact_001")
+			exit, out, stderr := f.run(t, "identity", "operation", "cancel", "--kind", kind, "--operation-id", "held_exact_001", "--env", "sandbox")
+			failure := decodeEvent(t, []byte(out))
+			if exit != exitUsage || failure.Code != "IDENTITY_OPERATION_CONFLICT" ||
+				!strings.Contains(failure.Error, "OE_OPERATION_ID held_exact_001") || !strings.Contains(failure.Error, "--operation-id held_exact_001") {
+				t.Fatal("a cancel with its own operation ID was not refused", exit, out, stderr)
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.calls) != 0 {
+				t.Fatal("a cancel with its own operation ID sent a request", f.calls)
 			}
 		})
 	}

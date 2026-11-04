@@ -174,6 +174,11 @@ func (r *runner) identityOperationCommand(ctx context.Context, args []string) er
 		targetStdin && (kind != identity.Lifecycle || id != "") || kind == identity.Lifecycle && verb == "status" && id == "" && !targetStdin {
 		return identityInputFailure()
 	}
+	if action.Cancel() {
+		if err := r.identityOperationEnvironment(action, id); err != nil {
+			return err
+		}
+	}
 	_, configuration, err := r.identityConfiguration()
 	if err != nil {
 		return err
