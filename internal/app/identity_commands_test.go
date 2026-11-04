@@ -171,6 +171,10 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && json.NewDecoder(r.Body).Decode(&body) != nil {
 			f.t.Error("identity body invalid", action)
 		}
+		if r.Method == http.MethodPost && !consoleIdentityBody(action, body) {
+			f.fail(w, 400, "IDENTITY_INPUT_INVALID")
+			return
+		}
 		text := func(name string) string {
 			var value string
 			_ = json.Unmarshal(body[name], &value)
@@ -220,7 +224,7 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			f.reply(w, action, operation.result)
 		case "selection-operation":
-			f.replay(w, "select", text("selectedOperationId"))
+			f.replay(w, "select", text("selectionOperationId"))
 		case "selection-cancel", "keys-cancel":
 			id := text("selectionOperationId")
 			kind := map[string]string{"selection-cancel": "select", "keys-cancel": "keys-replace"}[action]
@@ -271,6 +275,53 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.t.Error("unexpected fixture endpoint", r.URL.Path)
 		w.WriteHeader(500)
 	}
+}
+
+// consoleIdentityBodyKeys are the strict body key sets of
+// managedRelayCliIdentityPostBodySchema in
+// console/src/shared/managed-relay-cli-identity.ts. Console answers any other
+// key set with 400 IDENTITY_INPUT_INVALID, so the fixture does the same.
+var consoleIdentityBodyKeys = map[string][][]string{
+	"preview": {
+		{"action", "kind", "expectedConfigurationVersion", "target"},
+		{"action", "kind", "expectedConfigurationVersion", "keys"},
+	},
+	"select":              {{"action", "operationId", "expectedConfigurationVersion", "target", "precondition"}},
+	"selection-operation": {{"action", "selectionOperationId", "precondition"}},
+	"selection-cancel":    {{"action", "operationId", "selectionOperationId", "precondition"}},
+	"keys-read":           {{"action"}, {"action", "selectionOperationId", "precondition"}},
+	"keys-replace":        {{"action", "operationId", "expectedConfigurationVersion", "keys", "precondition"}},
+	"keys-cancel":         {{"action", "operationId", "selectionOperationId", "precondition"}},
+	"target":              {{"action", "target"}},
+	"prepare":             {{"action", "target", "state", "expectedLifecycleVersion", "nonce"}},
+	"operation":           {{"action", "lifecycleOperationId"}},
+	"apply":               {{"action", "operationId", "target", "state", "expectedLifecycleVersion"}},
+	"resume":              {{"action", "operationId"}},
+}
+
+// consoleIdentityBody reports whether the body has exactly one Console key set
+// for the action and names the same action.
+func consoleIdentityBody(action string, body map[string]json.RawMessage) bool {
+	var named string
+	if json.Unmarshal(body["action"], &named) != nil || named != action {
+		return false
+	}
+	for _, keys := range consoleIdentityBodyKeys[action] {
+		if len(keys) != len(body) {
+			continue
+		}
+		matched := true
+		for _, key := range keys {
+			if _, held := body[key]; !held {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *publicIdentityFixture) fail(w http.ResponseWriter, status int, code string) {

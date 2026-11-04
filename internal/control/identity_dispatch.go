@@ -23,7 +23,7 @@ func (c *identityHTTP) SelectionStatus(ctx context.Context, credential Credentia
 	if id.Validate() != nil || !current.matches(c.address) {
 		return identity.SelectionResult{}, identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}
-	wire := map[string]any{"action": "selection-operation", "selectedOperationId": id, "precondition": current.value.Precondition}
+	wire := map[string]any{"action": "selection-operation", "selectionOperationId": id, "precondition": current.value.Precondition}
 	return c.selection(ctx, credential, "selection-operation", wire, id)
 }
 

@@ -47,7 +47,7 @@ func identityDispatchCalls(t *testing.T) map[string]identityDispatchCall {
 				return err
 			}},
 		"selection-status": {"selection-operation", selectionResultWire,
-			map[string]string{"selectedOperationId": quoted(selectionID), "precondition": preconditionWire},
+			map[string]string{"selectionOperationId": quoted(selectionID), "precondition": preconditionWire},
 			func(c *identityHTTP, current AddressedCurrent) error {
 				_, err := c.SelectionStatus(ctx, credential, current, selectionID)
 				return err
