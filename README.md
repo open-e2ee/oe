@@ -254,6 +254,46 @@ and the declared value in `to`. A keys-only change has the path
 before the Production prompt. The `next` of `CONFIRMATION_REQUIRED` is the
 command that ran, with `--yes` added.
 
+## Upgrade to 4.0
+
+Version 4.0 removes the local identity operation store and the
+`oe identity operation retry` command. It also removes the
+`--confirm-state-never-used` and `--confirm-slot-never-used` flags. The server
+holds each identity operation. Do these steps to continue a pending operation.
+
+1. Before you upgrade, read each pending operation with the old version. The old
+   status command takes a store lease and can write lock files. Run it in each
+   project directory, for each kind and environment that you used:
+
+   ```bash
+   oe identity operation status --kind K --env E
+   ```
+
+   Record each pending operation ID. With `--json`, the ID is in
+   `data.operation.operationId`.
+
+2. After you upgrade, continue each pending operation by its ID.
+   - For selection or keys-only, run the original command again with
+     `OE_OPERATION_ID=ID`. You can also use `oe identity operation status` or
+     `oe identity operation cancel` with `--operation-id ID`. `oe config push`
+     takes no `OE_OPERATION_ID`. For a selection from a config push, use status
+     or cancel.
+   - For lifecycle, run
+     `oe identity operation resume --kind lifecycle --operation-id ID`. A
+     lifecycle ID starts with `lc1_`. Lifecycle commands refuse `OE_OPERATION_ID`.
+
+3. Remove `--confirm-state-never-used` and `--confirm-slot-never-used` from
+   scripts. Version 4.0 refuses each flag with `IDENTITY_INPUT_INVALID` and exit 2.
+
+4. Replace `oe identity operation retry` with the original command and
+   `OE_OPERATION_ID=ID`. Version 4.0 refuses `retry` with `IDENTITY_INPUT_INVALID`
+   and exit 2.
+
+5. Version 4.0 does not read the old store directory. The directory is `CONFIG/open-e2ee/oe/identity-attempts` on macOS and Linux, and `%LOCALAPPDATA%\OpenE2EE\oe\identity-attempts` on Windows.
+   `CONFIG` is `~/Library/Application Support` on macOS, and `$XDG_CONFIG_HOME`
+   or `~/.config` on Linux. You can delete the directory after step 1. `oe` does
+   not delete it.
+
 ## Use from a coding agent
 
 A coding agent can do each task in this section with `oe` and no console page.
