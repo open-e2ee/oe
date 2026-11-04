@@ -62,6 +62,17 @@ func (r *runner) planIdentityPull(ctx context.Context, value config.Config, plan
 	return nil
 }
 
+// inUseIdentityDetail refuses a profile change for an environment with
+// account history. The docs section names the paths that remain.
+const inUseIdentityDetail = "This environment is in use because it has account history. " +
+	"An in-use environment keeps its identity profile. " +
+	"See https://docs.open-e2ee.dev/relay/identity#in-use-environments for the paths that remain."
+
+// pendingIdentityDetail refuses a profile change while an identity
+// operation for the environment has no final result.
+const pendingIdentityDetail = "An identity operation for this environment has no final result. " +
+	"The identity profile cannot change until that operation has a final result."
+
 type identityConfigChange struct {
 	kind      identity.Kind
 	target    *identity.SelectionTarget
@@ -94,9 +105,13 @@ func planIdentityConfig(current identity.CurrentContext, target identity.Selecti
 			return identityConfigChange{kind: identity.KeysOnly, keys: &keys}, nil
 		}
 	}
+	// Scripts match IDENTITY_MIGRATION_REQUIRED, so both refusals keep it.
 	inventory := current.Configuration.Inventory
-	if inventory.EverAdmitted || inventory.BindingCount != 0 || inventory.HistoryCount != 0 || inventory.PendingOperationID != nil {
-		return identityConfigChange{}, identityCommandProblem("IDENTITY_MIGRATION_REQUIRED", "The requested profile change requires the existing migration flow.", "oe identity current", exitFailure)
+	if inventory.EverAdmitted || inventory.BindingCount != 0 || inventory.HistoryCount != 0 {
+		return identityConfigChange{}, identityCommandProblem("IDENTITY_MIGRATION_REQUIRED", inUseIdentityDetail, "oe identity current", exitFailure)
+	}
+	if inventory.PendingOperationID != nil {
+		return identityConfigChange{}, identityCommandProblem("IDENTITY_MIGRATION_REQUIRED", pendingIdentityDetail, "oe identity current", exitFailure)
 	}
 	copy, err := target.Clone()
 	if err != nil {
