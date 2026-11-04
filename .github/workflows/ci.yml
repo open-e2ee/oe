@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels that pull request's earlier run. Every
+# other run has its own group, keyed by run ID, so no main run waits for or
+# cancels another run, and each main commit keeps its own evidence.
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Each dependency cache has its own restore and save steps. The steps have a
 # 2-minute timeout and continue on error, so an unavailable cache service costs
 # at most 2 minutes and a cold build. A setup action's built-in cache cannot be
