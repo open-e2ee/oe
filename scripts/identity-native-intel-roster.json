@@ -133,6 +133,7 @@
     "TestPublicCommandActualStoreProductionIdentityAndRetentionConsent",
     "TestPublicCommandActualStoreRefreshedAdmissionCheckTime",
     "TestPublicCommandActualStoreIdentityPlainPushReachesBothEnvironments",
+    "TestPublicCommandActualStoreProductionConsentNextIsRunnable",
     "TestRealControlAllNineOccupiedActionsAndPreparation",
     "TestRealControlCopiedPermitCannotDispatchTwice",
     "TestRealControlAmbiguousRepliesKeepWholeEnrichedOriginal",
@@ -995,6 +996,7 @@
     "TestPublicCommandActualStoreProductionIdentityAndRetentionConsent/approve-both",
     "TestPublicCommandActualStoreRefreshedAdmissionCheckTime",
     "TestPublicCommandActualStoreIdentityPlainPushReachesBothEnvironments",
+    "TestPublicCommandActualStoreProductionConsentNextIsRunnable",
     "TestRealControlAllNineOccupiedActionsAndPreparation",
     "TestRealControlAllNineOccupiedActionsAndPreparation/selection-apply",
     "TestRealControlAllNineOccupiedActionsAndPreparation/selection-status",
@@ -1171,6 +1173,7 @@
       "TestPublicCommandActualStoreProductionIdentityAndRetentionConsent",
       "TestPublicCommandActualStoreRefreshedAdmissionCheckTime",
       "TestPublicCommandActualStoreIdentityPlainPushReachesBothEnvironments",
+      "TestPublicCommandActualStoreProductionConsentNextIsRunnable",
       "TestRealControlAllNineOccupiedActionsAndPreparation",
       "TestRealControlCopiedPermitCannotDispatchTwice",
       "TestRealControlAmbiguousRepliesKeepWholeEnrichedOriginal",
@@ -1183,8 +1186,8 @@
   ],
   "benchmarks": [],
   "reference": {
-    "head": "1f5bf8d9967b0d3c54d8458dac7a776026d742cf",
-    "eventSHA256": "563b34eff05295daa63646cad3fdf2526faf828bf81fdbb85b6ece5382a631a6",
-    "orderedParentSHA256": "5f731d161c12a2ff6bb3d70f82589b3bc199d8d529adb20aa8865cf3a7bf2a9f"
+    "head": "4a29ec9cba7fa5d6e1540e3314bb9c73abd11b4f",
+    "eventSHA256": "e6d783a181ffa736cd3a9db2eb58dbe65b92f901065ef39d19fc99d085c0f8a7",
+    "orderedParentSHA256": "4ca88ea440635ce1ce5e34b5297806e6d87397691eebb1a0cc79a1b32aee7db3"
   }
 }
