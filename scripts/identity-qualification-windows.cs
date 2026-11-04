@@ -293,8 +293,8 @@ public static class IdentityStoreFixture {
                 if(wait==0)break;
                 if(wait!=258)throw Error("process wait");
                 if(watch.ElapsedMilliseconds>=milliseconds)throw new Exception("bounded process deadline");
-                string cache;
-                if(monitorVolume && environment.TryGetValue("GOCACHE",out cache) && new DriveInfo(Path.GetPathRoot(cache)).AvailableFreeSpace<134217728)
+                string temporary;
+                if(monitorVolume && environment.TryGetValue("GOTMPDIR",out temporary) && new DriveInfo(Path.GetPathRoot(temporary)).AvailableFreeSpace<134217728)
                     throw new Exception("owned fixture volume space floor");
                 if(stdout.IsFaulted||stderr.IsFaulted)throw new Exception("bounded output pump failed");
             }

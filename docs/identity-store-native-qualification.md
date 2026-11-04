@@ -158,6 +158,36 @@ Windows preserves its actual profile and known-folder inputs.
 No test receives a fabricated profile as the production default-root identity.
 The temporary ancestor chain must contain no `node_modules` directory.
 
+## Build cache policy
+
+The race and minimum profiles reuse the Go build cache that the job restored.
+The wrapper passes the runner's `go env GOCACHE` value and creates that directory on a cache miss.
+The owner accepts the value only for an absolute, canonical directory outside the owned volume.
+On Unix, the caller UID must own that directory.
+On Windows, the caller SID or the token default owner must own it, and no path component can be a reparse point.
+Any other value selects the fresh owned build cache.
+The native and cleanup-diagnostic profiles always use the fresh owned build cache.
+Every profile keeps fresh owned `GOPATH` and `GOMODCACHE` directories on the volume.
+
+`result.json` records the decision in `buildCachePolicy`.
+A restored policy names the path, and a fresh policy names the reason.
+
+Unix runs Go as root under umask 077.
+After the owned sessions close, the owner gives the caller UID each cache entry that another owner holds.
+It also adds the owner read and write bits that a later job step needs.
+The walk does not follow links, and a failed handback fails the run.
+Windows needs no handback.
+Its owned children run with the caller token, so their new entries get the same default owner as later job steps.
+
+The restored cache adds no new writer.
+The harness already runs the `go` binary from the runner's `PATH` without an owner check.
+It also compiles the checkout that the runner owns.
+The disposable runner account installed both, and it can already write the restored cache.
+The go job records the owner of `$(go env GOROOT)/bin/go` and the runner account on each operating system.
+
+The restored cache is not on the owned volume, so the volume free-space floor does not cover it.
+The Windows floor reads the drive of the owned `GOTMPDIR` directory.
+
 ## Bounds and evidence
 
 Unix race, minimum, other native targets and Windows keep an 800-second logical outer deadline.

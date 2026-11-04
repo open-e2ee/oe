@@ -10,9 +10,18 @@ python_path=$(command -v python3)
 if [[ $(id -u) != 0 ]]; then
   proof_path=$(mktemp -d "${RUNNER_TEMP:?}/ca8-store-proof.XXXXXXXX")
   printf 'evidence-path=%s\n' "$proof_path" >> "${GITHUB_OUTPUT:?}"
+  # The race and minimum profiles offer the build cache that the job restored.
+  # A cache miss leaves no directory, so the runner creates its own one here.
+  # The elevated owner accepts the value only after its own checks.
+  restored_gocache=
+  if [[ $1 == race || $1 == minimum ]]; then
+    restored_gocache=$(go env GOCACHE) || restored_gocache=
+    if [[ $restored_gocache == /* ]]; then mkdir -p -- "$restored_gocache" || restored_gocache=; fi
+  fi
   exec sudo -n /usr/bin/env \
     "PATH=$PATH" "GITHUB_ACTIONS=$GITHUB_ACTIONS" \
     "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" "CA8_PROOF_PATH=$proof_path" \
+    "OE_RESTORED_GOCACHE=$restored_gocache" \
     "$python_path" - "$script_path" "$@" <<'PY'
 import ctypes, errno, hashlib, json, os, pathlib, platform, plistlib, pwd
 import re, resource, selectors, shutil, signal, stat, struct, subprocess, sys, time, uuid
@@ -61,6 +70,7 @@ mounted = False
 volume_device = None
 success = False
 failure = None
+build_cache_policy = None
 index_before = None
 index_owner_mode_preserved = False
 source_hashes = {p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['go.mod','go.sum']}
@@ -418,7 +428,14 @@ try:
     for directory in [fixture,evidence,temporary]: inspect_chain(directory,True)
     if any((parent/'node_modules').exists() for parent in [temporary,*temporary.parents]): raise RuntimeError('The external temporary chain contains node_modules.')
     cache = mount/'cache'; cache.mkdir(mode=0o700)
-    base_env.update({'GOPATH':str(cache/'go'),'GOMODCACHE':str(cache/'modules'),'GOCACHE':str(cache/'build'),
+    # The race and minimum profiles reuse the restored build cache. Every other
+    # profile keeps the fresh owned cache that the native cell evidence cites.
+    if profile in ('race','minimum'):
+        build_cache_policy = session_module.restored_build_cache(os.environ.get('OE_RESTORED_GOCACHE',''),caller_uid,mount)
+    else:
+        build_cache_policy = {'policy':'fresh','reason':'This profile keeps the fresh owned build cache.'}
+    build_cache = build_cache_policy['path'] if build_cache_policy['policy'] == 'restored' else str(cache/'build')
+    base_env.update({'GOPATH':str(cache/'go'),'GOMODCACHE':str(cache/'modules'),'GOCACHE':build_cache,
                      'GOTMPDIR':str(temporary),'TMPDIR':str(temporary),'TMP':str(temporary),'TEMP':str(temporary),
                      'XDG_CACHE_HOME':str(cache/'xdg'),'NODE_COMPILE_CACHE':str(cache/'node'),
                      'OE_IDENTITY_STORE_FIXTURE_ROOT':str(fixture),'OE_IDENTITY_STORE_EVIDENCE_ROOT':str(evidence),
@@ -631,11 +648,17 @@ finally:
         success = False; failure = (failure or '')+'; checkout index readback: '+str(error)
     empty = all(row['empty'] for row in groups) and all(row['empty'] for row in process_observers)
     closed = owned_closed()
+    # Only a closed run hands back the restored cache. No owned process can still write to it.
+    if closed and build_cache_policy is not None and build_cache_policy['policy'] == 'restored':
+        try: build_cache_policy['handback'] = session_module.hand_back_build_cache(build_cache_policy['path'],caller_uid)
+        except BaseException as error:
+            success = False; failure = (failure or '')+'; build cache handback: '+str(error)
     success = success and empty and closed
     # A failed run names its class. Only a closed Go test stage failure is class test.
     failure_class, failure_text = (None,None) if success else session_module.failure_summary(steps,proof,failure,closed)
     save('result.json',{'success':success,'failure':failure,'failureClass':failure_class,'groups':groups,'processObservers':process_observers,'ownedSessionsEmpty':empty,'mountedOwnedVolumePreserved':mounted,
-                        'profile':profile,'scope':'NO_TEST_CREDIT' if cleanup_diagnostic else 'EXISTING_STORE_QUALIFICATION',
+                        'profile':profile,'buildCachePolicy':build_cache_policy,
+                        'scope':'NO_TEST_CREDIT' if cleanup_diagnostic else 'EXISTING_STORE_QUALIFICATION',
                         'ownedProcessAndPipeClosureComplete':closed,'observedMountedState':mounted,
                         'backingImagePreserved':cleanup['backingImagePreserved'],'backingRemoved':cleanup['backingRemoved'],
                         'volumeDevice':volume_device,'mount':str(mount),'elapsedSeconds':time.monotonic()-started,

@@ -29,6 +29,7 @@ $attachmentState = 'not-created'
 $diskNumber = $null
 $driveLetter = $null
 $volumeRoot = $null
+$buildCachePolicy = $null
 $image = Join-Path $proof 'fixture.vhdx'
 $originalModules = @{}
 foreach ($name in @('go.mod','go.sum')) {
@@ -103,6 +104,26 @@ function Resolve-NativeExecutable([string]$Name) {
     $item = Get-Item -LiteralPath $path -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The selected native executable is a reparse point.' }
     return $item.FullName
+}
+# The race profile reuses the build cache that the job restored. The policy is restored only
+# for a fully qualified canonical directory outside the owned volume that the caller or the
+# token default owner owns. Owned children run with this token, so later job steps can use
+# every entry that they add. Every other value selects the fresh owned cache with a reason.
+function Get-RestoredBuildCache([string]$Value,[string]$CallerSid,[string]$VolumeRoot) {
+    $fresh = { param($Reason) @{ policy='fresh'; reason=$Reason } }
+    if (-not $Value) { return & $fresh 'No restored GOCACHE value was supplied.' }
+    if (-not [IO.Path]::IsPathFullyQualified($Value)) { return & $fresh 'The restored GOCACHE is not absolute.' }
+    if ([IO.Path]::GetFullPath($Value) -cne $Value) { return & $fresh 'The restored GOCACHE is not canonical.' }
+    $owned = [IO.Path]::GetFullPath($VolumeRoot)
+    if ($Value.StartsWith($owned,[StringComparison]::OrdinalIgnoreCase)) { return & $fresh 'The restored GOCACHE is under the owned volume.' }
+    if (-not [IO.Directory]::Exists($Value)) { return & $fresh 'The restored GOCACHE is not a directory.' }
+    for ($entry=[IO.DirectoryInfo]::new($Value); $null -ne $entry; $entry=$entry.Parent) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { return & $fresh 'The restored GOCACHE path holds a reparse point.' }
+    }
+    $owner = [IO.FileSystemAclExtensions]::GetAccessControl([IO.DirectoryInfo]::new($Value)).GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $defaultOwner = [Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value
+    if ($owner -ne $CallerSid -and $owner -ne $defaultOwner) { return & $fresh 'The caller does not own the restored GOCACHE.' }
+    return @{ policy='restored'; path=$Value; owner=$owner }
 }
 function Format-WorkflowCommandMessage([string]$Value) {
     return $Value.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
@@ -219,13 +240,25 @@ try {
         volume=$volume; diskNumber=$diskNumber; image=$image; directories=$inspection; profile=$FixtureProfile;
         go=$go; goSHA256=(Get-FileHash -LiteralPath $go -Algorithm SHA256).Hash; moduleHashes=$originalModules; volumeMaximumBytes=4294967296 }
     $cache=$directories.cache; $temporary=$directories.temporary
+    if ($FixtureProfile -eq 'race') {
+        # A cache miss leaves no directory, so the runner creates its own one here.
+        $restored = [string](& $go env GOCACHE)
+        if ($LASTEXITCODE -ne 0) { $restored = '' }
+        if ([IO.Path]::IsPathFullyQualified($restored) -and -not $restored.StartsWith($volumeRoot,[StringComparison]::OrdinalIgnoreCase)) {
+            [IO.Directory]::CreateDirectory($restored) | Out-Null
+        }
+        $buildCachePolicy = Get-RestoredBuildCache $restored $caller.sid $volumeRoot
+    } else {
+        $buildCachePolicy = @{ policy='fresh'; reason='This profile keeps the fresh owned build cache.' }
+    }
+    $buildCache = if ($buildCachePolicy.policy -eq 'restored') { $buildCachePolicy.path } else { Join-Path $cache 'build' }
     $ancestor=[IO.DirectoryInfo]::new($temporary)
     while ($null -ne $ancestor) {
         if (Test-Path -LiteralPath (Join-Path $ancestor.FullName 'node_modules')) { throw 'The external temporary chain contains node_modules.' }
         $ancestor=$ancestor.Parent
     }
     $childEnvironment['GOPATH']=Join-Path $cache 'go'; $childEnvironment['GOMODCACHE']=Join-Path $cache 'modules'
-    $childEnvironment['GOCACHE']=Join-Path $cache 'build'; $childEnvironment['GOTMPDIR']=$temporary
+    $childEnvironment['GOCACHE']=$buildCache; $childEnvironment['GOTMPDIR']=$temporary
     $childEnvironment['TMP']=$temporary; $childEnvironment['TEMP']=$temporary
     $childEnvironment['NODE_COMPILE_CACHE']=Join-Path $cache 'node'
     $childEnvironment['OE_IDENTITY_STORE_FIXTURE_ROOT']=$directories.fixture
@@ -317,7 +350,7 @@ finally {
         } catch { $failureClass='harness'; $failureText="Failure summary: $($_.Exception.Message)" }
         $failureText=Limit-FailureText $failureText
     }
-    Save-Proof 'result.json' @{ success=$success; failure=$failure; failureClass=$failureClass; elapsedSeconds=$timer.Elapsed.TotalSeconds;
+    Save-Proof 'result.json' @{ success=$success; failure=$failure; failureClass=$failureClass; buildCachePolicy=$buildCachePolicy; elapsedSeconds=$timer.Elapsed.TotalSeconds;
         ownedVolumePreserved=($attachmentState -in @('attached','unknown')); attachmentState=$attachmentState; image=$image; diskNumber=$diskNumber;
         limits='No ordinary-user/default-root, native ENOSPC, hosted-caller or hard-kernel-deadline qualification.' }
 }

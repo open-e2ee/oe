@@ -383,5 +383,80 @@ class FailureSummaryTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(),printed)
 
 
+class BuildCacheDecisionTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = pathlib.Path(os.path.realpath(directory.name))
+        self.mount = self.root/'mount'
+        self.mount.mkdir()
+        self.cache = self.root/'go-build'
+        self.cache.mkdir()
+
+    def assertFresh(self, decision, reason):
+        self.assertEqual(decision,{'policy':'fresh','reason':reason})
+
+    def test_restored_gocache_under_mount_falls_back(self):
+        inside = self.mount/'cache'/'build'
+        inside.mkdir(parents=True)
+        self.assertFresh(OWNER.restored_build_cache(str(inside),os.getuid(),str(self.mount)),'The restored GOCACHE is under the owned mount.')
+        self.assertFresh(OWNER.restored_build_cache(str(self.mount),os.getuid(),str(self.mount)),'The restored GOCACHE is under the owned mount.')
+
+    def test_restored_gocache_non_canonical_falls_back(self):
+        link = self.root/'link'
+        link.symlink_to(self.cache,target_is_directory=True)
+        reason = 'The restored GOCACHE is not canonical.'
+        self.assertFresh(OWNER.restored_build_cache(str(link),os.getuid(),str(self.mount)),reason)
+        self.assertFresh(OWNER.restored_build_cache(str(self.cache)+'/',os.getuid(),str(self.mount)),reason)
+        self.assertFresh(OWNER.restored_build_cache(str(self.mount/'..'/'go-build'),os.getuid(),str(self.mount)),reason)
+        self.assertFresh(OWNER.restored_build_cache('go-build',os.getuid(),str(self.mount)),'The restored GOCACHE is not absolute.')
+        self.assertFresh(OWNER.restored_build_cache('',os.getuid(),str(self.mount)),'No restored GOCACHE value was supplied.')
+
+    def test_restored_gocache_wrong_owner_falls_back(self):
+        self.assertFresh(OWNER.restored_build_cache(str(self.cache),os.getuid()+1,str(self.mount)),'The caller does not own the restored GOCACHE.')
+        regular = self.root/'regular'
+        regular.write_text('')
+        self.assertFresh(OWNER.restored_build_cache(str(regular),os.getuid(),str(self.mount)),'The restored GOCACHE is not a directory.')
+        missing = OWNER.restored_build_cache(str(self.root/'missing'),os.getuid(),str(self.mount))
+        self.assertEqual(missing['policy'],'fresh')
+        self.assertTrue(missing['reason'].startswith('The restored GOCACHE cannot be read: '))
+
+    def test_restored_gocache_valid_is_accepted(self):
+        self.assertEqual(OWNER.restored_build_cache(str(self.cache),os.getuid(),str(self.mount)),{'policy':'restored','path':str(self.cache)})
+
+    def test_handback_owns_every_foreign_entry_without_following_links(self):
+        outside = self.root/'outside'
+        outside.mkdir()
+        (outside/'outside-entry').write_text('')
+        (self.cache/'00').mkdir(mode=0o755)
+        unreadable = self.cache/'00'/'unreadable-d'
+        unreadable.write_text('')
+        unreadable.chmod(0o200)
+        self.addCleanup(unreadable.chmod,0o600)
+        (self.cache/'00'/'readable-d').write_text('')
+        (self.cache/'00'/'readable-d').chmod(0o644)
+        (self.cache/'link').symlink_to(outside,target_is_directory=True)
+        with mock.patch.object(OWNER.os,'chown') as chown, mock.patch.object(OWNER.os,'chmod') as chmod:
+            result = OWNER.hand_back_build_cache(str(self.cache),os.getuid()+1)
+        self.assertEqual(result,{'entries':4,'changedEntries':4})
+        self.assertEqual(sorted(call.args[0] for call in chown.call_args_list),['00','link','readable-d','unreadable-d'])
+        for call in chown.call_args_list:
+            self.assertEqual(call.args[1:],(os.getuid()+1,-1))
+            self.assertIs(call.kwargs['follow_symlinks'],False)
+        self.assertEqual([(call.args[0],call.args[1]) for call in chmod.call_args_list],[('unreadable-d',0o600)])
+
+    def test_handback_leaves_caller_entries_unchanged(self):
+        (self.cache/'00').mkdir()
+        (self.cache/'00'/'entry-d').write_text('')
+        with mock.patch.object(OWNER.os,'chown') as chown, mock.patch.object(OWNER.os,'chmod') as chmod:
+            result = OWNER.hand_back_build_cache(str(self.cache),os.getuid())
+        self.assertEqual(result,{'entries':2,'changedEntries':0})
+        chown.assert_not_called(); chmod.assert_not_called()
+
+    def test_handback_refuses_an_unreadable_walk(self):
+        with self.assertRaises(FileNotFoundError):
+            OWNER.hand_back_build_cache(str(self.root/'missing'),os.getuid())
+
+
 if __name__ == '__main__':
     unittest.main(failfast=True)

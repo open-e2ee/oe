@@ -1,5 +1,5 @@
 """Native POSIX session ownership for disposable identity qualification."""
-import collections, hashlib, json, os, pathlib, selectors, signal, subprocess, time
+import collections, hashlib, json, os, pathlib, selectors, signal, stat, subprocess, time
 
 STAGE_FAILURE = 'A bounded stage failed; see raw evidence.'
 
@@ -290,6 +290,46 @@ class IdentitySessionController:
             self.save('stages.json', self.steps); self.save('groups.json', self.groups)
         if reason or row['status'] != 0 or not row['closureComplete']: raise RuntimeError(STAGE_FAILURE)
         return bytes(raw)
+
+
+def restored_build_cache(value, caller_uid, mount):
+    """Return the build cache policy for the race and minimum profiles.
+
+    The policy is restored only for an absolute canonical directory that caller_uid owns
+    outside the owned mount. Every other value selects the fresh owned cache with a reason.
+    """
+    def fresh(reason): return {'policy':'fresh','reason':reason}
+    if not value: return fresh('No restored GOCACHE value was supplied.')
+    if not os.path.isabs(value): return fresh('The restored GOCACHE is not absolute.')
+    if os.path.realpath(value) != value: return fresh('The restored GOCACHE is not canonical.')
+    owned = os.path.realpath(mount)
+    if os.path.commonpath([value,owned]) == owned: return fresh('The restored GOCACHE is under the owned mount.')
+    try: info = os.lstat(value)
+    except OSError as error: return fresh(f'The restored GOCACHE cannot be read: {error.strerror}.')
+    if not stat.S_ISDIR(info.st_mode): return fresh('The restored GOCACHE is not a directory.')
+    if info.st_uid != caller_uid: return fresh('The caller does not own the restored GOCACHE.')
+    return {'policy':'restored','path':value}
+
+def hand_back_build_cache(path, caller_uid):
+    """Give caller_uid each entry under the restored build cache that another owner holds.
+
+    Root runs Go under umask 077, so its new cache entries are root-owned 0600 files and
+    0700 directories. The caller's later go vet, go build and cache save steps need them.
+    The walk never follows a link.
+    """
+    def refuse(error): raise error
+    entries = changed = 0
+    for _, directories, files, directory_fd in os.fwalk(path,onerror=refuse,follow_symlinks=False):
+        for name in directories+files:
+            entries += 1
+            info = os.stat(name,dir_fd=directory_fd,follow_symlinks=False)
+            if info.st_uid == caller_uid: continue
+            os.chown(name,caller_uid,-1,dir_fd=directory_fd,follow_symlinks=False)
+            needed = stat.S_IRWXU if stat.S_ISDIR(info.st_mode) else stat.S_IRUSR|stat.S_IWUSR
+            if not stat.S_ISLNK(info.st_mode) and stat.S_IMODE(info.st_mode) & needed != needed:
+                os.chmod(name,stat.S_IMODE(info.st_mode)|needed,dir_fd=directory_fd)
+            changed += 1
+    return {'entries':entries,'changedEntries':changed}
 
 
 FAILURE_TEXT_LIMIT = 2000
