@@ -1,5 +1,7 @@
 """Native POSIX session ownership for disposable identity qualification."""
-import hashlib, json, os, pathlib, selectors, signal, subprocess, time
+import collections, hashlib, json, os, pathlib, selectors, signal, subprocess, time
+
+STAGE_FAILURE = 'A bounded stage failed; see raw evidence.'
 
 class IdentitySessionController:
     def __init__(self, root, proof, base_env, outer_deadline, *, steps=None,
@@ -286,6 +288,88 @@ class IdentitySessionController:
                         'closureEndedMonotonic':closure_ended,'secondaryFailures':secondary,
                         'closureComplete':empty and leader_waited and all(eof.values())})
             self.save('stages.json', self.steps); self.save('groups.json', self.groups)
-        if reason or row['status'] != 0 or not row['closureComplete']: raise RuntimeError('A bounded stage failed; see raw evidence.')
+        if reason or row['status'] != 0 or not row['closureComplete']: raise RuntimeError(STAGE_FAILURE)
         return bytes(raw)
 
+
+FAILURE_TEXT_LIMIT = 2000
+FAILURE_OUTPUT_LINES = 5
+FAILURE_ANNOTATION_TITLE = 'identity-store harness'
+
+def workflow_command_message(value):
+    """Encode a GitHub workflow-command message. Percent goes first."""
+    return str(value).replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+
+def failure_annotation(failure_class, text):
+    return '::error title='+FAILURE_ANNOTATION_TITLE+'::'+workflow_command_message(f'{failure_class}: {text}')
+
+def _bounded_text(text):
+    return text if len(text) <= FAILURE_TEXT_LIMIT else text[:FAILURE_TEXT_LIMIT-3]+'...'
+
+def _stage_label(index, row):
+    executable = str((row.get('argv') or ['unknown'])[0]).replace('\\','/').rsplit('/',1)[-1]
+    return f"stage {index:02d} {executable} status={row.get('status')} reason={row.get('reason')}"
+
+def _stage_clean(row):
+    return (row.get('status') == 0 and row.get('reason') is None and row.get('closureComplete') is True
+        and not row.get('secondaryFailures') and 'diagnosticFailure' not in row)
+
+def _go_test_stage(argv):
+    argv = [str(value) for value in argv or []]
+    if len(argv) < 2 or argv[0].replace('\\','/').rsplit('/',1)[-1] not in ('go','go.exe'): return False
+    return argv[1] == 'test' or argv[1:3] == ['tool','test2json']
+
+def _framing_line(line):
+    return line.startswith(('=== ','--- ','FAIL\t','ok ')) or line in ('FAIL','PASS')
+
+def go_test_failures(path):
+    """Failing test names and their last output lines from retained test2json stdout."""
+    failed, packages, output = [], [], {}
+    try:
+        with open(path,'rb') as stream:
+            for raw in stream:
+                try: event = json.loads(raw)
+                except ValueError: continue
+                if not isinstance(event,dict): continue
+                action, test = event.get('Action'), event.get('Test')
+                # A build event names 'pkg [pkg.test]'. Its package is the first word.
+                key = (str(event.get('Package') or event.get('ImportPath') or '').split(' ',1)[0], str(test) if test else None)
+                if action in ('output','build-output'):
+                    line = str(event.get('Output') or '').strip()
+                    if line and not _framing_line(line):
+                        output.setdefault(key,collections.deque(maxlen=FAILURE_OUTPUT_LINES)).append(line)
+                elif action == 'fail' and key[1] is not None:
+                    if key not in failed: failed.append(key)
+                elif action in ('fail','build-fail'):
+                    if key not in packages: packages.append(key)
+    except OSError as error:
+        return f'retained stdout unreadable: {error}'
+    def name(key):
+        package = key[0].rsplit('/',1)[-1]
+        return f'{package}.{key[1]}' if key[1] is not None else f'{package} package'
+    failing_packages = {key[0] for key in failed}
+    packages = [key for key in packages if key[0] not in failing_packages]
+    parts = []
+    if failed: parts.append('failed: '+', '.join(name(key) for key in failed))
+    for key in failed+packages:
+        if output.get(key): parts.append(name(key)+': '+' | '.join(output[key]))
+    if packages and not failed: parts.insert(0,'failed: '+', '.join(name(key) for key in packages))
+    return '; '.join(parts) if parts else 'no test2json fail event was retained'
+
+def failure_summary(steps, proof, failure, closed):
+    """Return (failure_class, text). Only one closed nonzero go test stage is a test failure."""
+    failed = [(index,row) for index,row in enumerate(steps) if not _stage_clean(row)]
+    if closed is True and failure == STAGE_FAILURE and len(failed) == 1:
+        index, row = failed[0]
+        status = row.get('status')
+        if (index == len(steps)-1 and _go_test_stage(row.get('argv')) and type(status) is int and status != 0
+                and row.get('reason') == 'PROCESS_EXIT_NONZERO' and row.get('closureComplete') is True
+                and not row.get('secondaryFailures') and 'diagnosticFailure' not in row):
+            stdout = pathlib.Path(proof)/f'{index:02d}.stdout'
+            return 'test', _bounded_text(_stage_label(index,row)+'; '+go_test_failures(stdout))
+    parts = []
+    if closed is not True:
+        parts.append('Uncertain process or pipe closure prevents proof ownership handback. Preserve the owned VM state.')
+    parts.append(failure if failure else 'no failure text was recorded')
+    parts.extend(_stage_label(index,row) for index,row in failed)
+    return 'harness', _bounded_text('; '.join(parts))
