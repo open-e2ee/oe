@@ -260,15 +260,21 @@ func (p pullPlan) text(heading string) string {
 // set when the environment did not apply, and the run takes the code of the
 // first such environment.
 type pushEntry struct {
-	Status     string           `json:"status"`
-	Code       string           `json:"code,omitempty"`
-	Changes    []control.Change `json:"changes"`
+	Status string `json:"status"`
+	Code   string `json:"code,omitempty"`
+	// Changes is empty, not nil, in an entry without changes. An identity
+	// entry has no changes of its own: Retention holds them.
+	Changes    []control.Change `json:"changes,omitzero"`
 	Revision   string           `json:"revision,omitempty"`
 	Activation string           `json:"activation,omitempty"`
 	Activated  bool             `json:"activated,omitempty"`
 	BlockedBy  string           `json:"blockedBy,omitempty"`
 	Reason     string           `json:"reason,omitempty"`
-	failure    *problem
+	// Retention and Identity are the two outcomes of an environment whose
+	// section declares identity.
+	Retention *pushEntry     `json:"retention,omitempty"`
+	Identity  map[string]any `json:"identity,omitempty"`
+	failure   *problem
 }
 
 func (entry *pushEntry) stop(status string, failure *problem) *pushEntry {
@@ -286,6 +292,9 @@ type pusher struct {
 	access    credential.Credential
 	project   control.Project
 	policies  map[string]control.RelayPolicyRequest
+	// identity holds the identity options when the config declares identity
+	// for an environment of the run, and is nil otherwise.
+	identity *identityCommandOptions
 	// wrote is true when the run wrote the Production connection file.
 	wrote bool
 }
@@ -294,7 +303,8 @@ type pusher struct {
 // Production when the file has its section. --env narrows the sections, and
 // OE_ENV does not. A Production change needs --yes or a person's consent. A
 // Sandbox failure skips Production, so a policy never reaches Production when
-// it did not apply to Sandbox.
+// it did not apply to Sandbox. A section that declares identity applies its
+// retention policy and then its identity.
 func (r *runner) configPush(ctx context.Context, args []string) error {
 	flags := newFlags("config push")
 	namespaceFirstUse := flags.Bool("confirm-state-never-used", false, "declare that the selected local namespace never existed")
@@ -315,11 +325,17 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 	if r.environmentSelected {
 		environments = []string{r.environment}
 	}
+	var identityOptions *identityCommandOptions
 	if configManagesIdentity(value, environments) {
-		return r.configPushIdentity(ctx, path, value, identityCommandOptions{yes: *yes, dryRun: *dryRun,
-			namespaceFirstUse: *namespaceFirstUse, slotFirstUse: *slotFirstUse})
-	}
-	if *namespaceFirstUse || *slotFirstUse {
+		identityOptions = &identityCommandOptions{yes: *yes, dryRun: *dryRun, namespaceFirstUse: *namespaceFirstUse, slotFirstUse: *slotFirstUse}
+		// The first-use declarations name one slot, so they need a literal --env.
+		if err := r.validateIdentityOptions(*identityOptions); err != nil {
+			return err
+		}
+		if r.getenv("OE_OPERATION_ID") != "" {
+			return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "Use the exact retained-operation command to confirm an operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
+		}
+	} else if *namespaceFirstUse || *slotFirstUse {
 		return identityInputFailure()
 	}
 	policies := map[string]control.RelayPolicyRequest{}
@@ -346,6 +362,9 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 		return err
 	}
 	if project.Writer != "config" {
+		if identityOptions != nil {
+			return identityCommandProblem("CONSOLE_WRITER", "The Console owns this project's desired policy.", "oe project show", exitFailure)
+		}
 		return &problem{
 			code: "CONSOLE_WRITER", exit: exitFailure,
 			message: "project " + project.Slug + " is console-first; change its policy in the console, because oe config push changes nothing",
@@ -360,7 +379,7 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 	}
 	push := &pusher{
 		r: r, yes: *yes, value: value, directory: directory, variable: connection.Variable,
-		access: access, project: project, policies: policies,
+		access: access, project: project, policies: policies, identity: identityOptions,
 	}
 	return push.run(ctx, environments, *dryRun)
 }
@@ -374,7 +393,7 @@ func (p *pusher) run(ctx context.Context, environments []string, dryRun bool) er
 			entries[environment] = &pushEntry{Status: "skipped", Reason: "sandbox_not_applied", Changes: []control.Change{}}
 			continue
 		}
-		entries[environment] = p.environment(ctx, environment, dryRun)
+		entries[environment] = p.section(ctx, environment, dryRun)
 		if entries[environment].failure != nil {
 			first = environment
 		}
@@ -642,13 +661,15 @@ func entrySummary(environment string, entry *pushEntry) string {
 	}
 	switch {
 	case entry.failure != nil:
-		return name + ": " + entry.failure.message + "."
+		return name + ": " + strings.TrimSuffix(entry.failure.message, ".") + "."
 	case entry.Activated:
 		return "Production is active on the Free plan."
 	case entry.Reason == "not_in_file":
 		return "Production: not changed, because " + config.Filename + " has no Production section."
 	case entry.Reason == "sandbox_not_applied":
 		return name + ": skipped, because Sandbox did not apply."
+	case entry.Identity != nil && entry.Identity["operation"] != nil:
+		return name + ": " + entry.Status + ". The identity command receipt is settled. Current service readiness remains unverified."
 	case entry.Activation != "":
 		return name + ": " + entry.Status + ", with a Free plan activation."
 	default:
