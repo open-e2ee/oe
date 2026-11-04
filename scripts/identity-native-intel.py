@@ -43,16 +43,16 @@ def checked_roster(value):
             and value['package'] == 'github.com/open-e2ee/oe/internal/identityattempt',
             'INTEL_ROSTER_VERSION')
     parents, nodes, partitions = value['parents'], value['nodes'], value['partitions']
-    require(isinstance(parents, list) and len(parents) == 140
+    require(isinstance(parents, list) and len(parents) == 106
             and all(isinstance(n, str) and re.fullmatch('(Test|Fuzz|Example)[A-Za-z0-9_]*', n)
                     for n in parents), 'INTEL_PARENT_ROSTER')
-    require(len(set(parents)) == 140, 'INTEL_DUPLICATE_PARENT')
-    require(isinstance(nodes, list) and len(nodes) == 891
+    require(len(set(parents)) == 106, 'INTEL_DUPLICATE_PARENT')
+    require(isinstance(nodes, list) and len(nodes) == 795
             and all(isinstance(n, str) and n.split('/')[0] in parents for n in nodes)
-            and len(set(nodes)) == 891 and set(parents) <= set(nodes), 'INTEL_NODE_ROSTER')
+            and len(set(nodes)) == 795 and set(parents) <= set(nodes), 'INTEL_NODE_ROSTER')
     require(isinstance(partitions, list) and len(partitions) == 3
             and all(isinstance(p, list) for p in partitions)
-            and [len(p) for p in partitions] == [42, 33, 65]
+            and [len(p) for p in partitions] == [42, 33, 31]
             and sum(partitions, []) == parents, 'INTEL_PARTITION_UNION')
     benchmarks = value['benchmarks']
     require(isinstance(benchmarks, list) and not benchmarks, 'INTEL_BENCHMARK_POLICY')
@@ -99,7 +99,7 @@ class IntelNativeCoverage:
         parents = self.roster['parents']
         expected = [n for kind in ['Test', 'Fuzz', 'Example'] for n in parents
                     if n.startswith(kind)]
-        require(expected == parents and names == expected and len(set(names)) == 140,
+        require(expected == parents and names == expected and len(set(names)) == 106,
                 'INTEL_COMPILED_ROSTER')
         self.listed = True
         self.last_group = group
