@@ -77,6 +77,48 @@ It records source hashes and index ownership without invoking Go, Node, download
 Its result explicitly reports `NO_TEST_CREDIT`.
 A passing focused episode does not turn a failed native job green.
 
+## Native cell selection
+
+The `changes` job selects the native identity jobs for each Checks run.
+It runs `go list -deps -test ./internal/identityattempt` for each native target, with and without the `identity_default_qualification` tag.
+Each repository directory in that output is a path prefix.
+A prefix also covers the operating-system-specific and embedded files in its directory.
+The set also contains `scripts/identity-*`, `scripts/test-identity-*`, `go.mod`, `go.sum`, `go.work`, `go.work.sum` and `.github/workflows/ci.yml`.
+
+A changed path in the set selects both native jobs.
+The path match ignores case.
+A tracked symlink or submodule anywhere in the repository also selects them, because both harnesses refuse one.
+A pull request compares its base commit with its merge commit.
+A push to `main` compares the previous commit with the new commit.
+
+The job selects every native cell when `go list` or the diff fails.
+It also selects every native cell for a push without a previous commit.
+A scheduled run and a manual dispatch always select every native cell.
+The schedule runs on `main` every day at 06:17 UTC.
+This command starts a manual run on `main`:
+
+```sh
+gh workflow run ci.yml --repo open-e2ee/oe --ref main
+```
+
+A change outside the set cannot change an input of a native cell.
+The native cells compile only the `./internal/identityattempt` test binary.
+They run only the harness scripts and helpers in the set.
+The harness also hashes every tracked file as evidence, and it refuses a tracked symlink or submodule.
+
+The `go`, `minimum-go`, `config-node`, `packaging` and `homebrew` jobs run for every pull request and every push to `main`.
+The `go` job runs the full race suite with the owned-volume harness on ubuntu amd64, macos-26 arm64 and windows amd64.
+
+The `checks` job is the stable context for a branch ruleset.
+It runs after every other job, also after a failure or a cancellation.
+It requires success from each job that the path rule does not gate.
+It accepts a skipped native job only when the `changes` job selects no native cell.
+
+Before a `v*` tag, the tagged `main` commit requires a successful Checks run that includes the native cells.
+If no such run exists, start a manual run on `main` while the tagged commit is the tip of `main`.
+Tag the commit only after that run succeeds.
+The release workflow does not check this rule.
+
 ## Protected fixture namespace
 
 Unix creates one new 4 GiB ext4 or APFS image.
