@@ -27,7 +27,7 @@ var humanShort = map[string]string{
 	"org list":                              "List your Organizations.",
 	"org switch":                            "Switch the stored session to an Organization.",
 	"doctor":                                "Check local setup and the Relay connection.",
-	"identity":                              "Manage public identity and exact retained operations.",
+	"identity":                              "Manage public identity and server identity operations.",
 	"identity check":                        "Check a public draft identity profile.",
 	"identity current":                      "Read installed identity and its evidence limits.",
 	"identity select":                       "Preview or apply the declared initial identity.",
@@ -37,11 +37,10 @@ var humanShort = map[string]string{
 	"identity lifecycle target":             "Observe a private target from stdin.",
 	"identity lifecycle suspend":            "Prepare and apply member suspension.",
 	"identity lifecycle activate":           "Prepare and apply member activation.",
-	"identity operation":                    "Read or continue an exact retained operation.",
-	"identity operation status":             "Read an exact retained operation.",
-	"identity operation retry":              "Replay the retained selection or keys command.",
-	"identity operation resume":             "Continue the same retained lifecycle ID.",
-	"identity operation cancel":             "Cancel an exact retained selection or keys operation.",
+	"identity operation":                    "Read or continue a server identity operation.",
+	"identity operation status":             "Read an identity operation from the server.",
+	"identity operation resume":             "Continue a lifecycle operation by its ID.",
+	"identity operation cancel":             "Cancel a selection or keys operation by its ID.",
 	"link":                                  "Link this directory to a Relay project.",
 	"project":                               "Show projects, usage, and connections.",
 	"project list":                          "List projects in the current Organization.",
@@ -89,7 +88,7 @@ var humanVariable = map[string]string{
 	"OE_ACCESS_TOKEN_SCOPES": "Token scopes, separated by commas or spaces.",
 	"OE_PROTECTION_BYPASS":   "Control URL bypass secret. Overrides the stored bypass; never appears in output.",
 	"OE_ENV":                 "Default environment for doctor, identity, project, and notifications. New and config ignore it.",
-	"OE_OPERATION_ID":        "Nonidentity idempotency key. Identity confirms only the exact retained original or cancellation; it cannot create one.",
+	"OE_OPERATION_ID":        "The idempotency key for each remote mutation of one run. Set it only to repeat the same command.",
 }
 
 // commandTree supplies one canonical command hierarchy. Local handlers retain

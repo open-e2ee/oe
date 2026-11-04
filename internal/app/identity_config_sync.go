@@ -9,7 +9,6 @@ import (
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 func configManagesIdentity(value config.Config, names []string) bool {
@@ -41,7 +40,7 @@ func (r *runner) planIdentityPull(ctx context.Context, value config.Config, plan
 		}
 		addressed := *r
 		addressed.environment = name
-		_, current, err := addressed.readIdentityCurrent(ctx, value.Project, identityattempt.Selection)
+		_, current, err := addressed.readIdentityCurrent(ctx, value.Project, identity.Selection)
 		if err != nil {
 			return identityPublicFailure(err)
 		}
@@ -64,7 +63,7 @@ func (r *runner) planIdentityPull(ctx context.Context, value config.Config, plan
 }
 
 type identityConfigChange struct {
-	kind      identityattempt.Kind
+	kind      identity.Kind
 	target    *identity.SelectionTarget
 	keys      *identity.ReplacementKeys
 	unchanged bool
@@ -92,7 +91,7 @@ func planIdentityConfig(current identity.CurrentContext, target identity.Selecti
 			if keys.Validate() != nil {
 				return identityConfigChange{}, identityInputFailure()
 			}
-			return identityConfigChange{kind: identityattempt.KeysOnly, keys: &keys}, nil
+			return identityConfigChange{kind: identity.KeysOnly, keys: &keys}, nil
 		}
 	}
 	inventory := current.Configuration.Inventory
@@ -103,7 +102,7 @@ func planIdentityConfig(current identity.CurrentContext, target identity.Selecti
 	if err != nil {
 		return identityConfigChange{}, errIdentityExecution
 	}
-	return identityConfigChange{kind: identityattempt.Selection, target: &copy}, nil
+	return identityConfigChange{kind: identity.Selection, target: &copy}, nil
 }
 
 // identityChanges gives the identity change of one environment in the shape
@@ -126,55 +125,6 @@ func identityChanges(environment string, current identity.CurrentContext, target
 		return []pullChange{{Path: path, Action: "replace", From: installed, To: *target}}, nil
 	}
 	return []pullChange{}, nil
-}
-
-func (r *runner) inspectConfigIdentityState(ctx context.Context, address identityExecutionContext, change identityConfigChange, options identityCommandOptions) error {
-	if r.identityAttempts == nil {
-		return errIdentityExecution
-	}
-	store, err := r.identityAttempts.Open()
-	if err != nil || store == nil {
-		if err != nil {
-			return err
-		}
-		return errIdentityExecution
-	}
-	for _, kind := range []identityattempt.Kind{identityattempt.Selection, identityattempt.KeysOnly} {
-		slot, err := identityattempt.NewSlot(address.slot.ControlBase(), address.slot.OrganizationID(), address.slot.ProjectSlug(), address.slot.Environment(), kind)
-		if err != nil {
-			return err
-		}
-		if err := r.requireIdentityVacant(ctx, slot); err != nil {
-			return err
-		}
-		observation, err := store.Inspect(ctx, slot)
-		if err != nil {
-			return err
-		}
-		if change.unchanged || kind != change.kind {
-			continue
-		}
-		switch observation.State() {
-		case identityattempt.AbsentNamespace:
-			if !options.slotFirstUse {
-				return identityattempt.ErrFirstUseRequired
-			}
-		case identityattempt.AbsentSlot:
-			if options.namespaceFirstUse || !options.slotFirstUse {
-				return identityattempt.ErrFirstUseRequired
-			}
-		case identityattempt.Ready:
-			if options.namespaceFirstUse || options.slotFirstUse {
-				return identityattempt.ErrAlreadyInitialized
-			}
-		default:
-			return errIdentityExecution
-		}
-	}
-	if change.unchanged && (options.namespaceFirstUse || options.slotFirstUse) {
-		return identityInputFailure()
-	}
-	return nil
 }
 
 // identityEntry is the push entry of an environment whose section declares
@@ -214,9 +164,6 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 		return entry.stop(status, classify(err, p.command(p.yes), environment))
 	}
 	inactive := environment == "production" && (p.project.Production == nil || p.project.Production.State != control.ProductionActive)
-	if inactive && (options.namespaceFirstUse || options.slotFirstUse) {
-		return failed(identityEntry(nil, "blocked", nil), "blocked", identityInputFailure())
-	}
 	if inactive {
 		retention := p.environment(ctx, environment, dryRun)
 		entry := identityEntry(retention, "blocked", nil)
@@ -228,7 +175,7 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 	}
 	identityContext, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	address, approved, err := r.readIdentityCurrent(identityContext, p.value.Project, identityattempt.Selection)
+	address, approved, err := r.readIdentityCurrent(identityContext, p.value.Project, identity.Selection)
 	if err != nil {
 		return failed(identityEntry(nil, "blocked", nil), "failed", identityPublicFailure(err))
 	}
@@ -236,8 +183,8 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 	if err != nil {
 		return failed(identityEntry(nil, "blocked", nil), "failed", err)
 	}
-	if change.kind == identityattempt.KeysOnly {
-		keysAddress, keysCurrent, keysErr := r.readIdentityCurrent(identityContext, p.value.Project, identityattempt.KeysOnly)
+	if change.kind == identity.KeysOnly {
+		keysAddress, keysCurrent, keysErr := r.readIdentityCurrent(identityContext, p.value.Project, identity.KeysOnly)
 		if keysErr != nil || !sameIdentityApprovalContext(approved, keysCurrent) {
 			return failed(identityEntry(nil, "blocked", nil), "failed", identityPublicFailure(errIdentityExecution))
 		}
@@ -273,11 +220,8 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 		}
 		return entry
 	}
-	if err := r.inspectConfigIdentityState(identityContext, address, change, options); err != nil {
-		return failed(identityEntry(retention, "blocked", nil), "blocked", identityPublicFailure(err))
-	}
 	if !change.unchanged {
-		if err := r.approveIdentity(p.identityCommand(), changes, options); err != nil {
+		if err := r.approveIdentity(p.command(false), changes, options); err != nil {
 			// The entry, not the run, holds the change of its environment.
 			entry := identityEntry(retention, "blocked", nil)
 			entry.Identity["changes"] = changes
@@ -320,15 +264,14 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 	if _, err := identityPreview(finalContext, freshAddress, fresh, change.target, change.keys); err != nil {
 		return failed(identityEntry(retention, "blocked", nil), "blocked", identityPublicFailure(err))
 	}
-	action := identityattempt.SelectionApplyAction
-	if change.kind == identityattempt.KeysOnly {
-		action = identityattempt.KeysReplaceAction
+	action := identity.SelectionApplyAction
+	if change.kind == identity.KeysOnly {
+		action = identity.KeysReplaceAction
 	}
-	result, err := r.executeIdentity(finalContext, identityExecutionInput{Project: p.value.Project, Kind: change.kind, Action: action,
-		Target: change.target, Keys: change.keys, Approved: &approved, Consent: true,
-		NamespaceFirstUse: options.namespaceFirstUse, SlotFirstUse: options.slotFirstUse})
+	result, err := r.executeIdentity(finalContext, identityExecutionInput{Project: p.value.Project, Action: action,
+		Target: change.target, Keys: change.keys, Approved: &approved, Consent: true})
 	if err != nil {
-		return failed(identityEntry(retention, "failed", nil), "failed", identityExecutionFailure(err, change.kind, environment))
+		return failed(identityEntry(retention, "failed", nil), "failed", identityExecutionFailure(err, environment))
 	}
 	operation, err := projectIdentityExecution(change.kind, result)
 	if err != nil {
@@ -336,7 +279,7 @@ func (p *pusher) identityEnvironment(ctx context.Context, environment string, ta
 	}
 	operation.Environment = environment
 	entry := identityEntry(retention, operation.Status, &operation)
-	if failure := identityResultFailure(operation); failure != nil {
+	if failure := identityResultFailure(operation, ""); failure != nil {
 		return entry.stop("failed", failure)
 	}
 	entry.Status = "applied"

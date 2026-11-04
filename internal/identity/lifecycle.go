@@ -318,13 +318,27 @@ func ClassifyLifecycleReceipt(expected LifecycleAttempt, scope Scope, receipt Li
 	if !validLifecycleSource(receipt.source) || !expected.Equal(receipt.original) || !scope.Equal(receipt.scope) || !lifecycleAssociation(expected, scope, receipt.result) {
 		return ReceiptMismatch
 	}
-	if receipt.result.Status == "converged" {
-		if receipt.source == LifecycleStatusSource {
+	return lifecycleDisposition(receipt.source, receipt.result.Status)
+}
+
+// ClassifyLifecycleResult classifies a server lifecycle status read by its
+// operation ID in the scope of the current read.
+func ClassifyLifecycleResult(id ContractText, scope Scope, source ReceiptSource, result LifecycleStatus) ReceiptDisposition {
+	if !validLifecycleSource(source) || !textBound(id, 1, 128) || scope.Validate() != nil || result.Validate() != nil ||
+		!id.Equal(result.Operation.OperationID) || !scope.Equal(result.Operation.Scope) {
+		return ReceiptMismatch
+	}
+	return lifecycleDisposition(source, result.Status)
+}
+
+func lifecycleDisposition(source ReceiptSource, status string) ReceiptDisposition {
+	if status == "converged" {
+		if source == LifecycleStatusSource {
 			return ReceiptContinuationRequired
 		}
 		return ReceiptSettled
 	}
-	if slices.Contains([]string{"refused", "superseded", "superseded_by_deletion"}, receipt.result.Status) {
+	if slices.Contains([]string{"refused", "superseded", "superseded_by_deletion"}, status) {
 		return ReceiptSettled
 	}
 	return ReceiptPending

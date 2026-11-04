@@ -271,6 +271,23 @@ func ClassifySelectionReceipt(expected SelectionCommand, cancellation *Cancellat
 	}
 	return operationDisposition(receipt.result.State)
 }
+
+// ClassifySelectionResult classifies a server result read by its operation ID.
+// A cancel result also carries the selection operation ID.
+func ClassifySelectionResult(id SelectionOperationID, result SelectionResult) ReceiptDisposition {
+	if id.Validate() != nil || result.Validate() != nil || !textLiteral(result.OperationID, string(id)) {
+		return ReceiptMismatch
+	}
+	return operationDisposition(result.State)
+}
+
+// ClassifyKeysResult classifies a keys-only server result read by its operation ID.
+func ClassifyKeysResult(id SelectionOperationID, result KeysResult) ReceiptDisposition {
+	if id.Validate() != nil || result.Validate() != nil || !textLiteral(result.OperationID, string(id)) {
+		return ReceiptMismatch
+	}
+	return operationDisposition(result.State)
+}
 func ClassifyKeysReceipt(expected KeysCommand, cancellation *CancellationOperationID, receipt KeysReceipt) ReceiptDisposition {
 	if expected.Validate() != nil || !expected.Equal(receipt.original) || !cancellationEqual(cancellation, receipt.cancellation) || receipt.result.Validate() != nil || !validSelectionMetadata(receipt.source, receipt.cancellation, true) || !textLiteral(receipt.result.OperationID, string(expected.OperationID)) {
 		return ReceiptMismatch

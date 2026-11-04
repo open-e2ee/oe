@@ -2,8 +2,11 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -181,11 +184,13 @@ func TestPublicIdentityPushAppliesEveryDeclaredEnvironment(t *testing.T) {
 	})
 	t.Run("sandbox-failure-skips-production", func(t *testing.T) {
 		f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+		f.lose["select"] = true
 		exit, out, stderr := f.run(t, "config", "push", "--yes")
 		result := decodeEvent(t, []byte(out))
 		production := entry(t, result, "production")
-		if exit == 0 || result.Code != "STORE_LOCATION" || production["status"] != "skipped" || production["reason"] != "sandbox_not_applied" ||
-			f.count("preview") != 1 || f.count("/v1/deploys") != 0 {
+		if exit != exitTemporary || result.Code != "IDENTITY_UNAVAILABLE" || production["status"] != "skipped" || production["reason"] != "sandbox_not_applied" ||
+			!strings.HasPrefix(result.Next, "oe identity operation status --kind selection --operation-id oe_") ||
+			f.count("preview") != 3 || f.count("select") != 1 || f.count("/v1/deploys") != 0 {
 			t.Fatal("a Sandbox identity failure did not skip Production", exit, out, stderr)
 		}
 	})
@@ -239,13 +244,38 @@ func TestPublicIdentityPushDoesNotReuseGenericOperationEnvironment(t *testing.T)
 	}
 }
 
-func TestPublicIdentityPushLocalStateGuardPrecedesRetentionMutation(t *testing.T) {
-	f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+func TestConfigPushUnchangedIdentityTouchesNoLocalState(t *testing.T) {
+	actual := t.TempDir()
+	home := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(actual, home); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "APPDATA"} {
+		t.Setenv(name, home)
+	}
+	configDirectory, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := publicIdentityTestFixture(t, configuredExecutionWire)
 	f.planChanges = []control.Change{{Path: "relay.deliveryRetention", Before: "1d", After: "3d"}}
 	exit, out, stderr := f.run(t, "config", "push", "--env", "sandbox")
-	attempts := f.dependencies.IdentityAttempts.(*identityCountingFactory)
-	if exit == 0 || attempts.opens != 1 || f.count("/v1/deploys") != 0 || f.count("select") != 0 {
-		t.Fatal("unavailable retained state allowed retention or selection mutation", exit, out, stderr)
+	if exit != 0 || f.count("/v1/deploys") != 1 || f.count("select") != 0 || f.count("keys-replace") != 0 {
+		t.Fatal("an unchanged identity blocked a retention-only push", exit, out, stderr)
+	}
+	for _, root := range []string{actual, configDirectory} {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.Name() == "identity-attempts" {
+				t.Error("config push created local identity state", path)
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -271,25 +301,12 @@ func TestPublicIdentityInactiveProductionHasSeparateActivationAndPreview(t *test
 		if f.count("/v1/deploys") != expectedDeploys {
 			t.Fatal("activation phase effects changed")
 		}
-		attempts := f.dependencies.IdentityAttempts.(*identityCountingFactory)
-		if attempts.opens != 0 || attempts.bootstraps != 0 {
-			t.Fatal("activation initialized identity state")
-		}
 		if !dryRun {
 			exit, out, stderr = f.run(t, "config", "push", "--dry-run", "--env", "production")
 			if exit != 0 || f.count("current") != 1 || f.count("preview") != 1 {
 				t.Fatal("active follow-up did not use fresh identity context", exit, out, stderr)
 			}
 		}
-	}
-}
-
-func TestPublicIdentityActivationRejectsFirstUseDeclarationsBeforePlan(t *testing.T) {
-	f := publicIdentityTestFixture(t, publicFirebaseWire)
-	f.project.Production.State = control.ProductionInactive
-	exit, out, stderr := f.run(t, "config", "push", "--env", "production", "--yes", "--confirm-state-never-used", "--confirm-slot-never-used")
-	if exit != exitUsage || f.count("/v1/projects/sample/deploys/plan") != 0 || f.count("/v1/deploys") != 0 {
-		t.Fatal("activation accepted identity first-use declaration", exit, out, stderr)
 	}
 }
 

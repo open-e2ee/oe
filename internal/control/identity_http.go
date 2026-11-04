@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 const identityResponseLimit = 1_048_576
@@ -26,7 +25,7 @@ var identityTransportFailures = map[string]struct {
 	"ORGANIZATION_REQUIRED":        {409, "A current Organization is required."},
 	"IDENTITY_INPUT_INVALID":       {400, "The identity input is invalid."},
 	"IDENTITY_METHOD_NOT_ALLOWED":  {405, "This identity method is not allowed."},
-	"IDENTITY_CONTEXT_CHANGED":     {409, "The addressed identity authority changed. Preserve the retained attempt."},
+	"IDENTITY_CONTEXT_CHANGED":     {409, "The addressed identity authority changed."},
 	"IDENTITY_CHANGE_REFUSED":      {409, "The identity change was refused."},
 	"NATIVE_IDENTITY_UNAVAILABLE":  {409, "This native identity operation is unavailable."},
 	"IDENTITY_CONFLICT":            {409, "The identity operation conflicts with current state."},
@@ -35,10 +34,10 @@ var identityTransportFailures = map[string]struct {
 	"IDENTITY_OPERATION_NOT_FOUND": {404, "The exact identity operation was not found."},
 	"IMPERSONATED_SESSION":         {403, "This session cannot perform the identity operation."},
 	"IDENTITY_CONTROL_DENIED":      {403, "Current resource authority refused the identity operation."},
-	"IDENTITY_RESULT_INVALID":      {502, "The identity result is invalid. Preserve the retained attempt."},
+	"IDENTITY_RESULT_INVALID":      {502, "The identity result is invalid."},
 	"AUTHORITY_UNAVAILABLE":        {503, "Current resource authority is unavailable."},
-	"IDENTITY_UNAVAILABLE":         {503, "The identity operation is unavailable. Preserve the retained attempt."},
-	"IDENTITY_RESPONSE_TOO_LARGE":  {503, "The identity response exceeds this transport's availability limit. Preserve the retained attempt."},
+	"IDENTITY_UNAVAILABLE":         {503, "The identity operation is unavailable."},
+	"IDENTITY_RESPONSE_TOO_LARGE":  {503, "The identity response exceeds this transport's availability limit."},
 }
 
 func identityTransportFailure(code string) error {
@@ -51,18 +50,18 @@ func identityTransportFailure(code string) error {
 }
 
 type identityHTTP struct {
-	slot             identityattempt.Slot
+	address          IdentityAddress
 	client           http.Client
 	protectionBypass string
 	now              func() time.Time
 }
 
-func (c *Client) Identity(slot identityattempt.Slot) (IdentityTransport, error) {
-	if c == nil || c.baseURL == nil || c.http == nil || slot.Validate() != nil {
+func (c *Client) Identity(address IdentityAddress) (IdentityTransport, error) {
+	if c == nil || c.baseURL == nil || c.http == nil || address.Validate() != nil {
 		return nil, identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}
 	base, err := identity.ParseControlBaseURL(c.baseURL.String())
-	if err != nil || !base.Equal(slot.ControlBase()) {
+	if err != nil || !base.Equal(address.ControlBase()) {
 		return nil, identityTransportFailure("IDENTITY_CONTEXT_CHANGED")
 	}
 	client := *c.http
@@ -92,7 +91,7 @@ func (c *Client) Identity(slot identityattempt.Slot) (IdentityTransport, error) 
 	}
 	// Identity never uses a caller cookie jar or follows a changed destination.
 	client.Jar = nil
-	return &identityHTTP{slot: slot, client: client, protectionBypass: c.protectionBypass, now: time.Now}, nil
+	return &identityHTTP{address: address, client: client, protectionBypass: c.protectionBypass, now: time.Now}, nil
 }
 
 // A timer notification can lag its logical deadline. Check both at each phase.
@@ -107,11 +106,11 @@ func (c *identityHTTP) callCurrent(ctx context.Context) bool {
 // request completes the one HTTP attempt and checked body closure synchronously.
 // The limit is an availability policy, not a maximum accepted identity schema.
 func (c *identityHTTP) request(ctx context.Context, credential CredentialRequest, action string, body any, result any) error {
-	if c == nil || c.slot.Validate() != nil || ctx == nil || credential.AccessToken == "" || strings.ContainsAny(credential.AccessToken, "\r\n") {
+	if c == nil || c.address.Validate() != nil || ctx == nil || credential.AccessToken == "" || strings.ContainsAny(credential.AccessToken, "\r\n") {
 		return identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}
-	query := url.Values{"action": {action}, "environment": {c.slot.Environment()}}
-	endpoint, err := c.slot.ControlBase().Endpoint([]string{"v1", "projects", c.slot.ProjectSlug(), "identity"}, query)
+	query := url.Values{"action": {action}, "environment": {c.address.Environment()}}
+	endpoint, err := c.address.ControlBase().Endpoint([]string{"v1", "projects", c.address.ProjectSlug(), "identity"}, query)
 	if err != nil {
 		return identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}

@@ -3,41 +3,24 @@ package app
 import (
 	"context"
 	"errors"
-	"net/http"
 	"testing"
 	"time"
 
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
-	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
-type identityCountingFactory struct {
-	opens, bootstraps int
-	failure           error
-}
-
-func (f *identityCountingFactory) Open() (*identityattempt.Store, error) {
-	f.opens++
-	return nil, f.failure
-}
-func (f *identityCountingFactory) BootstrapFirstUse(context.Context, identityattempt.FirstUse) (*identityattempt.Store, error) {
-	f.bootstraps++
-	return nil, f.failure
-}
-
 type identityRefusingFactory struct {
-	slots   []identityattempt.Slot
-	failure error
+	addresses []control.IdentityAddress
+	failure   error
 }
 
-func (f *identityRefusingFactory) Identity(slot identityattempt.Slot) (control.IdentityTransport, error) {
-	f.slots = append(f.slots, slot)
+func (f *identityRefusingFactory) Identity(address control.IdentityAddress) (control.IdentityTransport, error) {
+	f.addresses = append(f.addresses, address)
 	return nil, f.failure
 }
 
-func identityContextRunner(t *testing.T) (*runner, *fakeAPI, *identityRefusingFactory, *identityCountingFactory) {
+func identityContextRunner(t *testing.T) (*runner, *fakeAPI, *identityRefusingFactory) {
 	t.Helper()
 	store := credential.NewMemory()
 	storeCredential(t, store)
@@ -45,16 +28,15 @@ func identityContextRunner(t *testing.T) (*runner, *fakeAPI, *identityRefusingFa
 		return control.Project{Slug: "sample", Sandbox: &control.ProjectEnvironment{}, Production: &control.ProjectEnvironment{State: control.ProductionActive}}, nil
 	}}
 	factory := &identityRefusingFactory{failure: errIdentityExecution}
-	attempts := &identityCountingFactory{failure: identityattempt.ErrLocation}
-	r := &runner{api: api, identities: factory, identityAttempts: attempts, store: store,
+	r := &runner{api: api, identities: factory, store: store,
 		controlURL: defaultControlURL, environment: "sandbox", now: time.Now, getenv: func(string) string {
 			return ""
 		}}
-	return r, api, factory, attempts
+	return r, api, factory
 }
 
 func TestIdentityContextUsesActualSessionOrganizationAndProjectBeforeFactory(t *testing.T) {
-	r, api, factory, attempts := identityContextRunner(t)
+	r, api, factory := identityContextRunner(t)
 	order := []string{}
 	api.session = func(ctx context.Context, credential control.CredentialRequest) (control.Session, error) {
 		order = append(order, "session")
@@ -70,23 +52,20 @@ func TestIdentityContextUsesActualSessionOrganizationAndProjectBeforeFactory(t *
 		}
 		return control.Project{Slug: project, Sandbox: &control.ProjectEnvironment{}}, nil
 	}
-	_, err := r.identityContext(context.Background(), "sample", identityattempt.Selection)
-	if !errors.Is(err, errIdentityExecution) || len(order) != 2 || order[0] != "session" || order[1] != "project" || len(factory.slots) != 1 {
+	_, err := r.identityContext(context.Background(), "sample")
+	if !errors.Is(err, errIdentityExecution) || len(order) != 2 || order[0] != "session" || order[1] != "project" || len(factory.addresses) != 1 {
 		t.Fatal("context order changed")
 	}
-	slot := factory.slots[0]
-	if slot.OrganizationID() != "org_example" || slot.ProjectSlug() != "sample" || slot.Environment() != "sandbox" || slot.Kind() != identityattempt.Selection {
-		t.Fatal("slot was not associated with actual reads")
-	}
-	if attempts.opens != 0 || attempts.bootstraps != 0 {
-		t.Fatal("context opened attempt state")
+	address := factory.addresses[0]
+	if address.ProjectSlug() != "sample" || address.Environment() != "sandbox" || address.ControlBase().String() != defaultControlURL {
+		t.Fatal("address was not associated with actual reads")
 	}
 }
 
-func TestIdentityContextRefusalsNeverOpenAttemptStore(t *testing.T) {
+func TestIdentityContextRefusalsNeverReachTransport(t *testing.T) {
 	for _, name := range []string{"missing-factory", "invalid-base", "project-input", "environment", "session-loss", "session-shape", "missing-organization", "project-loss", "project-address", "missing-sandbox", "inactive-production"} {
 		t.Run(name, func(t *testing.T) {
-			r, api, factory, attempts := identityContextRunner(t)
+			r, api, factory := identityContextRunner(t)
 			project := "sample"
 			switch name {
 			case "missing-factory":
@@ -129,40 +108,12 @@ func TestIdentityContextRefusalsNeverOpenAttemptStore(t *testing.T) {
 					return control.Project{Slug: "sample", Production: &control.ProjectEnvironment{State: control.ProductionAvailable}}, nil
 				}
 			}
-			if _, err := r.identityContext(context.Background(), project, identityattempt.Selection); err == nil {
+			if _, err := r.identityContext(context.Background(), project); err == nil {
 				t.Fatal("invalid context accepted")
 			}
-			if attempts.opens != 0 || attempts.bootstraps != 0 || len(factory.slots) != 0 {
-				t.Fatal("refused context reached store or transport factory")
+			if len(factory.addresses) != 0 {
+				t.Fatal("refused context reached the transport factory")
 			}
 		})
-	}
-}
-
-func TestIdentityExplicitStoreFactoryNeverFallsBack(t *testing.T) {
-	r, _, _, attempts := identityContextRunner(t)
-	baseClient, err := control.New(defaultControlURL, &http.Client{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.identities = baseClient
-	base, err := identity.ParseControlBaseURL(r.controlURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	slot, err := identityattempt.NewSlot(base, "org_example", "sample", "sandbox", identityattempt.Selection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_, err = r.identityStore(ctx, slot, true, true)
-	if !errors.Is(err, identityattempt.ErrLocation) || attempts.opens != 1 || attempts.bootstraps != 0 {
-		t.Fatal("explicit failure fell back")
-	}
-	attempts.failure = nil
-	_, err = r.identityStore(ctx, slot, true, true)
-	if !errors.Is(err, errIdentityExecution) || attempts.opens != 2 || attempts.bootstraps != 0 {
-		t.Fatal("explicit nil store fell back")
 	}
 }

@@ -4,12 +4,11 @@ import (
 	"context"
 
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 type identityCommandResult struct {
 	Environment          string                      `json:"environment"`
-	Kind                 identityattempt.Kind        `json:"kind"`
+	Kind                 identity.Kind               `json:"kind"`
 	OperationID          string                      `json:"operationId"`
 	Status               string                      `json:"status"`
 	State                string                      `json:"state,omitempty"`
@@ -19,7 +18,7 @@ type identityCommandResult struct {
 	ServiceReadiness     string                      `json:"serviceReadiness"`
 }
 
-func projectIdentityExecution(kind identityattempt.Kind, result identityExecutionResult) (identityCommandResult, error) {
+func projectIdentityExecution(kind identity.Kind, result identityExecutionResult) (identityCommandResult, error) {
 	value := identityCommandResult{Kind: kind, Disposition: result.Disposition, ServiceReadiness: "unverified"}
 	count := 0
 	if result.Selection != nil {
@@ -36,7 +35,7 @@ func projectIdentityExecution(kind identityattempt.Kind, result identityExecutio
 	}
 	var id identity.ContractText
 	switch kind {
-	case identityattempt.Selection:
+	case identity.Selection:
 		if result.Selection == nil || result.Selection.Validate() != nil {
 			return value, errIdentityExecution
 		}
@@ -44,7 +43,7 @@ func projectIdentityExecution(kind identityattempt.Kind, result identityExecutio
 		id, value.Status = received.OperationID, received.State
 		version := received.ConfigurationVersion
 		value.ConfigurationVersion = &version
-	case identityattempt.KeysOnly:
+	case identity.KeysOnly:
 		if result.Keys == nil || result.Keys.Validate() != nil {
 			return value, errIdentityExecution
 		}
@@ -52,7 +51,7 @@ func projectIdentityExecution(kind identityattempt.Kind, result identityExecutio
 		id, value.Status = received.OperationID, received.State
 		version := received.ConfigurationVersion
 		value.ConfigurationVersion = &version
-	case identityattempt.Lifecycle:
+	case identity.Lifecycle:
 		if result.Lifecycle == nil || result.Lifecycle.Validate() != nil {
 			return value, errIdentityExecution
 		}
@@ -77,101 +76,132 @@ func projectIdentityExecution(kind identityattempt.Kind, result identityExecutio
 	return identityCommandResult{}, errIdentityExecution
 }
 
-func (r *runner) outputIdentityExecution(command string, kind identityattempt.Kind, result identityExecutionResult) error {
+// outputIdentityExecution reports one server result. repeat is the command
+// line that OE_OPERATION_ID can repeat, or "" when the command cannot repeat.
+func (r *runner) outputIdentityExecution(command string, kind identity.Kind, result identityExecutionResult, repeat string) error {
 	value, err := projectIdentityExecution(kind, result)
 	if err != nil {
 		return err
 	}
 	value.Environment = r.environment
 	data := map[string]any{"operation": value}
-	if failure := identityResultFailure(value); failure != nil {
+	if failure := identityResultFailure(value, repeat); failure != nil {
 		failure.data = data
 		return failure
 	}
 	return r.out.Success(command, "The exact command receipt is settled. Current service and application readiness remain unverified.", data)
 }
 
-func identityResultFailure(value identityCommandResult) *problem {
-	next := "oe identity operation status --kind " + string(value.Kind) + " --env " + value.Environment
+func identityResultFailure(value identityCommandResult, repeat string) *problem {
+	next := identityStatusCommand(value.Kind, value.OperationID, value.Environment)
 	if value.Disposition == identity.ReceiptContinuationRequired {
-		return identityCommandProblem("IDENTITY_CONTINUATION_REQUIRED", "The exact command receipt still requires same-ID continuation.",
-			"oe identity operation resume --kind lifecycle --env "+value.Environment, exitTemporary)
+		return identityCommandProblem("IDENTITY_CONTINUATION_REQUIRED", "The lifecycle operation continues only by a resume with the same operation ID.",
+			commandLine([]string{"identity", "operation", "resume", "--kind", "lifecycle", "--operation-id", value.OperationID, "--env", value.Environment}), exitTemporary)
 	}
 	if value.Disposition == identity.ReceiptPending {
-		return identityCommandProblem("IDENTITY_PENDING", "The exact operation is pending. Preserve its retained command.", next, exitTemporary)
+		message := "The operation is pending on the server. Read it by its operation ID."
+		if repeat != "" {
+			message = "The operation is pending on the server. To repeat the same command, run: OE_OPERATION_ID=" + value.OperationID + " " + repeat
+		}
+		return identityCommandProblem("IDENTITY_PENDING", message, next, exitTemporary)
 	}
 	switch value.Status {
 	case "refused", "deleted", "superseded", "superseded_by_deletion":
-		return identityCommandProblem("IDENTITY_OPERATION_REFUSED", "The exact operation ended without applying the requested change.",
+		return identityCommandProblem("IDENTITY_OPERATION_REFUSED", "The operation ended without applying the requested change.",
 			"oe identity current --env "+value.Environment, exitFailure)
 	}
 	return nil
 }
 
-func identityRetainedAction(verb string, kind identityattempt.Kind) identityattempt.Action {
+func identityOperationAction(verb string, kind identity.Kind) identity.Action {
 	switch kind {
-	case identityattempt.Selection:
+	case identity.Selection:
 		switch verb {
 		case "status":
-			return identityattempt.SelectionStatusAction
-		case "retry":
-			return identityattempt.SelectionApplyAction
+			return identity.SelectionStatusAction
 		case "cancel":
-			return identityattempt.SelectionCancelAction
+			return identity.SelectionCancelAction
 		}
-	case identityattempt.KeysOnly:
+	case identity.KeysOnly:
 		switch verb {
 		case "status":
-			return identityattempt.KeysStatusAction
-		case "retry":
-			return identityattempt.KeysReplaceAction
+			return identity.KeysStatusAction
 		case "cancel":
-			return identityattempt.KeysCancelAction
+			return identity.KeysCancelAction
 		}
-	case identityattempt.Lifecycle:
+	case identity.Lifecycle:
 		switch verb {
 		case "status":
-			return identityattempt.LifecycleStatusAction
+			return identity.LifecycleStatusAction
 		case "resume":
-			return identityattempt.LifecycleResumeAction
+			return identity.LifecycleResumeAction
 		}
 	}
 	return ""
 }
 
+// validIdentityOperationID reports whether id has the form of a server
+// operation ID of kind.
+func validIdentityOperationID(kind identity.Kind, id string) bool {
+	if kind != identity.Lifecycle {
+		return identity.SelectionOperationID(id).Validate() == nil
+	}
+	text, err := identity.Text(id)
+	return err == nil && identity.ValidateResumeOperationID(text) == nil
+}
+
+// identityOperationCommand reads, cancels or resumes one server operation.
+// Status without --operation-id reads the current operation that the server
+// names. Cancel and resume always name the operation.
 func (r *runner) identityOperationCommand(ctx context.Context, args []string) error {
 	verb := args[0]
 	options := identityCommandOptions{}
 	flags := newFlags("identity operation " + verb)
-	kindFlag := flags.String("kind", "", "exact retained kind: selection, keys-only or lifecycle")
-	if verb != "status" {
-		options.flags(flags, false, false)
+	kindFlag := flags.String("kind", "", "operation kind: selection, keys-only or lifecycle")
+	idFlag := flags.String("operation-id", "", "the server operation ID")
+	targetStdin := false
+	if verb == "status" {
+		flags.BoolVar(&targetStdin, "target-stdin", false, "read one private lifecycle target from stdin and report its current operation")
+	} else {
+		options.flags(flags, false)
 	}
 	if parseFlags(flags, "identity", args[1:]) != nil {
 		return identityInputFailure()
 	}
-	kind := identityattempt.Kind(*kindFlag)
-	action := identityRetainedAction(verb, kind)
-	if action == "" {
+	kind, id := identity.Kind(*kindFlag), *idFlag
+	action := identityOperationAction(verb, kind)
+	if action == "" || id != "" && !validIdentityOperationID(kind, id) || id == "" && verb != "status" ||
+		targetStdin && (kind != identity.Lifecycle || id != "") || kind == identity.Lifecycle && verb == "status" && id == "" && !targetStdin {
 		return identityInputFailure()
 	}
 	_, configuration, err := r.identityConfiguration()
 	if err != nil {
 		return err
 	}
-	// A continuation takes no target, replacement file or first-use declaration.
-	if verb != "status" {
-		if _, err := r.identityContext(ctx, configuration.Project, kind); err != nil {
+	input := identityExecutionInput{Project: configuration.Project, Action: action, OperationID: id, Consent: verb != "status"}
+	if targetStdin {
+		// Authority precedes private stdin. The input remains transient.
+		if _, err := r.identityContext(ctx, configuration.Project); err != nil {
 			return err
 		}
-		command := commandLine([]string{"identity", "operation", verb, "--kind", string(kind), "--env", r.environment})
+		target, err := readIdentityTarget(r.in)
+		if err != nil {
+			return err
+		}
+		input.LifecycleTarget = &target
+	}
+	if verb != "status" {
+		if _, err := r.identityContext(ctx, configuration.Project); err != nil {
+			return err
+		}
+		command := commandLine([]string{"identity", "operation", verb, "--kind", string(kind), "--operation-id", id, "--env", r.environment})
 		if err := r.approveIdentity(command, nil, options); err != nil {
 			return err
 		}
 	}
-	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project, Kind: kind, Action: action, Consent: verb != "status"})
+	result, err := r.executeIdentity(ctx, input)
 	if err != nil {
-		return identityExecutionFailure(err, kind, r.environment)
+		return identityExecutionFailure(err, r.environment)
 	}
-	return r.outputIdentityExecution("identity operation "+verb, kind, result)
+	return r.outputIdentityExecution("identity operation "+verb, kind, result, "")
 }

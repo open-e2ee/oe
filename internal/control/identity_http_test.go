@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 const keyWire = `{"kty":"EC","crv":"P-256","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","y":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","kid":"key-one"}`
@@ -38,13 +37,13 @@ func identityDecode[T any](t *testing.T, wire string) T {
 	return value
 }
 
-func identityFixture(t *testing.T, kind identityattempt.Kind, fn identityRoundTrip) *identityHTTP {
+func identityFixture(t *testing.T, fn identityRoundTrip) *identityHTTP {
 	t.Helper()
 	base, err := identity.ParseControlBaseURL("https://console.example/api/cli")
 	if err != nil {
 		t.Fatal(err)
 	}
-	slot, err := identityattempt.NewSlot(base, "org_actual", "sample", "sandbox", kind)
+	address, err := NewIdentityAddress(base, "sample", "sandbox")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +51,7 @@ func identityFixture(t *testing.T, kind identityattempt.Kind, fn identityRoundTr
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport, err := client.Identity(slot)
+	transport, err := client.Identity(address)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +75,7 @@ func identityCode(t *testing.T, err error, code string) {
 
 func TestIdentityHTTPExactEndpointAndBoundedDeadline(t *testing.T) {
 	calls := 0
-	client := identityFixture(t, identityattempt.Selection, func(r *http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(r *http.Request) (*http.Response, error) {
 		calls++
 		if r.Method != "GET" || r.URL.Path != "/api/cli/v1/projects/sample/identity" ||
 			r.URL.Query().Encode() != "action=current&environment=sandbox" || r.ContentLength != 0 ||
@@ -99,7 +98,7 @@ func TestIdentityHTTPNeverFollowsRedirectOrRetries(t *testing.T) {
 	for _, status := range []int{301, 302, 303, 307, 308, 408, 429, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			calls := 0
-			client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+			client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 				calls++
 				response := identityResponse(status, `{"code":"UNKNOWN","message":"CANARY"}`)
 				response.Header.Set("Location", "https://CANARY.invalid/changed")
@@ -123,7 +122,7 @@ func TestIdentityHTTPResponseAvailabilityCeiling(t *testing.T) {
 					wire = `{"code":"IDENTITY_UNAVAILABLE"}`
 				}
 				wire += strings.Repeat(" ", identityResponseLimit-len(wire)+extra)
-				client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+				client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 					return identityResponse(status, wire), nil
 				})
 				_, err := client.Current(context.Background(), CredentialRequest{AccessToken: "token"})
@@ -167,7 +166,7 @@ func TestIdentityHTTPCheckedReadCloseAndLoss(t *testing.T) {
 				body.errorOnClose = errors.New("close_CANARY")
 			}
 			calls := 0
-			client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+			client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 				calls++
 				if fault == "loss" {
 					return nil, errors.New("loss_CANARY")
@@ -190,7 +189,7 @@ func TestIdentityHTTPCompleteReceiversRefuseMalformedSuccess(t *testing.T) {
 		strings.Replace(currentWire, `"identityRecovery":null,`, "", 1),
 		strings.Replace(currentWire, `"recoveryGeneration":1`, `"recoveryGeneration":0`, 1),
 	} {
-		client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+		client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 			return identityResponse(200, wire), nil
 		})
 		_, err := client.Current(context.Background(), CredentialRequest{AccessToken: "token"})
@@ -205,7 +204,7 @@ func TestIdentityHTTPFixedFailureStatusPairing(t *testing.T) {
 		}
 		t.Run(code, func(t *testing.T) {
 			for _, status := range []int{failure.status, 599} {
-				client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+				client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 					return identityResponse(status, `{"code":"`+code+`","message":"body_CANARY","url":"https://CANARY.invalid"}`), nil
 				})
 				_, err := client.Current(context.Background(), CredentialRequest{AccessToken: "token"})
@@ -221,7 +220,7 @@ func TestIdentityHTTPFixedFailureStatusPairing(t *testing.T) {
 
 func TestIdentityHTTPRefusesInvalidRequestBeforeDispatch(t *testing.T) {
 	calls := 0
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		return identityResponse(200, currentWire), nil
 	})
@@ -253,7 +252,7 @@ func TestIdentityHTTPStandardTransportIsIsolatedFromTransparentReplay(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		slot, err := identityattempt.NewSlot(base, "org_actual", "sample", "sandbox", identityattempt.Selection)
+		address, err := NewIdentityAddress(base, "sample", "sandbox")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -265,7 +264,7 @@ func TestIdentityHTTPStandardTransportIsIsolatedFromTransparentReplay(t *testing
 		if configured == nil {
 			client.http.Transport = nil
 		}
-		transport, err := client.Identity(slot)
+		transport, err := client.Identity(address)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +327,7 @@ func TestIdentityHTTPControlledLogicalDeadlineBeforeDispatch(t *testing.T) {
 		t.Fatal("controlled delayed-notification fixture is invalid")
 	}
 	calls := 0
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		return identityResponse(200, currentWire), nil
 	})
@@ -345,7 +344,7 @@ func TestIdentityHTTPControlledLogicalDeadlineAfterClose(t *testing.T) {
 	body := &controlledIdentityDeadlineBody{ReadCloser: io.NopCloser(strings.NewReader(currentWire)),
 		expire: func() { now = parent.deadline.Add(time.Second) }}
 	calls := 0
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: 200, Body: body}, nil
 	})
@@ -362,7 +361,7 @@ func TestIdentityHTTPControlledLogicalDeadlineAfterCompleteDecode(t *testing.T) 
 	parent := &controlledIdentityDeadline{Context: context.Background(), deadline: now.Add(time.Second)}
 	result := controlledIdentityDecodedCurrent{expire: func() { now = parent.deadline.Add(time.Second) }}
 	calls := 0
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		return identityResponse(200, currentWire), nil
 	})
@@ -380,7 +379,7 @@ func TestIdentityHTTPInvalidClockCannotGrantARequest(t *testing.T) {
 		t.Fatal("invalid HTTP clock or receiver granted a live call")
 	}
 	calls := 0
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		return identityResponse(200, currentWire), nil
 	})
