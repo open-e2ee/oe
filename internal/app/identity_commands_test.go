@@ -532,3 +532,21 @@ func TestPublicIdentityKeysRotateRefusedWhenConfigOwnsKeys(t *testing.T) {
 		f.requireNoMutation(t)
 	})
 }
+
+func TestPublicIdentityProductionPromptShowsChange(t *testing.T) {
+	f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+	f.dependencies.In = strings.NewReader("n\n")
+	f.dependencies.Interactive = func() bool { return true }
+	exit, out, stderr := run(t, f.dependencies, "--agent", "no", "--control-url", f.server.URL,
+		"identity", "select", "--env", "production", "--confirm-state-never-used", "--confirm-slot-never-used")
+	change := strings.Index(stderr, "environments.production.identity")
+	prompt := strings.Index(stderr, "Apply this exact Production identity change?")
+	if exit != exitUsage || change < 0 || prompt < change || f.count("select") != 0 {
+		t.Fatal("the Production prompt did not show the identity change first", exit, out, stderr)
+	}
+	for _, forbidden := range []string{"verificationPolicyFingerprint", "publishableKey", "recoveryGeneration", "precondition", "scope"} {
+		if strings.Contains(out+stderr, forbidden) {
+			t.Fatal("the prompt exposed internal context", forbidden, stderr)
+		}
+	}
+}

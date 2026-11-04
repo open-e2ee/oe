@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/open-e2ee/oe/internal/config"
@@ -32,6 +34,19 @@ func (v *identityCommandOptions) flags(flags *flag.FlagSet, dryRun, firstUse boo
 		flags.BoolVar(&v.namespaceFirstUse, "confirm-state-never-used", false, "declare that the selected local namespace never existed")
 		flags.BoolVar(&v.slotFirstUse, "confirm-slot-never-used", false, "declare that the addressed kind slot never existed. This can create absent storage for that slot")
 	}
+}
+
+// firstUseArguments gives the first-use declarations of a run, in the order of
+// its flags.
+func (v identityCommandOptions) firstUseArguments() []string {
+	var arguments []string
+	if v.namespaceFirstUse {
+		arguments = append(arguments, "--confirm-state-never-used")
+	}
+	if v.slotFirstUse {
+		arguments = append(arguments, "--confirm-slot-never-used")
+	}
+	return arguments
 }
 
 func (r *runner) validateIdentityOptions(v identityCommandOptions) error {
@@ -206,16 +221,33 @@ func identityPreview(ctx context.Context, address identityExecutionContext, curr
 	return preview, nil
 }
 
-func (r *runner) approveIdentity(command string, options identityCommandOptions) error {
+// approveIdentity asks for consent to a Production identity change. command
+// is the full command line that ran, and the refusal names it with --yes.
+// changes is the identity change that the person approves. A refusal returns
+// it in data, and a person sees it before the prompt.
+func (r *runner) approveIdentity(command string, changes []pullChange, options identityCommandOptions) error {
 	if r.environment != "production" || options.yes {
 		return nil
 	}
+	refusal := func(message string) error {
+		failure := identityCommandProblem("CONFIRMATION_REQUIRED", message, command+" --yes", exitUsage)
+		if changes != nil {
+			failure.data = map[string]any{"changes": changes}
+		}
+		return failure
+	}
 	if r.mode != output.Text || r.credentialSource == "environment" || !r.canPrompt() {
-		return identityCommandProblem("CONFIRMATION_REQUIRED", "Review the exact Production identity change, then supply --yes.", command+" --yes --env production", exitUsage)
+		return refusal("Review the exact Production identity change, then supply --yes.")
+	}
+	if len(changes) > 0 {
+		var text strings.Builder
+		text.WriteString("The exact Production identity change:")
+		writeChanges(&text, changes)
+		fmt.Fprintln(r.errOut, text.String())
 	}
 	approved, err := askConfirmation(r.in, r.errOut, "Apply this exact Production identity change?")
 	if err != nil || !approved {
-		return identityCommandProblem("CONFIRMATION_REQUIRED", "The Production identity change was not approved.", command+" --yes --env production", exitUsage)
+		return refusal("The Production identity change was not approved.")
 	}
 	return nil
 }
@@ -275,10 +307,15 @@ func (r *runner) identitySelectCommand(ctx context.Context, args []string) error
 	if _, err = identityPreview(ctx, address, current, target, nil); err != nil {
 		return err
 	}
-	if options.dryRun {
-		return r.out.Success("identity select", "Dry run. No identity operation was prepared or applied.", map[string]any{"status": "planned", "kind": "selection", "environment": r.environment, "configurationVersion": current.Configuration.ConfigurationVersion})
+	changes, err := identityChanges(r.environment, current, target, nil)
+	if err != nil {
+		return err
 	}
-	if err := r.approveIdentity("oe identity select", options); err != nil {
+	if options.dryRun {
+		return r.out.Success("identity select", "Dry run. No identity operation was prepared or applied.", map[string]any{"status": "planned", "kind": "selection", "environment": r.environment, "configurationVersion": current.Configuration.ConfigurationVersion, "changes": changes})
+	}
+	command := commandLine(append([]string{"identity", "select", "--env", r.environment}, options.firstUseArguments()...))
+	if err := r.approveIdentity(command, changes, options); err != nil {
 		return err
 	}
 	if err := r.requireIdentityVacant(ctx, address.slot); err != nil {
@@ -351,10 +388,15 @@ func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	if _, err = identityPreview(ctx, address, current, nil, &keys); err != nil {
 		return err
 	}
-	if options.dryRun {
-		return r.out.Success("identity keys rotate", "Dry run. No keys were replaced.", map[string]any{"status": "planned", "kind": "keys-only", "environment": r.environment, "configurationVersion": current.Configuration.ConfigurationVersion})
+	changes, err := identityChanges(r.environment, current, nil, &keys)
+	if err != nil {
+		return err
 	}
-	if err := r.approveIdentity(commandLine([]string{"identity", "keys", "rotate", "--keys", *path}), options); err != nil {
+	if options.dryRun {
+		return r.out.Success("identity keys rotate", "Dry run. No keys were replaced.", map[string]any{"status": "planned", "kind": "keys-only", "environment": r.environment, "configurationVersion": current.Configuration.ConfigurationVersion, "changes": changes})
+	}
+	command := commandLine(append([]string{"identity", "keys", "rotate", "--keys", *path, "--env", r.environment}, options.firstUseArguments()...))
+	if err := r.approveIdentity(command, changes, options); err != nil {
 		return err
 	}
 	if err := r.requireIdentityVacant(ctx, address.slot); err != nil {

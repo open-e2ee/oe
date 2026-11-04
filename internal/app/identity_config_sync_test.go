@@ -331,3 +331,40 @@ func TestPublicIdentityPlanProjectionIsDetachedAndDoesNotUseRevisionsAsCAS(t *te
 		t.Fatal("retention revision replaced identity configuration version")
 	}
 }
+
+func TestPublicIdentityPushDryRunShowsIdentityChange(t *testing.T) {
+	f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
+	exit, out, stderr := f.run(t, "config", "push", "--dry-run", "--env", "sandbox")
+	var result struct {
+		Data struct {
+			Environments map[string]struct {
+				Identity struct {
+					Changes []struct {
+						Path   string `json:"path"`
+						Action string `json:"action"`
+						From   struct {
+							Mode string `json:"mode"`
+						} `json:"from"`
+						To struct {
+							Mode string `json:"mode"`
+						} `json:"to"`
+					} `json:"changes"`
+				} `json:"identity"`
+			} `json:"environments"`
+		} `json:"data"`
+	}
+	if exit != 0 || json.Unmarshal([]byte(out), &result) != nil {
+		t.Fatal("identity dry-run failed", exit, out, stderr)
+	}
+	changes := result.Data.Environments["sandbox"].Identity.Changes
+	if len(changes) != 1 || changes[0].Path != "environments.sandbox.identity" || changes[0].Action != "replace" ||
+		changes[0].To.Mode != "device-owned" || changes[0].From.Mode != "custom-token" {
+		t.Fatal("identity dry-run did not show the identity change", out)
+	}
+	for _, forbidden := range []string{"verificationPolicyFingerprint", "publishableKey", "recoveryGeneration", "precondition", "scope"} {
+		if strings.Contains(out+stderr, forbidden) {
+			t.Fatal("identity change exposed internal context", forbidden, out)
+		}
+	}
+	f.requireNoMutation(t)
+}
