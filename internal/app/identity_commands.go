@@ -14,48 +14,19 @@ import (
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 	"github.com/open-e2ee/oe/internal/output"
 )
 
 type identityCommandOptions struct {
-	dryRun            bool
-	yes               bool
-	namespaceFirstUse bool
-	slotFirstUse      bool
+	dryRun bool
+	yes    bool
 }
 
-func (v *identityCommandOptions) flags(flags *flag.FlagSet, dryRun, firstUse bool) {
+func (v *identityCommandOptions) flags(flags *flag.FlagSet, dryRun bool) {
 	flags.BoolVar(&v.yes, "yes", false, "consent to the exact Production change")
 	if dryRun {
-		flags.BoolVar(&v.dryRun, "dry-run", false, "preview without mutation or local state creation")
+		flags.BoolVar(&v.dryRun, "dry-run", false, "preview without mutation")
 	}
-	if firstUse {
-		flags.BoolVar(&v.namespaceFirstUse, "confirm-state-never-used", false, "declare that the selected local namespace never existed")
-		flags.BoolVar(&v.slotFirstUse, "confirm-slot-never-used", false, "declare that the addressed kind slot never existed. This can create absent storage for that slot")
-	}
-}
-
-// firstUseArguments gives the first-use declarations of a run, in the order of
-// its flags.
-func (v identityCommandOptions) firstUseArguments() []string {
-	var arguments []string
-	if v.namespaceFirstUse {
-		arguments = append(arguments, "--confirm-state-never-used")
-	}
-	if v.slotFirstUse {
-		arguments = append(arguments, "--confirm-slot-never-used")
-	}
-	return arguments
-}
-
-func (r *runner) validateIdentityOptions(v identityCommandOptions) error {
-	if v.namespaceFirstUse || v.slotFirstUse {
-		if v.dryRun || !r.environmentExplicit {
-			return identityInputFailure()
-		}
-	}
-	return nil
 }
 
 func identityInputFailure() error {
@@ -85,29 +56,51 @@ func identityPublicFailure(err error) error {
 		case "IDENTITY_RESULT_INVALID", "AUTHORITY_UNAVAILABLE", "IDENTITY_UNAVAILABLE", "IDENTITY_RESPONSE_TOO_LARGE":
 			code = value.Code
 		}
-	} else if value, ok := errors.AsType[*identityattempt.Failure](err); ok {
-		code, exit = value.Code(), exitFailure
 	} else if errors.Is(err, errIdentityConsent) {
 		code, exit = "CONFIRMATION_REQUIRED", exitUsage
 	} else if errors.Is(err, errIdentityExecution) {
 		code, exit = "IDENTITY_CONTEXT_CHANGED", exitFailure
 	}
-	return identityCommandProblem(code, "The identity operation did not complete. Preserve the retained attempt.", next, exit)
+	return identityCommandProblem(code, "The identity operation did not complete.", next, exit)
 }
 
-func identityExecutionFailure(err error, kind identityattempt.Kind, environment string) error {
-	if errors.Is(err, identityattempt.ErrOperationIDUnretained) {
-		return identityCommandProblem("IDENTITY_OPERATION_ID_UNRETAINED",
-			"The requested operation ID is not retained in this local slot. Preserve any original operation evidence and read the installed configuration.",
-			"oe identity current --env "+environment, exitFailure)
-	}
+// identityExecutionFailure is the public failure of one identity command. A
+// failure after the server received, or may have received, the operation
+// names its operation ID, and status by that ID reads the server result.
+func identityExecutionFailure(err error, environment string) error {
 	failure := identityPublicFailure(err)
-	if value, ok := errors.AsType[*problem](failure); ok && value.next == "oe help identity" {
-		copy := *value
-		copy.next = "oe identity operation status --kind " + string(kind) + " --env " + environment
-		return &copy
+	operation, carried := errors.AsType[*identityOperationFailure](err)
+	value, ok := errors.AsType[*problem](failure)
+	if !carried || !ok {
+		return failure
 	}
-	return failure
+	copy := *value
+	if copy.code == "IDENTITY_OPERATION_NOT_FOUND" {
+		// The server holds no operation with this ID, so status by it cannot help.
+		copy.next = "oe identity current --env " + environment
+	} else if copy.next == "oe help identity" {
+		copy.next = identityStatusCommand(operation.kind, operation.id, environment)
+	}
+	data := map[string]any{}
+	for key, item := range value.data {
+		data[key] = item
+	}
+	data["kind"], data["operationId"] = operation.kind, operation.id
+	if operation.cancellation != "" {
+		data["cancellationOperationId"] = operation.cancellation
+		copy.message += " The cancel has operation ID " + operation.cancellation + " and targets operation " + operation.id + "."
+		if copy.code != "IDENTITY_OPERATION_NOT_FOUND" {
+			copy.message += " To repeat the same cancel, run: OE_OPERATION_ID=" + operation.cancellation + " " +
+				commandLine([]string{"identity", "operation", "cancel", "--kind", string(operation.kind), "--operation-id", operation.id, "--env", environment})
+		}
+	}
+	copy.data = data
+	return &copy
+}
+
+// identityStatusCommand reads one server operation by its ID.
+func identityStatusCommand(kind identity.Kind, id, environment string) string {
+	return commandLine([]string{"identity", "operation", "status", "--kind", string(kind), "--operation-id", id, "--env", environment})
 }
 
 func (r *runner) identityCommands(ctx context.Context, args []string) error {
@@ -149,8 +142,8 @@ func (r *runner) identityConfiguration() (string, config.Config, error) {
 	return path, value, nil
 }
 
-func (r *runner) readIdentityCurrent(ctx context.Context, project string, kind identityattempt.Kind) (identityExecutionContext, identity.CurrentContext, error) {
-	address, err := r.identityContext(ctx, project, kind)
+func (r *runner) readIdentityCurrent(ctx context.Context, project string, kind identity.Kind) (identityExecutionContext, identity.CurrentContext, error) {
+	address, err := r.identityContext(ctx, project)
 	if err != nil {
 		return address, identity.CurrentContext{}, err
 	}
@@ -158,10 +151,10 @@ func (r *runner) readIdentityCurrent(ctx context.Context, project string, kind i
 	return address, value, err
 }
 
-func readAddressedIdentityCurrent(ctx context.Context, address identityExecutionContext, kind identityattempt.Kind) (identity.CurrentContext, error) {
+func readAddressedIdentityCurrent(ctx context.Context, address identityExecutionContext, kind identity.Kind) (identity.CurrentContext, error) {
 	var current control.AddressedCurrent
 	var err error
-	if kind == identityattempt.KeysOnly {
+	if kind == identity.KeysOnly {
 		current, err = address.transport.KeysCurrent(ctx, address.credential)
 	} else {
 		current, err = address.transport.Current(ctx, address.credential)
@@ -177,7 +170,7 @@ func (r *runner) identityCurrentCommand(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, current, err := r.readIdentityCurrent(ctx, configuration.Project, identityattempt.Selection)
+	_, current, err := r.readIdentityCurrent(ctx, configuration.Project, identity.Selection)
 	if err != nil {
 		return err
 	}
@@ -216,7 +209,7 @@ func identityPreview(ctx context.Context, address identityExecutionContext, curr
 	}
 	if !identityNativeAvailable(target, preview) {
 		return identity.PreviewResult{}, identityCommandProblem("IDENTITY_CAPABILITY_CLOSED", "Native identity selection is unavailable for this environment.",
-			"oe identity current --env "+address.slot.Environment(), exitFailure)
+			"oe identity current --env "+address.address.Environment(), exitFailure)
 	}
 	return preview, nil
 }
@@ -252,45 +245,15 @@ func (r *runner) approveIdentity(command string, changes []pullChange, options i
 	return nil
 }
 
-// This inspection never creates or repairs a namespace or record.
-func (r *runner) requireIdentityVacant(ctx context.Context, slot identityattempt.Slot) error {
-	if r.identityAttempts == nil {
-		return errIdentityExecution
-	}
-	store, err := r.identityAttempts.Open()
-	if err != nil {
-		return err
-	}
-	if store == nil {
-		return errIdentityExecution
-	}
-	observation, err := store.Inspect(ctx, slot)
-	if err != nil {
-		return err
-	}
-	if observation.State() != identityattempt.Ready {
-		return nil
-	}
-	envelope, valid := observation.Envelope()
-	if !valid {
-		return errIdentityExecution
-	}
-	retained, err := envelope.RetainedAttempt()
-	if err != nil {
-		return err
-	}
-	if retained != nil {
-		return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "An exact retained operation occupies this slot.", "oe identity operation status --kind "+string(slot.Kind())+" --env "+slot.Environment(), exitFailure)
-	}
-	return nil
-}
-
 func (r *runner) identitySelectCommand(ctx context.Context, args []string) error {
 	options := identityCommandOptions{}
 	flags := newFlags("identity select")
-	options.flags(flags, true, true)
-	if parseFlags(flags, "identity", args) != nil || r.validateIdentityOptions(options) != nil {
+	options.flags(flags, true)
+	if parseFlags(flags, "identity", args) != nil {
 		return identityInputFailure()
+	}
+	if err := r.identityOperationEnvironment(identity.SelectionApplyAction, ""); err != nil {
+		return err
 	}
 	_, configuration, err := r.identityConfiguration()
 	if err != nil {
@@ -300,7 +263,7 @@ func (r *runner) identitySelectCommand(ctx context.Context, args []string) error
 	if err != nil || target == nil {
 		return identityCommandProblem("IDENTITY_INPUT_INVALID", "Declare a complete public identity for the selected environment.", "oe help config", exitUsage)
 	}
-	address, current, err := r.readIdentityCurrent(ctx, configuration.Project, identityattempt.Selection)
+	address, current, err := r.readIdentityCurrent(ctx, configuration.Project, identity.Selection)
 	if err != nil {
 		return err
 	}
@@ -314,19 +277,16 @@ func (r *runner) identitySelectCommand(ctx context.Context, args []string) error
 	if options.dryRun {
 		return r.out.Success("identity select", "Dry run. No identity operation was prepared or applied.", map[string]any{"status": "planned", "kind": "selection", "environment": r.environment, "configurationVersion": current.Configuration.ConfigurationVersion, "changes": changes})
 	}
-	command := commandLine(append([]string{"identity", "select", "--env", r.environment}, options.firstUseArguments()...))
+	command := commandLine([]string{"identity", "select", "--env", r.environment})
 	if err := r.approveIdentity(command, changes, options); err != nil {
 		return err
 	}
-	if err := r.requireIdentityVacant(ctx, address.slot); err != nil {
-		return err
-	}
-	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project, Kind: identityattempt.Selection, Action: identityattempt.SelectionApplyAction,
-		Target: target, Approved: &current, Consent: true, NamespaceFirstUse: options.namespaceFirstUse, SlotFirstUse: options.slotFirstUse})
+	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project, Action: identity.SelectionApplyAction,
+		Target: target, Approved: &current, Consent: true})
 	if err != nil {
-		return identityExecutionFailure(err, identityattempt.Selection, r.environment)
+		return identityExecutionFailure(err, r.environment)
 	}
-	return r.outputIdentityExecution("identity select", identityattempt.Selection, result)
+	return r.outputIdentityExecution("identity select", identity.Selection, result, command)
 }
 
 func readIdentityPublicFile(path string, result any) error {
@@ -357,10 +317,13 @@ func configOwnsIdentityKeys(value config.Config, environment string) bool {
 func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	options := identityCommandOptions{}
 	flags := newFlags("identity keys rotate")
-	options.flags(flags, true, true)
+	options.flags(flags, true)
 	path := flags.String("keys", "", "public replacement-key JSON file")
-	if parseFlags(flags, "identity", args) != nil || *path == "" || r.validateIdentityOptions(options) != nil {
+	if parseFlags(flags, "identity", args) != nil || *path == "" {
 		return identityInputFailure()
+	}
+	if err := r.identityOperationEnvironment(identity.KeysReplaceAction, ""); err != nil {
+		return err
 	}
 	var keys identity.ReplacementKeys
 	if err := readIdentityPublicFile(*path, &keys); err != nil {
@@ -370,7 +333,7 @@ func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	address, err := r.identityContext(ctx, configuration.Project, identityattempt.KeysOnly)
+	address, err := r.identityContext(ctx, configuration.Project)
 	if err != nil {
 		return err
 	}
@@ -378,7 +341,7 @@ func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 		return identityCommandProblem("IDENTITY_CONFIG_WRITER", config.Filename+" owns the "+r.environment+" identity keys. Edit environments."+r.environment+".identity.keys, then run oe config push.",
 			"oe config push --dry-run --env "+r.environment, exitFailure)
 	}
-	current, err := readAddressedIdentityCurrent(ctx, address, identityattempt.KeysOnly)
+	current, err := readAddressedIdentityCurrent(ctx, address, identity.KeysOnly)
 	if err != nil {
 		return err
 	}
@@ -395,17 +358,14 @@ func (r *runner) identityKeysCommand(ctx context.Context, args []string) error {
 	if options.dryRun {
 		return r.out.Success("identity keys rotate", "Dry run. No keys were replaced.", map[string]any{"status": "planned", "kind": "keys-only", "environment": r.environment, "configurationVersion": current.Configuration.ConfigurationVersion, "changes": changes})
 	}
-	command := commandLine(append([]string{"identity", "keys", "rotate", "--keys", *path, "--env", r.environment}, options.firstUseArguments()...))
+	command := commandLine([]string{"identity", "keys", "rotate", "--keys", *path, "--env", r.environment})
 	if err := r.approveIdentity(command, changes, options); err != nil {
 		return err
 	}
-	if err := r.requireIdentityVacant(ctx, address.slot); err != nil {
-		return err
-	}
-	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project, Kind: identityattempt.KeysOnly, Action: identityattempt.KeysReplaceAction,
-		Keys: &keys, Approved: &current, Consent: true, NamespaceFirstUse: options.namespaceFirstUse, SlotFirstUse: options.slotFirstUse})
+	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project, Action: identity.KeysReplaceAction,
+		Keys: &keys, Approved: &current, Consent: true})
 	if err != nil {
-		return identityExecutionFailure(err, identityattempt.KeysOnly, r.environment)
+		return identityExecutionFailure(err, r.environment)
 	}
-	return r.outputIdentityExecution("identity keys rotate", identityattempt.KeysOnly, result)
+	return r.outputIdentityExecution("identity keys rotate", identity.KeysOnly, result, command)
 }

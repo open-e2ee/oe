@@ -31,18 +31,17 @@ import (
 const defaultControlURL = "https://console.open-e2ee.dev/api/cli"
 
 type Dependencies struct {
-	API              control.API
-	Identities       control.IdentityFactory
-	IdentityAttempts identityAttemptStoreFactory
-	Store            credential.Store
-	HTTP             *http.Client
-	In               io.Reader
-	Out              io.Writer
-	Err              io.Writer
-	OpenURL          func(string) error
-	Sleep            func(context.Context, time.Duration) error
-	Now              func() time.Time
-	Getenv           func(string) string
+	API        control.API
+	Identities control.IdentityFactory
+	Store      credential.Store
+	HTTP       *http.Client
+	In         io.Reader
+	Out        io.Writer
+	Err        io.Writer
+	OpenURL    func(string) error
+	Sleep      func(context.Context, time.Duration) error
+	Now        func() time.Time
+	Getenv     func(string) string
 	// Interactive reports whether In is a terminal. The default reads In. A
 	// person can answer a prompt only when it is true and no agent runs the
 	// CLI.
@@ -54,24 +53,23 @@ type Dependencies struct {
 }
 
 type runner struct {
-	api              control.API
-	identities       control.IdentityFactory
-	identityAttempts identityAttemptStoreFactory
-	http             *http.Client
-	store            credential.Store
-	in               io.Reader
-	interactive      func() bool
-	out              *output.Writer
-	plainOut         io.Writer
-	errOut           io.Writer
-	openURL          func(string) error
-	sleep            func(context.Context, time.Duration) error
-	now              func() time.Time
-	getenv           func(string) string
-	symlink          func(oldname, newname string) error
-	directory        string
-	controlURL       string
-	environment      string
+	api         control.API
+	identities  control.IdentityFactory
+	http        *http.Client
+	store       credential.Store
+	in          io.Reader
+	interactive func() bool
+	out         *output.Writer
+	plainOut    io.Writer
+	errOut      io.Writer
+	openURL     func(string) error
+	sleep       func(context.Context, time.Duration) error
+	now         func() time.Time
+	getenv      func(string) string
+	symlink     func(oldname, newname string) error
+	directory   string
+	controlURL  string
+	environment string
 	// environmentSelected is true when --env or OE_ENV names the environment.
 	environmentSelected bool
 	environmentExplicit bool
@@ -188,14 +186,10 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 			identities = actual
 		}
 	}
-	identityAttempts := dependencies.IdentityAttempts
-	if identityAttempts == nil {
-		identityAttempts = &selectedIdentityAttemptStore{}
-	}
 	// One buffered reader serves every prompt of the run, so a prompt that
 	// follows another reads the next line and not the buffer of the first.
 	r := &runner{
-		api: api, identities: identities, identityAttempts: identityAttempts, http: dependencies.HTTP, store: dependencies.Store, in: bufio.NewReader(dependencies.In),
+		api: api, identities: identities, http: dependencies.HTTP, store: dependencies.Store, in: bufio.NewReader(dependencies.In),
 		interactive: dependencies.Interactive, out: writer, plainOut: dependencies.Out, errOut: dependencies.Err,
 		openURL: dependencies.OpenURL, sleep: dependencies.Sleep, now: dependencies.Now,
 		getenv: dependencies.Getenv, symlink: dependencies.Symlink, directory: dependencies.WorkingDir,

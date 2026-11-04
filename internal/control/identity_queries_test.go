@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 const observationWire = `{"operationId":"read_target","scope":` + scopeWire + `,"target":{"kind":"subject"},"observedVersion":0,"observedState":"active","currentHead":null,"application":{"kind":"unbound-subject"}}`
@@ -18,17 +17,17 @@ const preparedID = "lc1_0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAA_AAAAAAAAAAAAAAAA
 func TestIdentityQueriesPreserveLiteralSelectorsAndClosedBodies(t *testing.T) {
 	for _, name := range []string{"current", "keys-read", "target", "preview-selection", "preview-keys"} {
 		t.Run(name, func(t *testing.T) {
-			kind := identityattempt.Selection
+			kind := identity.Selection
 			if name == "keys-read" || name == "preview-keys" {
-				kind = identityattempt.KeysOnly
+				kind = identity.KeysOnly
 			}
 			if name == "target" {
-				kind = identityattempt.Lifecycle
+				kind = identity.Lifecycle
 			}
 			target := identityDecode[identity.SelectionTarget](t, `{"mode":"device-owned"}`)
 			keys := identityDecode[identity.ReplacementKeys](t, `[`+keyWire+`]`)
 			calls := 0
-			client := identityFixture(t, kind, func(r *http.Request) (*http.Response, error) {
+			client := identityFixture(t, func(r *http.Request) (*http.Response, error) {
 				calls++
 				action := r.URL.Query().Get("action")
 				if name == "current" {
@@ -72,7 +71,7 @@ func TestIdentityQueriesPreserveLiteralSelectorsAndClosedBodies(t *testing.T) {
 					}
 					preview := identity.PreviewResult{Kind: string(kind), ExpectedConfigurationVersion: 1,
 						Current: identityDecode[identity.CurrentContext](t, currentWire), NativeCapabilities: identity.NativeCapabilities{Clerk: "closed", Firebase: "available"}}
-					if kind == identityattempt.Selection {
+					if kind == identity.Selection {
 						preview.Target = &target
 					} else {
 						preview.Keys = &keys
@@ -97,7 +96,7 @@ func TestIdentityQueriesPreserveLiteralSelectorsAndClosedBodies(t *testing.T) {
 				_, err = client.LifecycleTarget(context.Background(), credential, identity.LifecycleInputTarget{Kind: "subject", Subject: &subject, ProfileSource: &profile})
 			default:
 				input := identity.PreviewRequest{Kind: string(kind), ExpectedConfigurationVersion: 1}
-				if kind == identityattempt.Selection {
+				if kind == identity.Selection {
 					input.Target = &target
 				} else {
 					input.Keys = &keys
@@ -117,7 +116,7 @@ func TestIdentityQueriesRejectWrongEnvironmentAndTargetKind(t *testing.T) {
 		strings.Replace(observationWire, `"environmentKind":"sandbox"`, `"environmentKind":"production"`, 1),
 		strings.Replace(observationWire, `"application":{"kind":"unbound-subject"}`, `"application":null`, 1),
 	} {
-		client := identityFixture(t, identityattempt.Lifecycle, func(*http.Request) (*http.Response, error) {
+		client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 			return identityResponse(200, wire), nil
 		})
 		subject, _ := identity.Text("private_CANARY")
@@ -125,7 +124,7 @@ func TestIdentityQueriesRejectWrongEnvironmentAndTargetKind(t *testing.T) {
 		_, err := client.LifecycleTarget(context.Background(), CredentialRequest{AccessToken: "token"}, identity.LifecycleInputTarget{Kind: "subject", Subject: &subject, ProfileSource: &profile})
 		identityCode(t, err, "IDENTITY_RESULT_INVALID")
 	}
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		return identityResponse(200, strings.Replace(currentWire, `"environmentKind":"sandbox"`, `"environmentKind":"production"`, 1)), nil
 	})
 	_, err := client.Current(context.Background(), CredentialRequest{AccessToken: "token"})
@@ -133,13 +132,13 @@ func TestIdentityQueriesRejectWrongEnvironmentAndTargetKind(t *testing.T) {
 }
 
 func TestIdentityPreviewCorrelatesWholeTargetAndOrderedKeys(t *testing.T) {
-	for _, kind := range []identityattempt.Kind{identityattempt.Selection, identityattempt.KeysOnly} {
+	for _, kind := range []identity.Kind{identity.Selection, identity.KeysOnly} {
 		for _, change := range []string{"kind", "version", "target-or-order"} {
 			t.Run(string(kind)+"/"+change, func(t *testing.T) {
 				target := identityDecode[identity.SelectionTarget](t, `{"mode":"device-owned"}`)
 				keys := identityDecode[identity.ReplacementKeys](t, `[`+keyWire+`,`+strings.Replace(keyWire, "key-one", "key-two", 1)+`]`)
 				input := identity.PreviewRequest{Kind: string(kind), ExpectedConfigurationVersion: 1}
-				if kind == identityattempt.Selection {
+				if kind == identity.Selection {
 					input.Target = &target
 				} else {
 					input.Keys = &keys
@@ -148,7 +147,7 @@ func TestIdentityPreviewCorrelatesWholeTargetAndOrderedKeys(t *testing.T) {
 					Current: identityDecode[identity.CurrentContext](t, currentWire), NativeCapabilities: identity.NativeCapabilities{Clerk: "closed", Firebase: "closed"}}
 				switch change {
 				case "kind":
-					if kind == identityattempt.Selection {
+					if kind == identity.Selection {
 						result.Kind = "keys-only"
 						result.Target = nil
 						result.Keys = &keys
@@ -161,7 +160,7 @@ func TestIdentityPreviewCorrelatesWholeTargetAndOrderedKeys(t *testing.T) {
 					result.ExpectedConfigurationVersion = 2
 					result.Current.Configuration.ConfigurationVersion = 2
 				case "target-or-order":
-					if kind == identityattempt.Selection {
+					if kind == identity.Selection {
 						altered := identityDecode[identity.SelectionTarget](t, configuredWire)
 						result.Target = &altered
 					} else {
@@ -173,7 +172,7 @@ func TestIdentityPreviewCorrelatesWholeTargetAndOrderedKeys(t *testing.T) {
 				if err != nil {
 					t.Fatal("perturbation fixture is invalid", err)
 				}
-				client := identityFixture(t, kind, func(*http.Request) (*http.Response, error) {
+				client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 					return identityResponse(200, string(wire)), nil
 				})
 				_, err = client.Preview(context.Background(), CredentialRequest{AccessToken: "token"}, input)
@@ -184,7 +183,7 @@ func TestIdentityPreviewCorrelatesWholeTargetAndOrderedKeys(t *testing.T) {
 }
 
 func TestIdentityAddressedCurrentIsDetachedAndNotSerializable(t *testing.T) {
-	client := identityFixture(t, identityattempt.Selection, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		return identityResponse(200, currentWire), nil
 	})
 	current, err := client.Current(context.Background(), CredentialRequest{AccessToken: "token"})
@@ -209,17 +208,22 @@ func TestIdentityAddressedCurrentIsDetachedAndNotSerializable(t *testing.T) {
 	if _, err := (AddressedCurrent{}).Context(); err == nil {
 		t.Fatal("zero provenance accepted")
 	}
-	other := client.slot
 	base, _ := identity.ParseControlBaseURL("https://other.example/api/cli")
-	other, _ = identityattempt.NewSlot(base, other.OrganizationID(), other.ProjectSlug(), other.Environment(), other.Kind())
-	if current.matches(other) {
-		t.Fatal("another address accepted current evidence")
+	for _, other := range []IdentityAddress{
+		{base: base, project: client.address.ProjectSlug(), environment: client.address.Environment()},
+		{base: client.address.ControlBase(), project: "other", environment: client.address.Environment()},
+		{base: client.address.ControlBase(), project: client.address.ProjectSlug(), environment: "production"},
+		{},
+	} {
+		if current.matches(other) {
+			t.Fatal("another address accepted current evidence")
+		}
 	}
 }
 
-func TestIdentityInvalidQueryAndPreparationPermitHaveNoRequest(t *testing.T) {
+func TestIdentityInvalidQueryAndPreparationHaveNoRequest(t *testing.T) {
 	calls := 0
-	client := identityFixture(t, identityattempt.Lifecycle, func(*http.Request) (*http.Response, error) {
+	client := identityFixture(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		return identityResponse(200, currentWire), nil
 	})
@@ -227,15 +231,14 @@ func TestIdentityInvalidQueryAndPreparationPermitHaveNoRequest(t *testing.T) {
 	identityCode(t, err, "IDENTITY_INPUT_INVALID")
 	_, err = client.Preview(context.Background(), CredentialRequest{AccessToken: "token"}, identity.PreviewRequest{})
 	identityCode(t, err, "IDENTITY_INPUT_INVALID")
-	_, err = client.KeysCurrent(context.Background(), CredentialRequest{AccessToken: "token"})
+	subject, _ := identity.Text("private_CANARY")
+	profile := "installed"
+	valid := LifecyclePreparationInput{Target: identity.LifecycleInputTarget{Kind: "subject", Subject: &subject, ProfileSource: &profile},
+		State: "suspended", ExpectedLifecycleVersion: 0, Nonce: "AAAAAAAAAAAAAAAAAAAAAA"}
+	// A manufactured current read has no receiver provenance.
+	_, err = client.LifecyclePrepare(context.Background(), CredentialRequest{AccessToken: "token"}, AddressedCurrent{}, valid)
 	identityCode(t, err, "IDENTITY_INPUT_INVALID")
-	for _, permit := range []*identityattempt.PreparationPermit{nil, {}} {
-		_, err = client.LifecyclePrepare(context.Background(), CredentialRequest{AccessToken: "token"}, AddressedCurrent{}, permit, LifecyclePreparationInput{})
-		if err == nil {
-			t.Fatal("manufactured preparation admitted")
-		}
-	}
 	if calls != 0 {
-		t.Fatal("invalid query or permit reached HTTP")
+		t.Fatal("invalid query or preparation reached HTTP")
 	}
 }

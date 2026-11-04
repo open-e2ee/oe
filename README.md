@@ -207,8 +207,8 @@ Registered devices can still renew with a device proof.
 renewal, recovery and identified requests for the target. It keeps account data
 and devices. Stop issuing assertions for suspended members in your application.
 `oe identity lifecycle activate --target-stdin` prepares a new change, subject to
-current authority guards. `oe identity operation resume --kind lifecycle`
-continues the retained lifecycle change. Permanently revoked devices stay revoked.
+current authority guards. `oe identity operation resume --kind lifecycle --operation-id ID`
+continues the same lifecycle change. Permanently revoked devices stay revoked.
 
 Previously issued anonymous capabilities, attachment URLs, sender certificates
 and group tokens keep their independent expiry and policy.
@@ -218,26 +218,32 @@ Read the [key rotation limits](https://docs.open-e2ee.dev/relay/custom-token#key
 and [account lifecycle procedure](https://docs.open-e2ee.dev/relay/device-lifecycle-and-recovery#suspend-and-continue-an-account-change)
 before a change.
 
-## Identity operation storage
+## Identity operations
 
-Identity writes retain their exact original command before dispatch. An unresolved
-command blocks a replacement in the same slot. A slot identifies the control URL,
-Organization, project slug, environment and operation kind.
+The server holds each identity operation. The CLI keeps no local operation state.
+Each selection, keys rotation and lifecycle failure after dispatch reports the
+operation ID and a status command:
 
-Use `--confirm-slot-never-used` only when that exact slot has never existed.
-With an explicit `--env sandbox` or `--env production`, this declaration can
-create absent local storage for that slot, including through `config push`.
-It makes no claim about the storage history of other projects or operation kinds.
-A new project ID does not prove a fresh slot if its project slug was reused.
+```bash
+oe identity operation status --kind K --operation-id ID --env E
+```
 
-`--confirm-state-never-used` retains its stronger meaning: the entire selected
-local namespace has never existed. It is not required for a fresh slot alone.
-Neither declaration recovers a missing original or permits a reset. Keep unknown
-slot history unresolved. Absence on disk does not prove that a slot was unused.
+Without `--operation-id`, status reads the current selection or keys operation.
+For lifecycle, status without an ID needs `--target-stdin` and reports the
+bound account's current operation.
 
-An initialized slot needs neither declaration. Dry-run accepts neither declaration
-and creates no operation storage. Production writes still require `--yes` or the
-existing interactive confirmation.
+To repeat one selection or keys-only mutation, run the same command again with
+`OE_OPERATION_ID=ID`. The server replays the same input and refuses changed input
+with `IDENTITY_CONFLICT`. Lifecycle refuses `OE_OPERATION_ID`. Continue a lifecycle
+change with `oe identity operation resume --kind lifecycle --operation-id ID`.
+
+Cancel a selection or keys operation with
+`oe identity operation cancel --kind K --operation-id ID`.
+A cancel sends its own operation ID. For a cancel, `OE_OPERATION_ID` sets that
+ID, and it cannot equal `--operation-id`.
+A failed cancel reports its own ID in `data.cancellationOperationId`. To repeat
+that cancel, set `OE_OPERATION_ID` to that ID.
+Production writes still require `--yes` or the existing interactive confirmation.
 
 A dry-run and a `CONFIRMATION_REQUIRED` refusal show the exact identity change.
 `oe identity select` and `oe identity keys rotate` return it in `data.changes`.

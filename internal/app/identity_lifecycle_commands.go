@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 func readIdentityTarget(reader io.Reader) (identity.LifecycleInputTarget, error) {
@@ -30,16 +29,21 @@ func (r *runner) identityLifecycleCommand(ctx context.Context, args []string) er
 	flags := newFlags("identity lifecycle " + action)
 	targetStdin := flags.Bool("target-stdin", false, "read one private lifecycle target from stdin")
 	if action != "target" {
-		options.flags(flags, true, true)
+		options.flags(flags, true)
 	}
-	if parseFlags(flags, "identity", args[1:]) != nil || !*targetStdin || r.validateIdentityOptions(options) != nil {
+	if parseFlags(flags, "identity", args[1:]) != nil || !*targetStdin {
 		return identityInputFailure()
+	}
+	if action != "target" {
+		if err := r.identityLifecycleOperationIDRefusal(); err != nil {
+			return err
+		}
 	}
 	_, configuration, err := r.identityConfiguration()
 	if err != nil {
 		return err
 	}
-	address, current, err := r.readIdentityCurrent(ctx, configuration.Project, identityattempt.Lifecycle)
+	address, current, err := r.readIdentityCurrent(ctx, configuration.Project, identity.Lifecycle)
 	if err != nil {
 		return err
 	}
@@ -68,23 +72,18 @@ func (r *runner) identityLifecycleCommand(ctx context.Context, args []string) er
 		return r.out.Success("identity lifecycle "+action, "The target was observed. No lifecycle operation was prepared or applied.", data)
 	}
 	// The target stays private, so the consent shows no change.
-	command := commandLine(append([]string{"identity", "lifecycle", action, "--target-stdin", "--env", r.environment}, options.firstUseArguments()...))
+	command := commandLine([]string{"identity", "lifecycle", action, "--target-stdin", "--env", r.environment})
 	if err := r.approveIdentity(command, nil, options); err != nil {
-		return err
-	}
-	if err := r.requireIdentityVacant(ctx, address.slot); err != nil {
 		return err
 	}
 	state := "suspended"
 	if action == "activate" {
 		state = "active"
 	}
-	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project,
-		Kind: identityattempt.Lifecycle, Action: identityattempt.LifecycleApplyAction,
-		LifecycleTarget: &target, LifecycleState: state, Approved: &current, ApprovedTarget: &observation,
-		Consent: true, NamespaceFirstUse: options.namespaceFirstUse, SlotFirstUse: options.slotFirstUse})
+	result, err := r.executeIdentity(ctx, identityExecutionInput{Project: configuration.Project, Action: identity.LifecycleApplyAction,
+		LifecycleTarget: &target, LifecycleState: state, Approved: &current, ApprovedTarget: &observation, Consent: true})
 	if err != nil {
-		return identityExecutionFailure(err, identityattempt.Lifecycle, r.environment)
+		return identityExecutionFailure(err, r.environment)
 	}
-	return r.outputIdentityExecution("identity lifecycle "+action, identityattempt.Lifecycle, result)
+	return r.outputIdentityExecution("identity lifecycle "+action, identity.Lifecycle, result, "")
 }

@@ -312,8 +312,6 @@ type pusher struct {
 // retention policy and then its identity.
 func (r *runner) configPush(ctx context.Context, args []string) error {
 	flags := newFlags("config push")
-	namespaceFirstUse := flags.Bool("confirm-state-never-used", false, "declare that the selected local namespace never existed")
-	slotFirstUse := flags.Bool("confirm-slot-never-used", false, "declare that the addressed kind slot never existed")
 	yes := flags.Bool("yes", false, "consent to the Production changes")
 	dryRun := flags.Bool("dry-run", false, "report the plan and change nothing")
 	if err := parseFlags(flags, "config", args); err != nil {
@@ -332,16 +330,12 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 	}
 	var identityOptions *identityCommandOptions
 	if configManagesIdentity(value, environments) {
-		identityOptions = &identityCommandOptions{yes: *yes, dryRun: *dryRun, namespaceFirstUse: *namespaceFirstUse, slotFirstUse: *slotFirstUse}
-		// The first-use declarations name one slot, so they need a literal --env.
-		if err := r.validateIdentityOptions(*identityOptions); err != nil {
-			return err
-		}
+		identityOptions = &identityCommandOptions{yes: *yes, dryRun: *dryRun}
+		// One run can send an identity operation to each environment, so one
+		// key cannot repeat it. The identity commands take OE_OPERATION_ID.
 		if r.getenv("OE_OPERATION_ID") != "" {
-			return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "Use the exact retained-operation command to confirm an operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
+			return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "A config push that declares identity takes no OE_OPERATION_ID. Read an identity operation by its operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
 		}
-	} else if *namespaceFirstUse || *slotFirstUse {
-		return identityInputFailure()
 	}
 	policies := map[string]control.RelayPolicyRequest{}
 	for _, environment := range environments {
@@ -715,12 +709,6 @@ func (p *pusher) command(yes bool) string {
 		line += " --yes"
 	}
 	return line
-}
-
-// identityCommand is the command line of this run with its first-use
-// declarations and without --yes.
-func (p *pusher) identityCommand() string {
-	return strings.Join(append([]string{p.command(false)}, p.identity.firstUseArguments()...), " ")
 }
 
 // consoleURL is the console page of the signal-relay projects, on the host

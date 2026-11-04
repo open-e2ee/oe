@@ -36,15 +36,15 @@ func TestAliasHelpNamesCanonicalCommand(t *testing.T) {
 	}
 }
 
-func TestPublicIdentityHelpPublishesExactRetainedAndFirstUsePaths(t *testing.T) {
+func TestPublicIdentityHelpPublishesExactOperationPaths(t *testing.T) {
 	spec, ok := lookupCommand("identity")
-	if !ok || len(spec.Usage) != 11 {
+	if !ok || len(spec.Usage) != 10 {
 		t.Fatal("identity help omitted a frozen command")
 	}
 	for _, path := range []string{
 		"identity current", "identity select", "identity keys rotate",
 		"identity lifecycle target", "identity lifecycle suspend", "identity lifecycle activate",
-		"identity operation status", "identity operation retry", "identity operation resume", "identity operation cancel",
+		"identity operation status", "identity operation resume", "identity operation cancel",
 	} {
 		for _, mode := range [][]string{{"--json"}, {"--agent", "no"}} {
 			args := append(append([]string{}, mode...), strings.Fields(path)...)
@@ -58,12 +58,12 @@ func TestPublicIdentityHelpPublishesExactRetainedAndFirstUsePaths(t *testing.T) 
 	if exit != 0 || stderr != "" {
 		t.Fatal("machine identity help failed")
 	}
-	for _, expected := range []string{"--confirm-state-never-used", "--confirm-slot-never-used", "--target-stdin", "--kind lifecycle", "--kind selection|keys-only"} {
+	for _, expected := range []string{"--target-stdin", "--kind lifecycle", "--kind selection|keys-only", "[--operation-id ID]"} {
 		if !strings.Contains(stdout, expected) {
 			t.Fatal("machine identity help omitted a frozen input", expected)
 		}
 	}
-	for _, forbidden := range []string{"--target SUBJECT", "--assertion TOKEN", "operation forget", "operation replace"} {
+	for _, forbidden := range []string{"--target SUBJECT", "--assertion TOKEN", "operation forget", "operation replace", "retry", "never-used"} {
 		if strings.Contains(stdout, forbidden) {
 			t.Fatal("machine identity help exposed an unsupported input", forbidden)
 		}

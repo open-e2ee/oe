@@ -2,21 +2,19 @@ package control
 
 import (
 	"context"
-	"errors"
 
 	"github.com/open-e2ee/oe/internal/identity"
-	"github.com/open-e2ee/oe/internal/identityattempt"
 )
 
 func (c *identityHTTP) addressed(value identity.CurrentContext) (AddressedCurrent, error) {
-	if value.Validate() != nil || value.Precondition.Scope.EnvironmentKind != c.slot.Environment() {
+	if value.Validate() != nil || value.Precondition.Scope.EnvironmentKind != c.address.Environment() {
 		return AddressedCurrent{}, identityTransportFailure("IDENTITY_RESULT_INVALID")
 	}
 	copy, err := value.Clone()
 	if err != nil {
 		return AddressedCurrent{}, identityTransportFailure("IDENTITY_RESULT_INVALID")
 	}
-	return AddressedCurrent{slot: c.slot, value: copy}, nil
+	return AddressedCurrent{address: c.address, value: copy}, nil
 }
 
 func (c *identityHTTP) Current(ctx context.Context, credential CredentialRequest) (AddressedCurrent, error) {
@@ -28,9 +26,6 @@ func (c *identityHTTP) Current(ctx context.Context, credential CredentialRequest
 }
 
 func (c *identityHTTP) KeysCurrent(ctx context.Context, credential CredentialRequest) (AddressedCurrent, error) {
-	if c.slot.Kind() != identityattempt.KeysOnly {
-		return AddressedCurrent{}, identityTransportFailure("IDENTITY_INPUT_INVALID")
-	}
 	var value identity.CurrentContext
 	body := struct {
 		Action string `json:"action"`
@@ -43,7 +38,7 @@ func (c *identityHTTP) KeysCurrent(ctx context.Context, credential CredentialReq
 
 func (c *identityHTTP) Preview(ctx context.Context, credential CredentialRequest, input identity.PreviewRequest) (identity.PreviewResult, error) {
 	var value identity.PreviewResult
-	if input.Validate() != nil || string(c.slot.Kind()) != input.Kind {
+	if input.Validate() != nil {
 		return value, identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}
 	// Explicit fields avoid promoting PreviewRequest.MarshalJSON and losing action.
@@ -59,7 +54,7 @@ func (c *identityHTTP) Preview(ctx context.Context, credential CredentialRequest
 	}
 	returned := identity.PreviewRequest{Kind: value.Kind, ExpectedConfigurationVersion: value.ExpectedConfigurationVersion,
 		Target: value.Target, Keys: value.Keys}
-	if !returned.Equal(input) || value.Current.Precondition.Scope.EnvironmentKind != c.slot.Environment() {
+	if !returned.Equal(input) || value.Current.Precondition.Scope.EnvironmentKind != c.address.Environment() {
 		return identity.PreviewResult{}, identityTransportFailure("IDENTITY_RESULT_INVALID")
 	}
 	return value, nil
@@ -67,7 +62,7 @@ func (c *identityHTTP) Preview(ctx context.Context, credential CredentialRequest
 
 func (c *identityHTTP) LifecycleTarget(ctx context.Context, credential CredentialRequest, target identity.LifecycleInputTarget) (identity.TargetObservation, error) {
 	var value identity.TargetObservation
-	if c.slot.Kind() != identityattempt.Lifecycle || target.Validate() != nil {
+	if target.Validate() != nil {
 		return value, identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}
 	body := struct {
@@ -77,26 +72,17 @@ func (c *identityHTTP) LifecycleTarget(ctx context.Context, credential Credentia
 	if err := c.request(ctx, credential, "target", body, &value); err != nil {
 		return identity.TargetObservation{}, err
 	}
-	if value.Target.Kind != target.Kind || value.Scope.EnvironmentKind != c.slot.Environment() {
+	if value.Target.Kind != target.Kind || value.Scope.EnvironmentKind != c.address.Environment() {
 		return identity.TargetObservation{}, identityTransportFailure("IDENTITY_RESULT_INVALID")
 	}
 	return value, nil
 }
 
 func (c *identityHTTP) LifecyclePrepare(ctx context.Context, credential CredentialRequest, current AddressedCurrent,
-	permit *identityattempt.PreparationPermit, input LifecyclePreparationInput) (value identity.Preparation, err error) {
-	call, err := permit.Begin(ctx)
-	if err != nil {
-		return value, err
-	}
-	defer func() {
-		if joinErr := call.Join(); joinErr != nil {
-			value = identity.Preparation{}
-			err = errors.Join(err, joinErr)
-		}
-	}()
-	if !call.Slot().Equal(c.slot) || !current.matches(c.slot) || input.validate() != nil {
-		return identity.Preparation{}, identityTransportFailure("IDENTITY_INPUT_INVALID")
+	input LifecyclePreparationInput) (identity.Preparation, error) {
+	var value identity.Preparation
+	if !current.matches(c.address) || input.validate() != nil {
+		return value, identityTransportFailure("IDENTITY_INPUT_INVALID")
 	}
 	body := struct {
 		Action                   string                        `json:"action"`
@@ -105,7 +91,7 @@ func (c *identityHTTP) LifecyclePrepare(ctx context.Context, credential Credenti
 		ExpectedLifecycleVersion identity.SafeInteger          `json:"expectedLifecycleVersion"`
 		Nonce                    string                        `json:"nonce"`
 	}{"prepare", input.Target, input.State, input.ExpectedLifecycleVersion, input.Nonce}
-	if err := c.request(call.Context(), credential, "prepare", body, &value); err != nil {
+	if err := c.request(ctx, credential, "prepare", body, &value); err != nil {
 		return identity.Preparation{}, err
 	}
 	if !value.Scope.Equal(current.value.Precondition.Scope) || value.Target.Kind != input.Target.Kind ||
