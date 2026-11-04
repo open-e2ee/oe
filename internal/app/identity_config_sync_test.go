@@ -408,7 +408,7 @@ func TestPublicIdentityPushRefusesProfileChangeForInUseEnvironment(t *testing.T)
 			if exit != exitFailure || result.Code != "IDENTITY_MIGRATION_REQUIRED" || result.Next != "oe identity current" {
 				t.Fatal("in-use profile change lost its stable refusal", exit, out, stderr)
 			}
-			if !strings.Contains(result.Error, tc.detail) || strings.Contains(out+stderr, "existing migration flow") {
+			if !strings.Contains(result.Error, tc.detail) || strings.Contains(out+stderr, "migration flow") {
 				t.Fatalf("refusal detail %q does not contain %q or names the retired migration flow", result.Error, tc.detail)
 			}
 			if tc.name == "pending-operation" && strings.Contains(result.Error, anchor) {
