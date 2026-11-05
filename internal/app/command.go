@@ -68,7 +68,7 @@ var humanGlobalFlag = map[string]string{
 	"--json":                   "Write one JSON result to stdout, including failures. Login can first emit a pending event.",
 	"--json-stream":            "Write progress events and one final event as newline-delimited JSON.",
 	"--agent yes|no|auto":      "Select agent mode. Auto detects agents. Agent mode uses JSON and never prompts or opens a browser.",
-	"--env sandbox|production": "Select an environment; -e is the short form. Doctor, identity, project, and notifications use OE_ENV then Sandbox by default. Config commands use each active environment.",
+	"--env sandbox|production": "Select an environment; -e is the short form. Doctor, identity, project, and notifications use OPEN_E2EE_ENV then Sandbox by default. Config commands use each active environment.",
 	"--control-url URL":        "Use another control API. HTTPS is required except on loopback.",
 	"-h, --help":               "Show help.",
 	"--version":                "Print the CLI version.",
@@ -84,11 +84,11 @@ var humanExitCode = map[int]string{
 }
 
 var humanVariable = map[string]string{
-	"OE_ACCESS_TOKEN":        "Scoped CI credential. Overrides the stored session; never stored by oe.",
-	"OE_ACCESS_TOKEN_SCOPES": "Token scopes, separated by commas or spaces.",
-	"OE_PROTECTION_BYPASS":   "Control URL bypass secret. Overrides the stored bypass; never appears in output.",
-	"OE_ENV":                 "Default environment for doctor, identity, project, and notifications. New and config ignore it.",
-	"OE_OPERATION_ID":        "The idempotency key for each remote mutation of one run. Set it only to repeat the same command.",
+	"OPEN_E2EE_ACCESS_TOKEN":        "Scoped CI credential. Overrides the stored session; never stored by oe.",
+	"OPEN_E2EE_ACCESS_TOKEN_SCOPES": "Token scopes, separated by commas or spaces.",
+	"OPEN_E2EE_PROTECTION_BYPASS":   "Control URL bypass secret. Overrides the stored bypass; never appears in output.",
+	"OPEN_E2EE_ENV":                 "Default environment for doctor, identity, project, and notifications. New and config ignore it.",
+	"OPEN_E2EE_OPERATION_ID":        "The idempotency key for each remote mutation of one run. Set it only to repeat the same command.",
 }
 
 // commandTree supplies one canonical command hierarchy. Local handlers retain

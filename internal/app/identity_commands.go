@@ -90,7 +90,7 @@ func identityExecutionFailure(err error, environment string) error {
 		data["cancellationOperationId"] = operation.cancellation
 		copy.message += " The cancel has operation ID " + operation.cancellation + " and targets operation " + operation.id + "."
 		if copy.code != "IDENTITY_OPERATION_NOT_FOUND" {
-			copy.message += " To repeat the same cancel, run: OE_OPERATION_ID=" + operation.cancellation + " " +
+			copy.message += " To repeat the same cancel, run: OPEN_E2EE_OPERATION_ID=" + operation.cancellation + " " +
 				commandLine([]string{"identity", "operation", "cancel", "--kind", string(operation.kind), "--operation-id", operation.id, "--env", environment})
 		}
 	}

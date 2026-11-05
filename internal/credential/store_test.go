@@ -7,10 +7,9 @@ import (
 )
 
 func TestResolvePrefersScopedCICredentialWithoutStoringIt(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "ci-token")
-	t.Setenv("OE_ACCESS_TOKEN_SCOPES", "project:read,deploy:write")
+	environment := map[string]string{"OPEN_E2EE_ACCESS_TOKEN": "ci-token", "OPEN_E2EE_ACCESS_TOKEN_SCOPES": "project:read,deploy:write"}
 	store := NewMemory()
-	value, err := Resolve(store, "https://control.example")
+	value, err := Resolve(store, "https://control.example", func(name string) string { return environment[name] })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +62,7 @@ func TestLocationNamesTheStoreOfEachSystem(t *testing.T) {
 		{"darwin", "keychain", Location{Key: "keychain", Label: "macOS Keychain"}},
 		{"linux", "keychain", Location{Key: "secret-service", Label: "Secret Service"}},
 		{"windows", "keychain", Location{Key: "wincred", Label: "Windows Credential Manager"}},
-		{"darwin", "environment", Location{Key: "environment", Label: "OE_ACCESS_TOKEN"}},
+		{"darwin", "environment", Location{Key: "environment", Label: "OPEN_E2EE_ACCESS_TOKEN"}},
 		{"linux", "memory", Location{Key: "memory"}},
 	} {
 		if got := locationOf(test.goos, test.source); got != test.want {

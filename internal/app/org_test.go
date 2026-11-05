@@ -41,7 +41,7 @@ type orgFixture struct {
 
 func newOrgFixture(t *testing.T) *orgFixture {
 	t.Helper()
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	profile, err := credential.Profile(defaultControlURL)
 	if err != nil {
 		t.Fatal(err)
@@ -270,11 +270,11 @@ func TestOrgSwitchNamesTheIDWhenTheNameIsNotUnique(t *testing.T) {
 
 func TestOrgSwitchRefusesAnEnvironmentToken(t *testing.T) {
 	fixture := newOrgFixture(t)
-	t.Setenv("OE_ACCESS_TOKEN", "environment-token")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "environment-token")
 	fixture.api.listOrganizations = nil
 	exit, stdout, _ := run(t, fixture.dependencies(), "--json", "org", "switch", "org_beta")
 	result := decodeEvent(t, []byte(stdout))
-	if exit != exitUsage || result.Code != "USAGE_ERROR" || !strings.Contains(result.Error, "unset OE_ACCESS_TOKEN to switch") || result.Next != "" {
+	if exit != exitUsage || result.Code != "USAGE_ERROR" || !strings.Contains(result.Error, "unset OPEN_E2EE_ACCESS_TOKEN to switch") || result.Next != "" {
 		t.Fatalf("an environment token: exit=%d %#v", exit, result)
 	}
 	if len(*fixture.log) != 0 {
@@ -341,7 +341,7 @@ func TestOrgSwitchLetsAPersonChoose(t *testing.T) {
 }
 
 func TestOrgCommandsSayUpdateRequiredWhenTheConsoleHasNoList(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	api, err := control.New(server.URL, server.Client())
@@ -378,7 +378,7 @@ func TestOrgSwitchPreservesStoredProtectionBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := fixture.dependencies()
-	deps.Getenv = environment(map[string]string{"OE_PROTECTION_BYPASS": "override-bypass"})
+	deps.Getenv = environment(map[string]string{"OPEN_E2EE_PROTECTION_BYPASS": "override-bypass"})
 	exit, stdout, stderr := run(t, deps, "--json", "org", "switch", "org_beta")
 	if exit != 0 {
 		t.Fatal("organization switch failed")

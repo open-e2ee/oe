@@ -10,7 +10,7 @@ real access tokens, private keys, recovery material, or customer data.
 ## Credential boundaries
 
 - The CLI stores interactive credentials only in the operating-system keychain.
-- `OE_ACCESS_TOKEN` is a scoped CI input. The CLI does not persist it.
+- `OPEN_E2EE_ACCESS_TOKEN` is a scoped CI input. The CLI does not persist it.
 - The CLI sends secret values only to the protected control API. The CLI does not
   write or print them.
 - Public project configuration can contain one OpenE2EE Signal Protocol Relay

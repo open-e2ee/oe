@@ -45,7 +45,7 @@
       },
       {
         "name": "org",
-        "summary": "Show the organization of the current session, list the organizations of the account, or move the stored session to another organization. ORG is an ID or a unique name. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.",
+        "summary": "Show the organization of the current session, list the organizations of the account, or move the stored session to another organization. ORG is an ID or a unique name. Without ORG, a person at a terminal chooses one. A session from OPEN_E2EE_ACCESS_TOKEN or an agent session cannot switch.",
         "usage": ["oe org show", "oe org list", "oe org switch [ORG]"]
       },
       {
@@ -123,23 +123,23 @@
     ],
     "environmentVariables": [
       {
-        "name": "OE_ACCESS_TOKEN",
+        "name": "OPEN_E2EE_ACCESS_TOKEN",
         "summary": "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."
       },
       {
-        "name": "OE_ACCESS_TOKEN_SCOPES",
-        "summary": "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."
+        "name": "OPEN_E2EE_ACCESS_TOKEN_SCOPES",
+        "summary": "The scopes of OPEN_E2EE_ACCESS_TOKEN, separated by commas or spaces."
       },
       {
-        "name": "OE_PROTECTION_BYPASS",
+        "name": "OPEN_E2EE_PROTECTION_BYPASS",
         "summary": "A protection bypass secret for the control URL. Login stores it with that session. It takes precedence over the stored bypass and never appears in output."
       },
       {
-        "name": "OE_ENV",
+        "name": "OPEN_E2EE_ENV",
         "summary": "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."
       },
       {
-        "name": "OE_OPERATION_ID",
+        "name": "OPEN_E2EE_OPERATION_ID",
         "summary": "The idempotency key for each remote mutation of one run. Set it only to repeat the same command."
       }
     ],
@@ -158,7 +158,7 @@
       },
       {
         "code": 4,
-        "meaning": "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."
+        "meaning": "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OPEN_E2EE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."
       },
       {
         "code": 5,
@@ -184,7 +184,7 @@
       },
       {
         "name": "--env sandbox|production",
-        "summary": "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."
+        "summary": "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OPEN_E2EE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."
       },
       {
         "name": "--control-url URL",

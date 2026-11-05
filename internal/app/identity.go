@@ -82,7 +82,7 @@ func identityCommandFailure(err error) error {
 		code, message, next, exit := "IDENTITY_CHECK_UNAVAILABLE", "The identity check is unavailable.", "oe help identity", exitFailure
 		switch failure.Code {
 		case "DEPLOYMENT_PROTECTION_REQUIRED":
-			code, message, next, exit = failure.Code, "Vercel deployment protection blocked the identity check. Set OE_PROTECTION_BYPASS to a valid bypass and retry.", "", exitPersonAction
+			code, message, next, exit = failure.Code, "Vercel deployment protection blocked the identity check. Set OPEN_E2EE_PROTECTION_BYPASS to a valid bypass and retry.", "", exitPersonAction
 		case "AUTHENTICATION_REQUIRED", "INVALID_SESSION":
 			code, message, next, exit = failure.Code, "Run oe auth login to check identity.", "oe auth login", exitAuthentication
 		case "ORGANIZATION_REQUIRED":

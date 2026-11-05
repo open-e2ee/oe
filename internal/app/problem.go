@@ -132,7 +132,7 @@ func classify(err error, commandLine, environment string) *problem {
 }
 
 // environmentTokenFailure is the failure of a run whose credential came from
-// OE_ACCESS_TOKEN. A login never replaces OE_ACCESS_TOKEN, so a failure that
+// OPEN_E2EE_ACCESS_TOKEN. A login never replaces OPEN_E2EE_ACCESS_TOKEN, so a failure that
 // names oe auth login would send the caller back to the same failure, and oe
 // org switch refuses the token. A refused token gets its own code and names
 // the variable. Any other failure that names oe auth login or oe org switch
@@ -143,16 +143,16 @@ func environmentTokenFailure(err error, commandLine, environment string) *proble
 	case failure.exit == exitAuthentication:
 		return &problem{
 			code: "ACCESS_TOKEN_INVALID", exit: exitAuthentication, cause: err, data: failure.data,
-			message: "the control API refused the token in OE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken,
+			message: "the control API refused the token in OPEN_E2EE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken,
 		}
 	case failure.next == "oe auth login", failure.next == "oe org switch":
 		failure.next = ""
-		failure.message += "; the credential comes from OE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken
+		failure.message += "; the credential comes from OPEN_E2EE_ACCESS_TOKEN, and a login never replaces it; " + replaceAccessToken
 	}
 	return failure
 }
 
-const replaceAccessToken = "set OE_ACCESS_TOKEN to a new token, or unset OE_ACCESS_TOKEN and run oe auth login"
+const replaceAccessToken = "set OPEN_E2EE_ACCESS_TOKEN to a new token, or unset OPEN_E2EE_ACCESS_TOKEN and run oe auth login"
 
 // commandLine writes args as one oe command line for a POSIX shell. It quotes
 // each argument that holds a character outside a safe set.

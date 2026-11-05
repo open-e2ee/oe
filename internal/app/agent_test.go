@@ -14,18 +14,22 @@ import (
 	"github.com/open-e2ee/oe/internal/agent"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
+	"github.com/open-e2ee/oe/internal/envvar"
 )
 
-// TestMain removes the variables that coding agents set, and OE_ENV, so a
-// test that runs under an agent or in a configured shell sees the same
-// defaults as CI. A test that needs a variable passes Getenv. It also
+// TestMain removes the variables that coding agents set, OPEN_E2EE_ENV, and
+// every deprecated shell name, so a test that runs under an agent or in a
+// configured shell sees the same defaults as CI. A test that needs a variable passes Getenv. It also
 // replaces the default browser opener, so a test that omits OpenURL fails
 // instead of opening a real browser tab on the machine that runs the tests.
 func TestMain(m *testing.M) {
 	for _, name := range agent.Variables() {
 		os.Unsetenv(name)
 	}
-	os.Unsetenv("OE_ENV")
+	os.Unsetenv(envvar.Environment.Current)
+	for _, name := range envvar.Shell() {
+		os.Unsetenv(name.Deprecated)
+	}
 	defaultOpenURL = func(target string) error {
 		panic("a test reached the real browser opener with " + target + "; pass Dependencies.OpenURL")
 	}
@@ -216,7 +220,7 @@ func TestProjectConnectionPrintsTheServerSignalProtocolRelayURL(t *testing.T) {
 	}
 	exit, stdout, _ = run(t, dependencies, "project", "connection", "other-chat", "--json", "--env=sandbox")
 	connection := decodeEvent(t, []byte(stdout))
-	if exit != 0 || connection.Data["relayUrl"] != sandboxSignalProtocolRelayURL || connection.Data["project"] != "other-chat" || connection.Data["variable"] != "OPEN_E2EE_RELAY_URL" {
+	if exit != 0 || connection.Data["relayUrl"] != sandboxSignalProtocolRelayURL || connection.Data["project"] != "other-chat" || connection.Data["variable"] != "OPEN_E2EE_SIGNAL_RELAY_URL" {
 		t.Fatalf("JSON connection is incomplete: %s", stdout)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "project", "connection", "--env", "production")

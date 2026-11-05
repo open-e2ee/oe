@@ -55,7 +55,7 @@ func TestBuiltBinaryCreatesAProjectAndPassesDoctor(t *testing.T) {
 	for _, args := range [][]string{{"new"}, {"doctor"}} {
 		command := exec.Command(binary, append([]string{"--json", "--agent", "no", "--control-url", server.URL}, args...)...)
 		command.Dir = project
-		command.Env = append(os.Environ(), "OE_ACCESS_TOKEN=test-token", "OE_ACCESS_TOKEN_SCOPES=project:write project:read", "OE_ENV=", "OE_OPERATION_ID=")
+		command.Env = append(os.Environ(), "OPEN_E2EE_ACCESS_TOKEN=test-token", "OPEN_E2EE_ACCESS_TOKEN_SCOPES=project:write project:read", "OPEN_E2EE_ENV=", "OPEN_E2EE_OPERATION_ID=", "OE_ENV=", "OE_OPERATION_ID=")
 		output, err := command.Output()
 		var result struct {
 			Status  string `json:"status"`

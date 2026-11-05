@@ -311,15 +311,15 @@ func TestPullIgnoresOEEnv(t *testing.T) {
 			directory, path := projectWith(t, sandboxOnly)
 			dependencies, _ := pullServer(t, "pull-chat", retention(day, day), retention(7*day, 30*day))
 			dependencies.WorkingDir = directory
-			dependencies.Getenv = environment(map[string]string{"OE_ENV": selected})
+			dependencies.Getenv = environment(map[string]string{"OPEN_E2EE_ENV": selected})
 
 			exit, stdout, _ := run(t, dependencies, "--json", "config", "pull")
 			result := decodeEvent(t, []byte(stdout))
 			if exit != 0 || entry(t, result, "sandbox")["status"] != "unchanged" || entry(t, result, "production")["status"] != "applied" {
-				t.Fatalf("OE_ENV=%s narrowed the pull: exit=%d %s", selected, exit, stdout)
+				t.Fatalf("OPEN_E2EE_ENV=%s narrowed the pull: exit=%d %s", selected, exit, stdout)
 			}
 			if mustLoad(t, path).Environments.Production == nil {
-				t.Fatalf("OE_ENV=%s kept the Production section out of the file", selected)
+				t.Fatalf("OPEN_E2EE_ENV=%s kept the Production section out of the file", selected)
 			}
 		})
 	}
@@ -591,14 +591,14 @@ func TestPushAppliesSandboxThenProduction(t *testing.T) {
 		t.Fatalf("the Production deploy did not carry the shared policy: %#v", production)
 	}
 	connection, _ := result.Data["connection"].(map[string]any)
-	if result.Next != "oe doctor --env production" || connection["file"] != ".env.production.local" || connection["variable"] != "OPEN_E2EE_RELAY_URL" {
+	if result.Next != "oe doctor --env production" || connection["file"] != ".env.production.local" || connection["variable"] != "OPEN_E2EE_SIGNAL_RELAY_URL" {
 		t.Fatalf("push did not hand over the Production connection: %s", stdout)
 	}
 	if strings.Contains(stdout, productionSignalProtocolRelayURL) {
 		t.Fatalf("push printed the Production connection URL: %s", stdout)
 	}
 	environment := mustRead(t, filepath.Join(directory, ".env.production.local"))
-	if !strings.Contains(string(environment), "\nOPEN_E2EE_RELAY_URL="+productionSignalProtocolRelayURL+"\n") {
+	if !strings.Contains(string(environment), "\nOPEN_E2EE_SIGNAL_RELAY_URL="+productionSignalProtocolRelayURL+"\n") {
 		t.Fatalf(".env.production.local has no Production connection: %q", environment)
 	}
 }
@@ -951,10 +951,10 @@ func TestPushIgnoresOEEnv(t *testing.T) {
 		directory := initializedProject(t, "variable-chat")
 		console := newPushConsole(t, "variable-chat")
 		dependencies := pushDependencies(t, console, directory)
-		dependencies.Getenv = environment(map[string]string{"OE_ENV": selected})
+		dependencies.Getenv = environment(map[string]string{"OPEN_E2EE_ENV": selected})
 		exit, stdout, _ := run(t, dependencies, "--json", "config", "push", "--yes")
 		if exit != 0 || !slices.Equal(console.calls, []string{"plan sandbox", "deploy sandbox", "plan production", "deploy production"}) {
-			t.Fatalf("OE_ENV=%s narrowed the push to %v: exit=%d %s", selected, console.calls, exit, stdout)
+			t.Fatalf("OPEN_E2EE_ENV=%s narrowed the push to %v: exit=%d %s", selected, console.calls, exit, stdout)
 		}
 	}
 	directory := initializedProject(t, "narrow-chat")

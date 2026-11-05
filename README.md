@@ -127,10 +127,10 @@ Global flags can come before or after the command. Global `--json` emits one
 final JSON document, and `oe auth login` emits one pending event before it. `--json-stream` emits newline-delimited progress and final
 events. `--agent yes|no|auto` says whether a coding agent runs `oe`.
 `--env sandbox|production` (`-e`) selects the environment. Without it,
-`oe doctor`, `oe identity`, `oe project`, and `oe notifications` read `OE_ENV`, then use
+`oe doctor`, `oe identity`, `oe project`, and `oe notifications` read `OPEN_E2EE_ENV`, then use
 sandbox. `oe new` always uses sandbox. The config pull reads each active
 environment, and `oe config push` applies every environment section of the
-config. Only `--env` narrows either to one environment; `OE_ENV` never changes
+config. Only `--env` narrows either to one environment; `OPEN_E2EE_ENV` never changes
 what a pull reads or what a push applies.
 
 ## Identity setup check
@@ -233,16 +233,16 @@ For lifecycle, status without an ID needs `--target-stdin` and reports the
 bound account's current operation.
 
 To repeat one selection or keys-only mutation, run the same command again with
-`OE_OPERATION_ID=ID`. The server replays the same input and refuses changed input
-with `IDENTITY_CONFLICT`. Lifecycle refuses `OE_OPERATION_ID`. Continue a lifecycle
+`OPEN_E2EE_OPERATION_ID=ID`. The server replays the same input and refuses changed input
+with `IDENTITY_CONFLICT`. Lifecycle refuses `OPEN_E2EE_OPERATION_ID`. Continue a lifecycle
 change with `oe identity operation resume --kind lifecycle --operation-id ID`.
 
 Cancel a selection or keys operation with
 `oe identity operation cancel --kind K --operation-id ID`.
-A cancel sends its own operation ID. For a cancel, `OE_OPERATION_ID` sets that
+A cancel sends its own operation ID. For a cancel, `OPEN_E2EE_OPERATION_ID` sets that
 ID, and it cannot equal `--operation-id`.
 A failed cancel reports its own ID in `data.cancellationOperationId`. To repeat
-that cancel, set `OE_OPERATION_ID` to that ID.
+that cancel, set `OPEN_E2EE_OPERATION_ID` to that ID.
 Production writes still require `--yes` or the existing interactive confirmation.
 
 A dry-run and a `CONFIRMATION_REQUIRED` refusal show the exact identity change.
@@ -253,6 +253,55 @@ and the declared value in `to`. A keys-only change has the path
 `environments.<env>.identity.keys`. A person at a terminal sees the change
 before the Production prompt. The `next` of `CONFIRMATION_REQUIRED` is the
 command that ran, with `--yes` added.
+
+## Upgrade to 5.0
+
+Version 5.0 renames each environment variable that you set for `oe`, and each
+variable that `oe` writes for the application. Each new name starts with
+`OPEN_E2EE_`, after any framework prefix.
+
+| Old name                          | New name                                 |
+| --------------------------------- | ---------------------------------------- |
+| `OE_ACCESS_TOKEN`                 | `OPEN_E2EE_ACCESS_TOKEN`                 |
+| `OE_ACCESS_TOKEN_SCOPES`          | `OPEN_E2EE_ACCESS_TOKEN_SCOPES`          |
+| `OE_PROTECTION_BYPASS`            | `OPEN_E2EE_PROTECTION_BYPASS`            |
+| `OE_ENV`                          | `OPEN_E2EE_ENV`                          |
+| `OE_OPERATION_ID`                 | `OPEN_E2EE_OPERATION_ID`                 |
+| `OPEN_E2EE_RELAY_URL`             | `OPEN_E2EE_SIGNAL_RELAY_URL`             |
+| `NEXT_PUBLIC_OPEN_E2EE_RELAY_URL` | `NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL` |
+| `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL` | `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL` |
+| `VITE_OPEN_E2EE_RELAY_URL`        | `VITE_OPEN_E2EE_SIGNAL_RELAY_URL`        |
+
+Version 5.0 accepts both names for 180 days after its release. Version 6.0
+stops reading and writing the old names. Until then, `oe` does these things:
+
+- It reads the new name first. When the new name is empty, it reads the old
+  name. It then prints one warning on stderr for that name. When you set both
+  names, it uses the new name.
+- It writes the new name to `.env.local` and `.env.production.local`. When the
+  file already assigns the old name, it sets that line to the same value. It
+  then prints a warning. It never adds an old name to a file.
+- `oe doctor` reads the old name when the env file does not assign the new
+  name. It then prints a warning.
+
+The JSON output reports the new name in `data.variable` and
+`data.connection.variable`. `oe auth status` reports the source
+`OPEN_E2EE_ACCESS_TOKEN`. Help, errors, and messages use the new names.
+`--env-var NAME` still selects a custom name. `oe` reads no old name for it.
+
+Do these steps in each project.
+
+1. In CI and scripts, rename each variable that you set for `oe`.
+2. Run `oe link`. It writes the new name to `.env.local` and
+   `.env.production.local`.
+3. Change the application to read the new name.
+4. Set the new name in the production build environment of the hosting
+   provider, if it holds the Relay URL. Use the same value. Remove the old name after the
+   deployed application reads the new name.
+5. Change scripts that parse the JSON `variable` field or the `oe auth status`
+   source.
+6. Remove the old name from each env file. `oe` stops updating it in version
+   6.0.
 
 ## Upgrade to 4.0
 
@@ -274,19 +323,19 @@ holds each identity operation. Do these steps to continue a pending operation.
 
 2. After you upgrade, continue each pending operation by its ID.
    - For selection or keys-only, run the original command again with
-     `OE_OPERATION_ID=ID`. You can also use `oe identity operation status` or
+     `OPEN_E2EE_OPERATION_ID=ID`. You can also use `oe identity operation status` or
      `oe identity operation cancel` with `--operation-id ID`. `oe config push`
-     takes no `OE_OPERATION_ID`. For a selection from a config push, use status
+     takes no `OPEN_E2EE_OPERATION_ID`. For a selection from a config push, use status
      or cancel.
    - For lifecycle, run
      `oe identity operation resume --kind lifecycle --operation-id ID`. A
-     lifecycle ID starts with `lc1_`. Lifecycle commands refuse `OE_OPERATION_ID`.
+     lifecycle ID starts with `lc1_`. Lifecycle commands refuse `OPEN_E2EE_OPERATION_ID`.
 
 3. Remove `--confirm-state-never-used` and `--confirm-slot-never-used` from
    scripts. Version 4.0 refuses each flag with `IDENTITY_INPUT_INVALID` and exit 2.
 
 4. Replace `oe identity operation retry` with the original command and
-   `OE_OPERATION_ID=ID`. Version 4.0 refuses `retry` with `IDENTITY_INPUT_INVALID`
+   `OPEN_E2EE_OPERATION_ID=ID`. Version 4.0 refuses `retry` with `IDENTITY_INPUT_INVALID`
    and exit 2.
 
 5. Version 4.0 does not read the old store directory. The directory is `CONFIG/open-e2ee/oe/identity-attempts` on macOS and Linux, and `%LOCALAPPDATA%\OpenE2EE\oe\identity-attempts` on Windows.
@@ -345,16 +394,16 @@ Open https://.../device?user_code=ABCD-EFGH and confirm that it shows the code A
 On another device, go to https://.../device and enter ABCD-EFGH.
 ```
 
-For a control URL behind Vercel Authentication, set `OE_PROTECTION_BYPASS`
+For a control URL behind Vercel Authentication, set `OPEN_E2EE_PROTECTION_BYPASS`
 before login. The CLI trims whitespace and sends the value in
 `x-vercel-protection-bypass` only to the control URL. It never sends this header
 to WorkOS or another host. Login stores the value with the session for that
-control URL. Later commands use `OE_PROTECTION_BYPASS` when it is not empty,
+control URL. Later commands use `OPEN_E2EE_PROTECTION_BYPASS` when it is not empty,
 then the stored value, then no bypass. The value never appears in output.
 An expired session removes only its session credentials and keeps this bypass
 for the next login. Explicit `oe auth logout` removes both. If Vercel blocks a
 request, `DEPLOYMENT_PROTECTION_REQUIRED` exits 5 and asks for a valid
-`OE_PROTECTION_BYPASS`. Another login cannot bypass deployment protection.
+`OPEN_E2EE_PROTECTION_BYPASS`. Another login cannot bypass deployment protection.
 
 Under an agent, `oe` does not open the browser. It writes a pending event, then
 the result after the person approves, so start the command in the background and
@@ -402,11 +451,11 @@ Organizations: Acme Inc. (admin, current), Beta LLC (member)
 ```
 
 The store is `macOS Keychain`, `Secret Service` on Linux,
-`Windows Credential Manager`, or `OE_ACCESS_TOKEN`. In JSON, `data` also has the
+`Windows Credential Manager`, or `OPEN_E2EE_ACCESS_TOKEN`. In JSON, `data` also has the
 IDs (`user`, `organization.id`, and `agent.registrationId` for an agent), `role`,
 `source`, and `store` (`keychain`, `secret-service`, `wincred`, or
 `environment`), and `data.organizations` when the control API lists them. It
-never has a token. Protected CI uses a scoped `OE_ACCESS_TOKEN` instead of a
+never has a token. Protected CI uses a scoped `OPEN_E2EE_ACCESS_TOKEN` instead of a
 login.
 
 `data.protectionBypass` is `{"source":"environment"}`,
@@ -453,14 +502,14 @@ show no organization line.
 `oe auth login --organization ORG` logs in, then switches to ORG when the
 session is in another organization. Without the flag, a person at a terminal
 who belongs to more than one organization chooses one after a new login.
-`oe org switch` and `--organization` refuse a session from `OE_ACCESS_TOKEN`.
+`oe org switch` and `--organization` refuse a session from `OPEN_E2EE_ACCESS_TOKEN`.
 `oe org switch` also refuses an agent session, because it belongs to one
 organization.
 
-`OE_ACCESS_TOKEN` takes precedence over the stored session, and
+`OPEN_E2EE_ACCESS_TOKEN` takes precedence over the stored session, and
 `oe auth login` never replaces it. When the control API refuses the token,
 each command that sends it, `oe auth login` too, fails with
-`ACCESS_TOKEN_INVALID`, exit 4, and no `next`. Set `OE_ACCESS_TOKEN` to a new token, or unset it and run
+`ACCESS_TOKEN_INVALID`, exit 4, and no `next`. Set `OPEN_E2EE_ACCESS_TOKEN` to a new token, or unset it and run
 `oe auth login`.
 
 Read the Relay connection URL of a project. Text mode prints only the URL, so a
@@ -473,8 +522,8 @@ oe project connection my-chat --env production --json
 
 Read the current UTC billing-period usage. Without `PROJECT`, the command uses
 the project in the current directory's `open-e2ee.config.ts`. It uses the
-current authenticated session or a scoped `OE_ACCESS_TOKEN`, and defaults to
-Sandbox (or `OE_ENV`):
+current authenticated session or a scoped `OPEN_E2EE_ACCESS_TOKEN`, and defaults to
+Sandbox (or `OPEN_E2EE_ENV`):
 
 ```bash
 oe project usage
@@ -536,9 +585,9 @@ the organization. After the card, the person can still get
 later and validates its default export against `schema/config-v2.json`. The
 schema rejects unknown fields so a secret cannot silently remain in the file. Secrets belong in the service secret store. Login
 credentials belong in the operating-system keychain. Protected CI can supply a
-scoped `OE_ACCESS_TOKEN`. The CLI keeps it in memory and never stores it.
+scoped `OPEN_E2EE_ACCESS_TOKEN`. The CLI keeps it in memory and never stores it.
 
-If the control URL needs `OE_PROTECTION_BYPASS`, login stores that secret with the
+If the control URL needs `OPEN_E2EE_PROTECTION_BYPASS`, login stores that secret with the
 session in the keychain. The environment value takes precedence. The header
 goes only to the control URL, and the value never appears in output.
 
@@ -576,16 +625,18 @@ does not select a Relay hostname or pair an endpoint with a second key.
 
 The variable follows the framework in `package.json`:
 
-| Dependency                      | Variable                          |
-| ------------------------------- | --------------------------------- |
-| `next`                          | `NEXT_PUBLIC_OPEN_E2EE_RELAY_URL` |
-| `expo`                          | `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL` |
-| `vite`                          | `VITE_OPEN_E2EE_RELAY_URL`        |
-| Any other, or no `package.json` | `OPEN_E2EE_RELAY_URL`             |
+| Dependency                      | Variable                                 |
+| ------------------------------- | ---------------------------------------- |
+| `next`                          | `NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL` |
+| `expo`                          | `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL` |
+| `vite`                          | `VITE_OPEN_E2EE_SIGNAL_RELAY_URL`        |
+| Any other, or no `package.json` | `OPEN_E2EE_SIGNAL_RELAY_URL`             |
 
 The first match in the table wins. The CLI replaces only its own comment and
 the lines that assign its variable. It keeps every other line, the line
-breaks, an `export` prefix, and the file permissions.
+breaks, an `export` prefix, and the file permissions. Until version 6.0, the
+CLI also sets a line that assigns the old name of its variable. See
+[Upgrade to 5.0](#upgrade-to-50).
 
 `oe config push` writes `.env.production.local`. If the hosting provider does
 not read that file, install the value of the variable that `oe config push`
@@ -658,7 +709,7 @@ command does not use an analytics SDK.
 See [SECURITY.md](./SECURITY.md). Do not open a public issue for a suspected
 credential, authentication, authorization, or cryptographic defect.
 
-`OE_ACCESS_TOKEN` stays in memory. `OE_PROTECTION_BYPASS` is a secret that login
+`OPEN_E2EE_ACCESS_TOKEN` stays in memory. `OPEN_E2EE_PROTECTION_BYPASS` is a secret that login
 stores with the session for the control URL. The environment value takes
 precedence over the stored bypass. The CLI sends the header only to the control
 URL. The bypass value never appears in output. `oe auth logout` removes the

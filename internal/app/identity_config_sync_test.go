@@ -152,12 +152,12 @@ func TestPublicIdentityPushAppliesEveryDeclaredEnvironment(t *testing.T) {
 		}
 		return value
 	}
-	for _, source := range []string{"default", "OE_ENV"} {
+	for _, source := range []string{"default", "OPEN_E2EE_ENV"} {
 		t.Run(source, func(t *testing.T) {
 			f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
-			if source == "OE_ENV" {
+			if source == "OPEN_E2EE_ENV" {
 				f.dependencies.Getenv = func(key string) string {
-					if key == "OE_ENV" {
+					if key == "OPEN_E2EE_ENV" {
 						return "sandbox"
 					}
 					return ""
@@ -233,7 +233,7 @@ func TestPublicIdentityPushAppliesEveryDeclaredEnvironment(t *testing.T) {
 func TestPublicIdentityPushDoesNotReuseGenericOperationEnvironment(t *testing.T) {
 	f := publicIdentityTestFixture(t, `{"mode":"device-owned"}`)
 	f.dependencies.Getenv = func(key string) string {
-		if key == "OE_OPERATION_ID" {
+		if key == "OPEN_E2EE_OPERATION_ID" {
 			return "retained_exact_001"
 		}
 		return ""

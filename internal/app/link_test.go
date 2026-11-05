@@ -152,7 +152,7 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 		}
 	}
 	for filename, expected := range map[string]string{".env.local": linkSandboxURL, ".env.production.local": linkProductionURL} {
-		if value, err := envfile.Read(filepath.Join(directory, filename), "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"); err != nil || value != expected {
+		if value, err := envfile.Read(filepath.Join(directory, filename), "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL"); err != nil || value != expected {
 			t.Fatalf("%s holds %q (%v), want %q", filename, value, err, expected)
 		}
 	}
@@ -247,7 +247,7 @@ func TestLinkWithoutArgumentRewritesOnlyTheEnvFiles(t *testing.T) {
 	directory := initializedProject(t, "chat-demo")
 	path := filepath.Join(directory, config.Filename)
 	source := mustRead(t, path)
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/stale"); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/stale", noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +264,7 @@ func TestLinkWithoutArgumentRewritesOnlyTheEnvFiles(t *testing.T) {
 		t.Fatalf("oe link without a project changed the config:\n%s", after)
 	}
 	for filename, expected := range map[string]string{".env.local": linkSandboxURL, ".env.production.local": linkProductionURL} {
-		if value, err := envfile.Read(filepath.Join(directory, filename), envfile.DefaultVariable); err != nil || value != expected {
+		if value, err := envfile.Read(filepath.Join(directory, filename), envfile.Default.Variable); err != nil || value != expected {
 			t.Fatalf("%s holds %q (%v), want %q", filename, value, err, expected)
 		}
 	}
@@ -287,10 +287,10 @@ func TestLinkToAnotherProjectNeedsYes(t *testing.T) {
 	path := filepath.Join(directory, config.Filename)
 	oldSandbox := "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/old-sandbox"
 	oldProduction := "https://relay.open-e2ee.dev/signal/v1/connection/old-production"
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, oldSandbox); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, oldSandbox, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.production.local", envfile.DefaultVariable, oldProduction); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.production.local", envfile.Default, oldProduction, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	source := mustRead(t, path)
@@ -300,7 +300,7 @@ func TestLinkToAnotherProjectNeedsYes(t *testing.T) {
 			t.Fatalf("the config changed:\n%s", after)
 		}
 		for filename, expected := range map[string]string{".env.local": oldSandbox, ".env.production.local": oldProduction} {
-			if value, _ := envfile.Read(filepath.Join(directory, filename), envfile.DefaultVariable); value != expected {
+			if value, _ := envfile.Read(filepath.Join(directory, filename), envfile.Default.Variable); value != expected {
 				t.Fatalf("%s changed to %q", filename, value)
 			}
 		}
@@ -352,7 +352,7 @@ func TestLinkToAnotherProjectNeedsYes(t *testing.T) {
 	}
 	for filename, expected := range map[string]string{".env.local": linkSandboxURL, ".env.production.local": linkProductionURL} {
 		contents := string(mustRead(t, filepath.Join(directory, filename)))
-		if !strings.Contains(contents, "OPEN_E2EE_RELAY_URL="+expected) || strings.Contains(contents, "old-") {
+		if !strings.Contains(contents, "OPEN_E2EE_SIGNAL_RELAY_URL="+expected) || strings.Contains(contents, "old-") {
 			t.Fatalf("%s did not converge to the linked project: %q", filename, contents)
 		}
 	}
@@ -564,7 +564,7 @@ func TestOrganizationRequiredNamesOrgSwitch(t *testing.T) {
 	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
 		return control.Project{}, &control.APIError{Status: 403, Code: "ORGANIZATION_REQUIRED", Message: "Sign in to an organization."}
 	}}
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	exit, stdout, _ := run(t, Dependencies{API: api, Store: readSession(t)}, "--json", "project", "show", "chat-demo")
 	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "ORGANIZATION_REQUIRED" || failure.Next != "oe org switch" {
 		t.Fatalf("ORGANIZATION_REQUIRED: exit=%d %s", exit, stdout)

@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"runtime"
 	"sort"
 	"strings"
 
+	"github.com/open-e2ee/oe/internal/envvar"
 	keyring "github.com/zalando/go-keyring"
 )
 
@@ -81,11 +81,13 @@ func (Keychain) Delete(profile string) error {
 	return nil
 }
 
-func Resolve(store Store, profile string) (Credential, error) {
-	if token := strings.TrimSpace(os.Getenv("OE_ACCESS_TOKEN")); token != "" {
+// Resolve returns the access token from getenv, or else the session stored
+// for profile.
+func Resolve(store Store, profile string, getenv func(string) string) (Credential, error) {
+	if token := strings.TrimSpace(getenv(envvar.AccessToken.Current)); token != "" {
 		return Credential{
 			AccessToken: token,
-			Scopes:      splitScopes(os.Getenv("OE_ACCESS_TOKEN_SCOPES")),
+			Scopes:      splitScopes(getenv(envvar.AccessTokenScopes.Current)),
 			Source:      "environment",
 		}, nil
 	}
@@ -130,7 +132,7 @@ func LocationOf(source string) Location {
 func locationOf(goos, source string) Location {
 	switch source {
 	case "environment":
-		return Location{Key: "environment", Label: "OE_ACCESS_TOKEN"}
+		return Location{Key: "environment", Label: envvar.AccessToken.Current}
 	case "keychain":
 		switch goos {
 		case "darwin":

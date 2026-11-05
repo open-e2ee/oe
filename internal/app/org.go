@@ -99,7 +99,7 @@ func (r *runner) orgSwitch(ctx context.Context, argument string) error {
 	if value.Source == "environment" {
 		return &problem{
 			code: "USAGE_ERROR", exit: exitUsage,
-			message: "the session comes from OE_ACCESS_TOKEN, which a switch never replaces; unset OE_ACCESS_TOKEN to switch",
+			message: "the session comes from OPEN_E2EE_ACCESS_TOKEN, which a switch never replaces; unset OPEN_E2EE_ACCESS_TOKEN to switch",
 		}
 	}
 	list, err := r.organizations(ctx, value)

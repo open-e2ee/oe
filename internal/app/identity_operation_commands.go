@@ -77,7 +77,7 @@ func projectIdentityExecution(kind identity.Kind, result identityExecutionResult
 }
 
 // outputIdentityExecution reports one server result. repeat is the command
-// line that OE_OPERATION_ID can repeat, or "" when the command cannot repeat.
+// line that OPEN_E2EE_OPERATION_ID can repeat, or "" when the command cannot repeat.
 func (r *runner) outputIdentityExecution(command string, kind identity.Kind, result identityExecutionResult, repeat string) error {
 	value, err := projectIdentityExecution(kind, result)
 	if err != nil {
@@ -101,7 +101,7 @@ func identityResultFailure(value identityCommandResult, repeat string) *problem 
 	if value.Disposition == identity.ReceiptPending {
 		message := "The operation is pending on the server. Read it by its operation ID."
 		if repeat != "" {
-			message = "The operation is pending on the server. To repeat the same command, run: OE_OPERATION_ID=" + value.OperationID + " " + repeat
+			message = "The operation is pending on the server. To repeat the same command, run: OPEN_E2EE_OPERATION_ID=" + value.OperationID + " " + repeat
 		}
 		return identityCommandProblem("IDENTITY_PENDING", message, next, exitTemporary)
 	}

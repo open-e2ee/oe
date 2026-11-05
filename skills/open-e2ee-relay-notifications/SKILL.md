@@ -13,7 +13,7 @@ push payload.
 ## Commands
 
 Run each command in the app directory. Each command uses the Sandbox
-environment unless `--env production` or `OE_ENV` selects Production.
+environment unless `--env production` or `OPEN_E2EE_ENV` selects Production.
 
 | Command                                                | What it does                                                               |
 | ------------------------------------------------------ | -------------------------------------------------------------------------- |

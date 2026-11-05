@@ -8,7 +8,6 @@ import (
 )
 
 func TestKeychainProtectionOnlyIsNotASession(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
 	keyring.MockInit()
 	store := Keychain{}
 	if err := store.Set("profile", Credential{ProtectionBypass: "bypass"}); err != nil {
@@ -17,7 +16,7 @@ func TestKeychainProtectionOnlyIsNotASession(t *testing.T) {
 	if value, err := store.Get("profile"); err != nil || value.ProtectionBypass != "bypass" {
 		t.Fatal("client prerequisite is unavailable")
 	}
-	if _, err := Resolve(store, "profile"); !errors.Is(err, ErrNotFound) {
+	if _, err := Resolve(store, "profile", func(string) string { return "" }); !errors.Is(err, ErrNotFound) {
 		t.Fatal("bypass-only entry resolved as a session")
 	}
 	for _, value := range []Credential{{}, {ProtectionBypass: " \n"}, {RefreshToken: "orphaned"}} {

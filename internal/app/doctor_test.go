@@ -47,7 +47,7 @@ func TestDoctorWaitSeesTheFirstAcknowledgedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := initializedProject(t, "wait-chat")
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, signalRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, signalRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -93,7 +93,7 @@ func TestDoctorWaitRefusesAnInvalidRequestBeforeAnyRead(t *testing.T) {
 
 func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 	directory := initializedProject(t, "refresh-wait")
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, sandboxSignalProtocolRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -150,7 +150,7 @@ func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != "oe link" {
 		t.Fatalf("sandbox doctor in a clone gave exit=%d %s", exit, stdout)
 	}
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
 	sandbox := &control.ProjectEnvironment{SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_sandbox"}
@@ -175,9 +175,9 @@ func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 // reads come from activation, and returns the last JSON document.
 func waitDoctor(t *testing.T, activation func(int) control.Activation, sleep func(context.Context, time.Duration) error) (int, event, int) {
 	t.Helper()
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	directory := initializedProject(t, "wait-chat")
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, sandboxSignalProtocolRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()

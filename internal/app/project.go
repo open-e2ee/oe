@@ -148,7 +148,7 @@ func (r *runner) productionNotFound(err error, project string) error {
 }
 
 // shownEnvironments gives the environments that oe project show and oe config
-// pull read: the one that --env names, or that OE_ENV names for project, else
+// pull read: the one that --env names, or that OPEN_E2EE_ENV names for project, else
 // both.
 func (r *runner) shownEnvironments() []string {
 	if r.environmentSelected {

@@ -24,6 +24,7 @@ import (
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
+	"github.com/open-e2ee/oe/internal/envvar"
 	"github.com/open-e2ee/oe/internal/output"
 	"github.com/open-e2ee/oe/internal/projectlock"
 )
@@ -70,7 +71,7 @@ type runner struct {
 	directory   string
 	controlURL  string
 	environment string
-	// environmentSelected is true when --env or OE_ENV names the environment.
+	// environmentSelected is true when --env or OPEN_E2EE_ENV names the environment.
 	environmentSelected bool
 	environmentExplicit bool
 	mode                output.Mode
@@ -81,7 +82,7 @@ type runner struct {
 	// variable names one, or when --agent no overrides the detection.
 	harness agent.Harness
 	// credentialSource is the source of the credential that access resolved,
-	// such as environment for OE_ACCESS_TOKEN. It is empty before access.
+	// such as environment for OPEN_E2EE_ACCESS_TOKEN. It is empty before access.
 	credentialSource       string
 	protectionBypass       string
 	protectionBypassSource string
@@ -97,6 +98,12 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 	if dependencies.Getenv == nil {
 		dependencies.Getenv = os.Getenv
 	}
+	// Every reader of a customer variable gets the deprecated name as a
+	// fallback, with one warning for each variable.
+	errOut := dependencies.Err
+	dependencies.Getenv = envvar.Reader(dependencies.Getenv, func(name envvar.Name) {
+		fmt.Fprintln(errOut, name.Warning())
+	})
 	global, command, commandArgs, err := parseGlobal(args)
 	command, commandArgs = normalizeCommand(command, commandArgs)
 	harness, underAgent := agent.Resolve(global.agent, dependencies.Getenv)
@@ -154,7 +161,7 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 	if err := validateControlURL(global.controlURL); err != nil {
 		return fail(writer, command, args, global.environment, usageError(command, err.Error()))
 	}
-	protectionBypass := strings.TrimSpace(dependencies.Getenv("OE_PROTECTION_BYPASS"))
+	protectionBypass := strings.TrimSpace(dependencies.Getenv(envvar.ProtectionBypass.Current))
 	protectionBypassSource := "none"
 	if protectionBypass != "" {
 		protectionBypassSource = "environment"
@@ -421,12 +428,12 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 	if err != nil {
 		return credential.Credential{}, err
 	}
-	value, err := credential.Resolve(r.store, profile)
+	value, err := credential.Resolve(r.store, profile, r.getenv)
 	if errors.Is(err, credential.ErrNotFound) && loginWhenMissing {
 		value, err = r.interactiveLogin(ctx, 5*time.Minute, r.announceProgress)
 	}
 	if errors.Is(err, credential.ErrNotFound) {
-		return credential.Credential{}, loginRequired("AUTHENTICATION_REQUIRED", "no session is stored for "+profile+"; run oe auth login, or set OE_ACCESS_TOKEN", err)
+		return credential.Credential{}, loginRequired("AUTHENTICATION_REQUIRED", "no session is stored for "+profile+"; run oe auth login, or set OPEN_E2EE_ACCESS_TOKEN", err)
 	}
 	if err != nil {
 		return credential.Credential{}, err
@@ -567,19 +574,19 @@ func parseGlobal(args []string) (globalOptions, string, []string, error) {
 }
 
 // defaultEnvironment gives the environment of a run without --env. doctor,
-// identity, project, and notifications take OE_ENV, then sandbox. new keeps Sandbox, so
+// identity, project, and notifications take OPEN_E2EE_ENV, then sandbox. new keeps Sandbox, so
 // a variable left in a shell never changes the target of a new project. config
-// ignores OE_ENV, so the variable never narrows a pull or changes what a push
+// ignores OPEN_E2EE_ENV, so the variable never narrows a pull or changes what a push
 // applies.
 func defaultEnvironment(command string, getenv func(string) string) (string, bool, error) {
 	switch command {
 	case "doctor", "project", "notifications", "identity":
-		selected := getenv("OE_ENV")
+		selected := getenv(envvar.Environment.Current)
 		if selected == "" {
 			return "sandbox", false, nil
 		}
 		if selected != "sandbox" && selected != "production" {
-			return "", false, usageError(command, "OE_ENV must be sandbox or production")
+			return "", false, usageError(command, "OPEN_E2EE_ENV must be sandbox or production")
 		}
 		return selected, true, nil
 	}
@@ -651,8 +658,8 @@ func validateControlURL(raw string) error {
 	return nil
 }
 
-func operationID() (string, error) {
-	if supplied := strings.TrimSpace(os.Getenv("OE_OPERATION_ID")); supplied != "" {
+func operationID(getenv func(string) string) (string, error) {
+	if supplied := strings.TrimSpace(getenv(envvar.OperationID.Current)); supplied != "" {
 		return supplied, nil
 	}
 	value := make([]byte, 16)
@@ -725,13 +732,25 @@ func slug(value string) string {
 // connection.
 var environmentFiles = map[string]string{"sandbox": ".env.local", "production": ".env.production.local"}
 
-// writeSignalProtocolRelayEnvironment writes signalRelayURL to filename in the project directory
-// under variable, and keeps the file out of version control.
-func writeSignalProtocolRelayEnvironment(directory, filename, variable, signalRelayURL string) error {
-	if err := envfile.Write(filepath.Join(directory, filename), variable, signalRelayURL); err != nil {
+// writeSignalProtocolRelayEnvironment writes signalRelayURL to filename in the
+// project directory under the connection variable, and keeps the file out of
+// version control. warn receives the deprecation warning when the file still
+// assigns the deprecated variable.
+func writeSignalProtocolRelayEnvironment(directory, filename string, connection envfile.Connection, signalRelayURL string, warn func(string)) error {
+	deprecated, err := envfile.Write(filepath.Join(directory, filename), connection, signalRelayURL)
+	if err != nil {
 		return err
 	}
+	if deprecated {
+		warn(envfile.DeprecationWarning(filename, connection, false))
+	}
 	return ensureIgnored(directory, filename)
+}
+
+// warn writes a warning for a person to the error stream. JSON output stays
+// on the output stream, so a warning never breaks a parser.
+func (r *runner) warn(message string) {
+	fmt.Fprintln(r.errOut, message)
 }
 
 // lockProject takes the advisory project lock of directory. The lock file

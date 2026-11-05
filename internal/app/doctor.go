@@ -43,9 +43,12 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 		return fmt.Errorf("doctor found a problem: %w", err)
 	}
 	environmentFile := environmentFiles[r.environment]
-	local, err := envfile.Read(filepath.Join(filepath.Dir(path), environmentFile), connection.Variable)
+	local, deprecated, err := envfile.ReadConnection(filepath.Join(filepath.Dir(path), environmentFile), connection)
 	if err != nil {
 		return fmt.Errorf("doctor found a problem: %w", err)
+	}
+	if deprecated {
+		r.warn(envfile.DeprecationWarning(environmentFile, connection, true))
 	}
 	// The config sets up the directory, so oe new refuses it. oe link writes
 	// the env file of each active environment, and every project has an

@@ -467,7 +467,7 @@ func TestPublicIdentitySelectUsesTheResolvedEnvironment(t *testing.T) {
 			switch source {
 			case "environment-variable":
 				f.dependencies.Getenv = func(key string) string {
-					if key == "OE_ENV" {
+					if key == "OPEN_E2EE_ENV" {
 						return "sandbox"
 					}
 					return ""

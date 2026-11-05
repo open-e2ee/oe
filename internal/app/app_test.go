@@ -86,14 +86,14 @@ func TestNewWritesTheNextJSVariable(t *testing.T) {
 	}}
 	exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "new")
 	connection, _ := decodeEvent(t, []byte(stdout)).Data["connection"].(map[string]any)
-	if exit != 0 || connection["variable"] != "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL" || connection["framework"] != "Next.js" {
+	if exit != 0 || connection["variable"] != "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL" || connection["framework"] != "Next.js" {
 		t.Fatalf("new did not name the Next.js variable: %s", stdout)
 	}
 	environment, err := os.ReadFile(filepath.Join(directory, ".env.local"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(environment), "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL="+sandboxSignalProtocolRelayURL+"\n") || strings.Contains(string(environment), "\nOPEN_E2EE_RELAY_URL=") {
+	if !strings.Contains(string(environment), "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL="+sandboxSignalProtocolRelayURL+"\n") || strings.Contains(string(environment), "\nOPEN_E2EE_SIGNAL_RELAY_URL=") {
 		t.Fatalf("a Next.js client cannot read the Sandbox connection: %q", environment)
 	}
 }
@@ -109,15 +109,15 @@ func TestPushAndConnectionNameTheExpoVariable(t *testing.T) {
 	exit, stdout, _ := run(t, dependencies, "--json", "config", "push", "--yes")
 	pushed := decodeEvent(t, []byte(stdout))
 	connection, _ := pushed.Data["connection"].(map[string]any)
-	if exit != 0 || connection["variable"] != "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL" || !strings.Contains(pushed.Message, "Wrote .env.production.local: EXPO_PUBLIC_OPEN_E2EE_RELAY_URL.") {
+	if exit != 0 || connection["variable"] != "EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL" || !strings.Contains(pushed.Message, "Wrote .env.production.local: EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL.") {
 		t.Fatalf("push did not name the Expo variable: %s", stdout)
 	}
 	environment, err := os.ReadFile(filepath.Join(directory, ".env.production.local"))
-	if err != nil || !strings.Contains(string(environment), "\nEXPO_PUBLIC_OPEN_E2EE_RELAY_URL="+productionSignalProtocolRelayURL+"\n") {
+	if err != nil || !strings.Contains(string(environment), "\nEXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL="+productionSignalProtocolRelayURL+"\n") {
 		t.Fatalf("production environment has no Expo variable: %q %v", environment, err)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "project", "connection", "--env", "production")
-	if connection := decodeEvent(t, []byte(stdout)); exit != 0 || connection.Data["variable"] != "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL" {
+	if connection := decodeEvent(t, []byte(stdout)); exit != 0 || connection.Data["variable"] != "EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL" {
 		t.Fatalf("connection did not name the Expo variable: %s", stdout)
 	}
 }
@@ -146,7 +146,7 @@ func TestUnreadablePackageJSONFailsBeforeRemoteMutation(t *testing.T) {
 
 func TestDoctorReportsSafeConnectionOriginAndRefusesProjectDrift(t *testing.T) {
 	directory := initializedProject(t, "doctor-chat")
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, sandboxSignalProtocolRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -319,17 +319,17 @@ func TestPushToProductionRefusesAConfigWithoutProduction(t *testing.T) {
 func TestSignalProtocolRelayEnvironmentRemovalCannotLeaveAnotherProjectConnection(t *testing.T) {
 	directory := t.TempDir()
 	filename := ".env.production.local"
-	if err := writeSignalProtocolRelayEnvironment(directory, filename, envfile.DefaultVariable, productionSignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, filename, envfile.Default, productionSignalProtocolRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSignalProtocolRelayEnvironment(directory, filename, envfile.DefaultVariable, ""); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, filename, envfile.Default, "", noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	contents, err := os.ReadFile(filepath.Join(directory, filename))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(contents), "OPEN_E2EE_RELAY_URL=") || strings.Contains(string(contents), productionSignalProtocolRelayURL) {
+	if strings.Contains(string(contents), "OPEN_E2EE_SIGNAL_RELAY_URL=") || strings.Contains(string(contents), productionSignalProtocolRelayURL) {
 		t.Fatalf("removed environment retained a Relay connection: %q", contents)
 	}
 	if !strings.Contains(string(contents), "not configured for this environment") {
@@ -651,7 +651,7 @@ func TestLoginPromptMatchesTheVerificationPage(t *testing.T) {
 }
 
 func TestFailedControlRequestNeverPrintsProtectionBypass(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	const bypass = "request-bypass-secret"
 	for _, transportFailure := range []bool{false, true} {
 		for _, mode := range []string{"--json", "--agent=no"} {
@@ -672,11 +672,19 @@ func TestFailedControlRequestNeverPrintsProtectionBypass(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			exit := Run(t.Context(), []string{mode, "auth", "status"}, Dependencies{
 				Store: store, HTTP: client, Out: &stdout, Err: &stderr, WorkingDir: t.TempDir(),
-				Getenv: environment(map[string]string{"OE_PROTECTION_BYPASS": bypass}),
+				Getenv: environment(map[string]string{"OPEN_E2EE_PROTECTION_BYPASS": bypass}),
 			})
 			if exit == 0 || strings.Contains(stdout.String()+stderr.String(), bypass) {
 				t.Fatal("failed control request exposed the bypass or did not fail")
 			}
 		}
+	}
+}
+
+// noWarning fails the test when a write warns about a deprecated variable.
+func noWarning(t *testing.T) func(string) {
+	return func(message string) {
+		t.Helper()
+		t.Errorf("unexpected warning: %s", message)
 	}
 }
