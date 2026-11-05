@@ -18,8 +18,8 @@ import (
 	"github.com/open-e2ee/oe/internal/output"
 )
 
-// relayFields are the fields of a Relay policy, in the order of the file.
-var relayFields = []string{"deliveryRetention", "attachmentRetention", "relayReceipts"}
+// signalRelayFields are the fields of a Relay policy, in the order of the file.
+var signalRelayFields = []string{"deliveryRetention", "attachmentRetention", "relayReceipts"}
 
 // A person's push waits this long for a card, and reads the project at this
 // interval while it waits.
@@ -159,7 +159,7 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 	plan := pullPlan{names: names, environments: map[string]*pulledEnvironment{}}
 	for _, name := range names {
 		remote := environmentOf(project, name)
-		if remote == nil || remote.RelayURL == "" {
+		if remote == nil || remote.SignalProtocolRelayURL == "" {
 			plan.environments[name] = &pulledEnvironment{Status: "skipped", Reason: "inactive"}
 			continue
 		}
@@ -171,11 +171,11 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 		if err != nil {
 			return pullPlan{}, fmt.Errorf("the %s attachment retention: %w", name, err)
 		}
-		if remote.RelayReceipts == nil {
+		if remote.SignalProtocolRelayReceipts == nil {
 			return pullPlan{}, fmt.Errorf("control API returned no relayReceipts for the %s environment", name)
 		}
-		server := policyFields(config.RelayPolicy{
-			DeliveryRetention: delivery, AttachmentRetention: attachment, RelayReceipts: *remote.RelayReceipts,
+		server := policyFields(config.SignalProtocolRelayPolicy{
+			DeliveryRetention: delivery, AttachmentRetention: attachment, SignalProtocolRelayReceipts: *remote.SignalProtocolRelayReceipts,
 		})
 		entry := &pulledEnvironment{Status: "unchanged"}
 		plan.environments[name] = entry
@@ -183,8 +183,8 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 		if name == "production" && value.Environments.Production == nil {
 			// The file has no section for the environment, so each value that
 			// the shared policy does not give is added as an override.
-			shared := policyFields(value.Relay)
-			for _, field := range relayFields {
+			shared := policyFields(value.SignalProtocolRelay)
+			for _, field := range signalRelayFields {
 				if server[field] == shared[field] {
 					continue
 				}
@@ -197,14 +197,14 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 			}
 			continue
 		}
-		current, err := value.RelayPolicyFor(name)
+		current, err := value.SignalProtocolRelayPolicyFor(name)
 		if err != nil {
 			return pullPlan{}, err
 		}
 		// A new override replaces the shared value that the environment
 		// takes now, so it is a replacement too.
 		effective := policyFields(current)
-		for _, field := range relayFields {
+		for _, field := range signalRelayFields {
 			if server[field] == effective[field] {
 				continue
 			}
@@ -216,11 +216,11 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 	return plan, nil
 }
 
-func policyFields(policy config.RelayPolicy) map[string]any {
+func policyFields(policy config.SignalProtocolRelayPolicy) map[string]any {
 	return map[string]any{
 		"deliveryRetention":   policy.DeliveryRetention,
 		"attachmentRetention": policy.AttachmentRetention,
-		"relayReceipts":       policy.RelayReceipts,
+		"relayReceipts":       policy.SignalProtocolRelayReceipts,
 	}
 }
 
@@ -296,7 +296,7 @@ type pusher struct {
 	variable  string
 	access    credential.Credential
 	project   control.Project
-	policies  map[string]control.RelayPolicyRequest
+	policies  map[string]control.SignalProtocolRelayPolicyRequest
 	// identity holds the identity options when the config declares identity
 	// for an environment of the run, and is nil otherwise.
 	identity *identityCommandOptions
@@ -337,7 +337,7 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 			return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "A config push that declares identity takes no OE_OPERATION_ID. Read an identity operation by its operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
 		}
 	}
-	policies := map[string]control.RelayPolicyRequest{}
+	policies := map[string]control.SignalProtocolRelayPolicyRequest{}
 	for _, environment := range environments {
 		if policies[environment], err = controlPolicy(value, environment); err != nil {
 			return err
@@ -611,10 +611,10 @@ func (p *pusher) apply(ctx context.Context, plan control.Plan, environment strin
 	if environment != "production" {
 		return deployment, nil
 	}
-	if deployment.RelayURL == "" {
-		return control.Deployment{}, errors.New("control API returned an incomplete production Relay connection")
+	if deployment.SignalProtocolRelayURL == "" {
+		return control.Deployment{}, errors.New("control API returned an incomplete production OpenE2EE Signal Protocol Relay connection")
 	}
-	if err := writeRelayEnvironment(p.directory, environmentFiles["production"], p.variable, deployment.RelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(p.directory, environmentFiles["production"], p.variable, deployment.SignalProtocolRelayURL); err != nil {
 		return control.Deployment{}, err
 	}
 	p.wrote = true

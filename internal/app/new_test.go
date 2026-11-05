@@ -86,7 +86,7 @@ func (s *newControl) calls() ([]string, []string, []map[string]any) {
 // created answers a new project with its Sandbox environment.
 func created(call int, body map[string]any) (int, string) {
 	return http.StatusOK, fmt.Sprintf(`{"created":true,"project":%q,"writer":"config","revision":"1","environment":"sandbox","sandboxRelayUrl":%q}`,
-		body["project"], sandboxRelayURL)
+		body["project"], sandboxSignalProtocolRelayURL)
 }
 
 // never fails the test when oe new calls the control API.
@@ -175,7 +175,7 @@ func TestNewCreatesSandboxAndWritesTheFiles(t *testing.T) {
 	if !strings.Contains(configSource, `project: "acme-chat"`) || !strings.Contains(configSource, "sandbox: {") || strings.Contains(configSource, "production") {
 		t.Fatalf("oe new wrote the wrong config:\n%s", configSource)
 	}
-	if env := string(mustRead(t, filepath.Join(directory, ".env.local"))); !strings.HasSuffix(env, "\nOPEN_E2EE_RELAY_URL="+sandboxRelayURL+"\n") {
+	if env := string(mustRead(t, filepath.Join(directory, ".env.local"))); !strings.HasSuffix(env, "\nOPEN_E2EE_RELAY_URL="+sandboxSignalProtocolRelayURL+"\n") {
 		t.Fatalf("oe new wrote the wrong .env.local: %q", env)
 	}
 	ignored := string(mustRead(t, filepath.Join(directory, ".gitignore")))
@@ -440,7 +440,7 @@ func TestNewNeverPrintsTheConnectionURL(t *testing.T) {
 		if strings.Contains(stdout+stderr, "pk_sandbox_public") || strings.Contains(stdout+stderr, "relay.open-e2ee.dev") {
 			t.Fatalf("oe new %v printed the Relay connection URL: %q %q", mode, stdout, stderr)
 		}
-		if !strings.Contains(string(mustRead(t, filepath.Join(directory, ".env.local"))), sandboxRelayURL) {
+		if !strings.Contains(string(mustRead(t, filepath.Join(directory, ".env.local"))), sandboxSignalProtocolRelayURL) {
 			t.Fatalf("oe new %v did not write the Relay connection URL", mode)
 		}
 	}
@@ -471,9 +471,9 @@ func TestNewAddsTheDevDependencyAndTheWrittenConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the written config does not load: %v", err)
 	}
-	policy, err := loaded.RelayPolicyFor("sandbox")
+	policy, err := loaded.SignalProtocolRelayPolicyFor("sandbox")
 	if err != nil || loaded.Project != "dep-chat" || loaded.Product != "signal-relay" || loaded.Environments.Production != nil ||
-		policy != (config.RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d", RelayReceipts: true}) {
+		policy != (config.SignalProtocolRelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d", SignalProtocolRelayReceipts: true}) {
 		t.Fatalf("the written config loaded as %+v %+v %v", loaded, policy, err)
 	}
 

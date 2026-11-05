@@ -23,9 +23,9 @@ import (
 
 const binaryIdentityKey = `{"kty":"EC","crv":"P-256","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","y":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","kid":"owned-key"}`
 const binaryIdentityProfile = `{"mode":"custom-token","algorithms":["ES256"],"issuer":"https://members.example","audience":"members","subjectClaim":"sub","keys":[` + binaryIdentityKey + `]}`
-const binaryIdentityScope = `{"environmentId":"owned_env","environmentKind":"sandbox","projectId":"owned_project","protocolProfile":"signal","relayScopeId":"owned_relay"}`
+const binaryIdentityScope = `{"environmentId":"owned_env","environmentKind":"sandbox","projectId":"owned_project","protocolProfile":"signal","relayScopeId":"owned_signal_relay"}`
 const binaryIdentityFingerprint = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-const binaryIdentityComplete = `{"configurationVersion":1,"admissionRevision":0,"verificationPolicyFingerprint":"` + binaryIdentityFingerprint + `","identityProfile":` + binaryIdentityProfile + `,"inventory":{"everAdmitted":false,"bindingCount":0,"historyCount":0,"pendingOperationId":null},"identityRecovery":null,"identityMigration":null,"mixedModeMigration":{"available":false},"selection":null,"providerValidation":{"state":"not_checked"},"applicationIntegration":{"state":"unverified"},"admissionReadiness":{"relayScopeId":"owned_relay","evidence":{"state":"current","checkedAtSeconds":0},"state":"ready","sourceGeneration":{"kind":"provision","admissionRevision":0,"policyFingerprint":"` + binaryIdentityFingerprint + `"},"reason":null},"selectionOperation":null}`
+const binaryIdentityComplete = `{"configurationVersion":1,"admissionRevision":0,"verificationPolicyFingerprint":"` + binaryIdentityFingerprint + `","identityProfile":` + binaryIdentityProfile + `,"inventory":{"everAdmitted":false,"bindingCount":0,"historyCount":0,"pendingOperationId":null},"identityRecovery":null,"identityMigration":null,"mixedModeMigration":{"available":false},"selection":null,"providerValidation":{"state":"not_checked"},"applicationIntegration":{"state":"unverified"},"admissionReadiness":{"relayScopeId":"owned_signal_relay","evidence":{"state":"current","checkedAtSeconds":0},"state":"ready","sourceGeneration":{"kind":"provision","admissionRevision":0,"policyFingerprint":"` + binaryIdentityFingerprint + `"},"reason":null},"selectionOperation":null}`
 const binaryIdentityCurrent = `{"configuration":` + binaryIdentityComplete + `,"precondition":{"publishableKey":"pk_owned","recoveryGeneration":1,"scope":` + binaryIdentityScope + `}}`
 
 // The binary embeds its config loader and schema. These loopback reads do not
@@ -74,9 +74,9 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 			projectWriter := writer
 			mutex.Unlock()
 			_ = json.NewEncoder(w).Encode(control.Project{Slug: "loaded-chat", Writer: projectWriter,
-				Sandbox: &control.ProjectEnvironment{State: "active", Revision: "1", RelayReceipts: &receipts,
+				Sandbox: &control.ProjectEnvironment{State: "active", Revision: "1", SignalProtocolRelayReceipts: &receipts,
 					DeliveryRetentionSeconds: 86400, AttachmentRetentionSeconds: 86400,
-					RelayURL: "https://relay.example/signal/v1/connection/pk_owned"}})
+					SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_owned"}})
 		case "/v1/projects/loaded-chat/deploys/plan":
 			_ = json.NewEncoder(w).Encode(control.Plan{ID: "owned_plan", ProjectSlug: "loaded-chat", Environment: "sandbox", ExpectedRevision: "1", Changes: []control.Change{}})
 		case "/v1/projects/loaded-chat/identity":

@@ -47,11 +47,11 @@ const identityLifecycleHelp = "For normal key rotation, add the new public key w
 	"Use oe identity lifecycle activate for a new change, subject to current authority guards. " +
 	"Use oe identity operation resume --operation-id ID to continue the same lifecycle change. Permanently revoked devices stay revoked.\n\n" +
 	"Previously issued anonymous capabilities, attachment URLs, sender certificates and group tokens keep their independent expiry and policy. " +
-	"Relay cannot recall downloaded or decrypted content. Provider sign-in cannot recover a lost device-owned account key. " +
+	"OpenE2EE Signal Protocol Relay cannot recall downloaded or decrypted content. Provider sign-in cannot recover a lost device-owned account key. " +
 	"See https://docs.open-e2ee.dev/relay for the key rotation and account lifecycle procedures."
 
 var commandSurface = []commandSpec{
-	{"new", "Create a project and its Sandbox environment, then write open-e2ee.config.ts, the Relay connection in .env.local, and the @open-e2ee/oe devDependency.", []string{
+	{"new", "Create a project and its Sandbox environment, then write open-e2ee.config.ts, the OpenE2EE Signal Protocol Relay connection in .env.local, and the @open-e2ee/oe devDependency.", []string{
 		"oe new [signal-relay] [--project SLUG] [--name NAME] [--env-var NAME] [--dry-run]",
 	}},
 	{"auth", "Log in with a browser and store the session in the OS keychain, then accept the OpenE2EE terms for the organization. --organization ORG puts the session in that organization. Without it, a person at a terminal who belongs to more than one organization chooses one. In an app directory with no config, a person at a terminal then creates a project, links one, or skips. Show the session and its organizations, or remove the session.", []string{
@@ -64,7 +64,7 @@ var commandSurface = []commandSpec{
 		"oe org list",
 		"oe org switch [ORG]",
 	}},
-	{"doctor", "Check the config, session, project, and Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
+	{"doctor", "Check the config, session, project, and OpenE2EE Signal Protocol Relay connection of the selected environment. With --wait, then wait for the first acknowledged Sandbox message.", []string{
 		"oe doctor [--env sandbox|production] [--wait] [--timeout DURATION]",
 	}},
 	{"identity", "Check a public draft identity profile. External ES256 checks send a fresh registration assertion from stdin to the authenticated Console verifier. The assertion is transient. Device-owned checks use no assertion. Results are historical and do not verify installed configuration, device admission, member binding, exchange or lifecycle. Current and dry-run read installed authority. The server holds each selection, keys rotation and lifecycle operation. Status reads an operation by its ID, or the current operation without one. Lifecycle status without an ID needs --target-stdin. Production changes need explicit consent.\n\n" + identityLifecycleHelp, []string{
@@ -79,16 +79,16 @@ var commandSurface = []commandSpec{
 		"oe identity operation resume --kind lifecycle --operation-id ID [--yes] [--env sandbox|production]",
 		"oe identity operation cancel --kind selection|keys-only --operation-id ID [--yes] [--env sandbox|production]",
 	}},
-	{"link", "Link this directory to a Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
+	{"link", "Link this directory to an OpenE2EE Signal Protocol Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
 	}},
-	{"project", "Show the linked Relay project, list the projects of the organization of the session, show usage, or print a Relay connection URL.", []string{
+	{"project", "Show the linked OpenE2EE Signal Protocol Relay project, list the projects of the organization of the session, show usage, or print a Relay connection URL.", []string{
 		"oe project list",
 		"oe project show [PROJECT] [--env sandbox|production]",
 		"oe project usage [PROJECT] [--env sandbox|production]",
 		"oe project connection [PROJECT] [--env sandbox|production]",
 	}},
-	{"config", "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing. Optional identity fields apply only to their environment. Pull --identity adds those fields explicitly. Inactive Production activates before a later identity preview.", []string{
+	{"config", "Keep open-e2ee.config.ts and the console in step. push applies the environment sections: Sandbox, then Production when the file has its section. pull writes the OpenE2EE Signal Protocol Relay policy of each active environment into the file with the fewest changes. A Production change or a replaced value needs --yes or a person's answer. --dry-run changes nothing. Optional identity fields apply only to their environment. Pull --identity adds those fields explicitly. Inactive Production activates before a later identity preview.", []string{
 		"oe config push [--env sandbox|production] [--yes] [--dry-run]",
 		"oe config pull [--identity] [--env sandbox|production] [--yes] [--dry-run]",
 	}},

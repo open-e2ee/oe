@@ -60,22 +60,22 @@ type Token struct {
 // BootstrapRequest creates the project with its Sandbox environment when the
 // organization has no project with the slug. Name is the display name.
 type BootstrapRequest struct {
-	Name        string             `json:"name,omitempty"`
-	Policy      RelayPolicyRequest `json:"policy"`
-	ProjectSlug string             `json:"project"`
-	Writer      string             `json:"writer"`
+	Name        string                           `json:"name,omitempty"`
+	Policy      SignalProtocolRelayPolicyRequest `json:"policy"`
+	ProjectSlug string                           `json:"project"`
+	Writer      string                           `json:"writer"`
 }
 
 // Bootstrap is the answer to a BootstrapRequest. Created is false when the
 // project existed, and then the answer holds no Sandbox connection.
 type Bootstrap struct {
-	Created         bool   `json:"created"`
-	ProjectID       string `json:"projectId"`
-	ProjectSlug     string `json:"project"`
-	Writer          string `json:"writer"`
-	Revision        string `json:"revision"`
-	SandboxRelayURL string `json:"sandboxRelayUrl"`
-	Environment     string `json:"environment"`
+	Created                       bool   `json:"created"`
+	ProjectID                     string `json:"projectId"`
+	ProjectSlug                   string `json:"project"`
+	Writer                        string `json:"writer"`
+	Revision                      string `json:"revision"`
+	SandboxSignalProtocolRelayURL string `json:"sandboxRelayUrl"`
+	Environment                   string `json:"environment"`
 }
 
 type Activation struct {
@@ -84,20 +84,20 @@ type Activation struct {
 }
 
 type PlanRequest struct {
-	Environment string             `json:"environment"`
-	Policy      RelayPolicyRequest `json:"policy"`
-	ProjectSlug string             `json:"project"`
-	Writer      string             `json:"writer"`
+	Environment string                           `json:"environment"`
+	Policy      SignalProtocolRelayPolicyRequest `json:"policy"`
+	ProjectSlug string                           `json:"project"`
+	Writer      string                           `json:"writer"`
 }
 
-// RelayPolicyRequest is the Relay policy of a plan or a deploy. The control
+// SignalProtocolRelayPolicyRequest is the Relay policy of a plan or a deploy. The control
 // API owns the wire name deliveryTtlSeconds. The CLI calls the same value
-// delivery retention, as the config does. RelayReceipts turns Relay delivery
+// delivery retention, as the config does. SignalProtocolRelayReceipts turns Relay delivery
 // receipts on or off.
-type RelayPolicyRequest struct {
-	AttachmentRetentionSeconds int  `json:"attachmentRetentionSeconds"`
-	DeliveryRetentionSeconds   int  `json:"deliveryTtlSeconds"`
-	RelayReceipts              bool `json:"relayReceipts"`
+type SignalProtocolRelayPolicyRequest struct {
+	AttachmentRetentionSeconds  int  `json:"attachmentRetentionSeconds"`
+	DeliveryRetentionSeconds    int  `json:"deliveryTtlSeconds"`
+	SignalProtocolRelayReceipts bool `json:"relayReceipts"`
 }
 
 type Change struct {
@@ -118,19 +118,19 @@ type Plan struct {
 
 // DeployRequest applies a plan to the environment that the plan names.
 type DeployRequest struct {
-	Environment      string             `json:"environment"`
-	ExpectedRevision string             `json:"expectedRevision"`
-	PlanID           string             `json:"planId"`
-	Policy           RelayPolicyRequest `json:"policy"`
-	ProjectSlug      string             `json:"project"`
-	Writer           string             `json:"writer"`
+	Environment      string                           `json:"environment"`
+	ExpectedRevision string                           `json:"expectedRevision"`
+	PlanID           string                           `json:"planId"`
+	Policy           SignalProtocolRelayPolicyRequest `json:"policy"`
+	ProjectSlug      string                           `json:"project"`
+	Writer           string                           `json:"writer"`
 }
 
 type Deployment struct {
-	ID       string `json:"id"`
-	Revision string `json:"revision"`
-	Status   string `json:"status"`
-	RelayURL string `json:"relayUrl"`
+	ID                     string `json:"id"`
+	Revision               string `json:"revision"`
+	Status                 string `json:"status"`
+	SignalProtocolRelayURL string `json:"relayUrl"`
 }
 
 type Project struct {
@@ -153,10 +153,10 @@ type Usage struct {
 }
 
 type UsageReported struct {
-	DeliveryUnits        *string `json:"deliveryUnits"`
-	AttachmentOperations *string `json:"attachmentOperations"`
-	RelayMAU             *string `json:"relayMau"`
-	LiveBytes            string  `json:"liveBytes"`
+	DeliveryUnits          *string `json:"deliveryUnits"`
+	AttachmentOperations   *string `json:"attachmentOperations"`
+	SignalProtocolRelayMAU *string `json:"relayMau"`
+	LiveBytes              string  `json:"liveBytes"`
 }
 
 type UsageCoverage struct {
@@ -166,28 +166,28 @@ type UsageCoverage struct {
 }
 
 type UsageLimits struct {
-	DeliveryUnits        int `json:"deliveryUnits"`
-	AttachmentOperations int `json:"attachmentOperations"`
-	RelayMAU             int `json:"relayMau"`
-	StorageBytes         int `json:"storageBytes"`
+	DeliveryUnits          int `json:"deliveryUnits"`
+	AttachmentOperations   int `json:"attachmentOperations"`
+	SignalProtocolRelayMAU int `json:"relayMau"`
+	StorageBytes           int `json:"storageBytes"`
 }
 
 // ProjectEnvironment is one environment of a project read. The Production
 // read is always present: State is "active", "available", or "inactive", and
 // BlockedBy names the first gate that stops activation. CanActivate and
 // CardOnFile are set on Production only. Only an active environment has a
-// RelayURL and the policy fields. RelayReceipts is nil when the read does
+// SignalProtocolRelayURL and the policy fields. SignalProtocolRelayReceipts is nil when the read does
 // not give it.
 type ProjectEnvironment struct {
-	AttachmentRetentionSeconds int    `json:"attachmentRetentionSeconds"`
-	DeliveryRetentionSeconds   int    `json:"deliveryTtlSeconds"`
-	RelayReceipts              *bool  `json:"relayReceipts,omitempty"`
-	RelayURL                   string `json:"relayUrl"`
-	Revision                   string `json:"revision"`
-	State                      string `json:"state,omitempty"`
-	BlockedBy                  string `json:"blockedBy,omitempty"`
-	CanActivate                bool   `json:"canActivate,omitempty"`
-	CardOnFile                 bool   `json:"cardOnFile,omitempty"`
+	AttachmentRetentionSeconds  int    `json:"attachmentRetentionSeconds"`
+	DeliveryRetentionSeconds    int    `json:"deliveryTtlSeconds"`
+	SignalProtocolRelayReceipts *bool  `json:"relayReceipts,omitempty"`
+	SignalProtocolRelayURL      string `json:"relayUrl"`
+	Revision                    string `json:"revision"`
+	State                       string `json:"state,omitempty"`
+	BlockedBy                   string `json:"blockedBy,omitempty"`
+	CanActivate                 bool   `json:"canActivate,omitempty"`
+	CardOnFile                  bool   `json:"cardOnFile,omitempty"`
 }
 
 // Production states and the gates that stop an activation, in the order that

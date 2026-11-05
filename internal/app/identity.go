@@ -88,7 +88,7 @@ func identityCommandFailure(err error) error {
 		case "ORGANIZATION_REQUIRED":
 			code, message, next = failure.Code, "Choose an Organization with oe org switch.", "oe org switch"
 		case "PROJECT_NOT_FOUND", "ENVIRONMENT_NOT_FOUND":
-			code, message = failure.Code, "The addressed Relay resource is unavailable."
+			code, message = failure.Code, "The addressed OpenE2EE Signal Protocol Relay resource is unavailable."
 		case "IDENTITY_CHECK_INVALID", "IDENTITY_PROFILE_UNSUPPORTED", "IDENTITY_ASSERTION_INVALID":
 			code, message = failure.Code, "The draft identity check was refused. Check the public profile and use a fresh external assertion."
 		case "IMPERSONATED_SESSION":

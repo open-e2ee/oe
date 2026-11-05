@@ -11,8 +11,9 @@ and `oe config push` to apply the environment sections of the config.
 
 `open-e2ee.config.ts` imports `defineConfig` and the config types from
 `@open-e2ee/oe/config`. `oe` reads the file with Node.js 22.18 or later, and
-the file loads without `node_modules`. Run `oe config pull` to write the Relay
-policy of each active environment from the console into the file.
+the file loads without `node_modules`. Run `oe config pull` to write the
+OpenE2EE Signal Protocol Relay policy of each active environment from the
+console into the file.
 
 Run `oe help` for short command descriptions, exit codes, and environment
 variables. Run `oe help COMMAND` for scoped usage and flags. Under a coding

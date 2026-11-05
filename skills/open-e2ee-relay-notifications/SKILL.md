@@ -1,9 +1,9 @@
 ---
 name: open-e2ee-relay-notifications
-description: Use this skill to set up and verify iOS notification profiles for an OpenE2EE Relay project with the oe notifications commands. It covers background wakes, visible alerts, the Notification Service Extension, and the Apple filtering request. Use it when a person asks to add push notifications to an iOS, Expo, or React Native app that uses the Relay.
+description: Use this skill to set up and verify iOS notification profiles for an OpenE2EE Signal Protocol Relay project with the oe notifications commands. It covers background wakes, visible alerts, the Notification Service Extension, and the Apple filtering request. Use it when a person asks to add push notifications to an iOS, Expo, or React Native app that uses the Relay.
 ---
 
-# OpenE2EE Relay notifications
+# OpenE2EE Signal Protocol Relay notifications
 
 A push is a best-effort wake. The Relay mailbox is the delivery authority.
 The app gets each message with an authenticated pull and acknowledges it.

@@ -1,9 +1,9 @@
 ---
 name: open-e2ee-relay-production
-description: Use this skill to activate or change the Production environment of an OpenE2EE Relay project with the oe CLI. It covers the Production section of open-e2ee.config.ts, oe config push --dry-run, and oe config push --yes. Use it when a person asks to go to Production, or when the oe CLI returns CARD_REQUIRED, BILLING_PERMISSION_REQUIRED, FREE_PROJECT_LIMIT, FREE_PAYMENT_METHOD_LIMIT, or TERMS_REQUIRED for a push.
+description: Use this skill to activate or change the Production environment of an OpenE2EE Signal Protocol Relay project with the oe CLI. It covers the Production section of open-e2ee.config.ts, oe config push --dry-run, and oe config push --yes. Use it when a person asks to go to Production, or when the oe CLI returns CARD_REQUIRED, BILLING_PERMISSION_REQUIRED, FREE_PROJECT_LIMIT, FREE_PAYMENT_METHOD_LIMIT, or TERMS_REQUIRED for a push.
 ---
 
-# OpenE2EE Relay Production
+# OpenE2EE Signal Protocol Relay Production
 
 A project has a Sandbox environment from `oe new`. Production joins the
 project only when `open-e2ee.config.ts` has a Production section. The first

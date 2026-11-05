@@ -143,11 +143,11 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 	if linked.Product != "signal-relay" || linked.Project != "chat-demo" || linked.Environments.Production == nil {
 		t.Fatalf("oe link wrote the wrong attachment: %#v", linked)
 	}
-	for environment, expected := range map[string]config.RelayPolicy{
-		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d", RelayReceipts: true},
-		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d", RelayReceipts: false},
+	for environment, expected := range map[string]config.SignalProtocolRelayPolicy{
+		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d", SignalProtocolRelayReceipts: true},
+		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d", SignalProtocolRelayReceipts: false},
 	} {
-		if policy, err := linked.RelayPolicyFor(environment); err != nil || policy != expected {
+		if policy, err := linked.SignalProtocolRelayPolicyFor(environment); err != nil || policy != expected {
 			t.Fatalf("the %s policy is %#v (%v), want the server policy %#v", environment, policy, err, expected)
 		}
 	}
@@ -186,7 +186,7 @@ func TestLinkAttachesPullsAndWritesEnvFiles(t *testing.T) {
 	if linked.Environments.Production != nil {
 		t.Fatalf("oe link added a Production section for an inactive Production: %#v", linked)
 	}
-	if policy, err := linked.RelayPolicyFor("sandbox"); err != nil || policy != (config.RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d", RelayReceipts: true}) {
+	if policy, err := linked.SignalProtocolRelayPolicyFor("sandbox"); err != nil || policy != (config.SignalProtocolRelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "1d", SignalProtocolRelayReceipts: true}) {
 		t.Fatalf("the sandbox policy is %#v (%v)", policy, err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, ".env.production.local")); !os.IsNotExist(err) {
@@ -247,7 +247,7 @@ func TestLinkWithoutArgumentRewritesOnlyTheEnvFiles(t *testing.T) {
 	directory := initializedProject(t, "chat-demo")
 	path := filepath.Join(directory, config.Filename)
 	source := mustRead(t, path)
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/stale"); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/stale"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -287,10 +287,10 @@ func TestLinkToAnotherProjectNeedsYes(t *testing.T) {
 	path := filepath.Join(directory, config.Filename)
 	oldSandbox := "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/old-sandbox"
 	oldProduction := "https://relay.open-e2ee.dev/signal/v1/connection/old-production"
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, oldSandbox); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, oldSandbox); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeRelayEnvironment(directory, ".env.production.local", envfile.DefaultVariable, oldProduction); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.production.local", envfile.DefaultVariable, oldProduction); err != nil {
 		t.Fatal(err)
 	}
 	source := mustRead(t, path)
@@ -338,17 +338,17 @@ func TestLinkToAnotherProjectNeedsYes(t *testing.T) {
 	if linked.Project != "new-chat" {
 		t.Fatalf("oe link --yes did not change the project: %#v", linked)
 	}
-	for environment, expected := range map[string]config.RelayPolicy{
-		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d", RelayReceipts: true},
-		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d", RelayReceipts: false},
+	for environment, expected := range map[string]config.SignalProtocolRelayPolicy{
+		"sandbox":    {DeliveryRetention: "3d", AttachmentRetention: "1d", SignalProtocolRelayReceipts: true},
+		"production": {DeliveryRetention: "7d", AttachmentRetention: "30d", SignalProtocolRelayReceipts: false},
 	} {
-		if policy, err := linked.RelayPolicyFor(environment); err != nil || policy != expected {
+		if policy, err := linked.SignalProtocolRelayPolicyFor(environment); err != nil || policy != expected {
 			t.Fatalf("the %s policy is %#v (%v), want the server policy %#v", environment, policy, err, expected)
 		}
 	}
 	// The pull changes only the values that differ: the shared policy stays.
-	if linked.Relay != (config.RelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "30d", RelayReceipts: true}) {
-		t.Fatalf("the pull changed the shared policy: %#v", linked.Relay)
+	if linked.SignalProtocolRelay != (config.SignalProtocolRelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "30d", SignalProtocolRelayReceipts: true}) {
+		t.Fatalf("the pull changed the shared policy: %#v", linked.SignalProtocolRelay)
 	}
 	for filename, expected := range map[string]string{".env.local": linkSandboxURL, ".env.production.local": linkProductionURL} {
 		contents := string(mustRead(t, filepath.Join(directory, filename)))
@@ -536,7 +536,7 @@ func TestProjectListEmptyNamesOrgSwitchForMoreThanOneOrganization(t *testing.T) 
 func TestLinkPickerWithNoProjectNamesOrgSwitch(t *testing.T) {
 	dependencies := Dependencies{API: projectListAPI(nil, 2), Store: readSession(t), Interactive: terminal, In: unreadable{t}}
 	exit, _, stderr := run(t, dependencies, "--agent", "no", "link")
-	if exit != exitUsage || !strings.Contains(stderr, "no Relay project in the organization of the session") || !strings.Contains(stderr, "next: oe org switch") {
+	if exit != exitUsage || !strings.Contains(stderr, "no OpenE2EE Signal Protocol Relay project in the organization of the session") || !strings.Contains(stderr, "next: oe org switch") {
 		t.Fatalf("the empty picker: exit=%d %q", exit, stderr)
 	}
 }

@@ -41,7 +41,7 @@ func configIdentityValue(t *testing.T, wire string) map[string]any {
 func completeConfigIdentity(t *testing.T, profile string) identity.CompleteConfiguration {
 	t.Helper()
 	fingerprint := strings.Repeat("A", 43)
-	return configIdentityFixture[identity.CompleteConfiguration](t, `{"configurationVersion":1,"admissionRevision":0,"verificationPolicyFingerprint":"`+fingerprint+`","identityProfile":`+profile+`,"inventory":{"everAdmitted":false,"bindingCount":0,"historyCount":0,"pendingOperationId":null},"identityRecovery":null,"identityMigration":null,"mixedModeMigration":{"available":false},"selection":null,"providerValidation":{"state":"not_checked"},"applicationIntegration":{"state":"unverified"},"admissionReadiness":{"relayScopeId":"relay_scope","evidence":{"state":"current","checkedAtSeconds":0},"state":"ready","sourceGeneration":{"kind":"provision","admissionRevision":0,"policyFingerprint":"`+fingerprint+`"},"reason":null},"selectionOperation":null}`)
+	return configIdentityFixture[identity.CompleteConfiguration](t, `{"configurationVersion":1,"admissionRevision":0,"verificationPolicyFingerprint":"`+fingerprint+`","identityProfile":`+profile+`,"inventory":{"everAdmitted":false,"bindingCount":0,"historyCount":0,"pendingOperationId":null},"identityRecovery":null,"identityMigration":null,"mixedModeMigration":{"available":false},"selection":null,"providerValidation":{"state":"not_checked"},"applicationIntegration":{"state":"unverified"},"admissionReadiness":{"relayScopeId":"signal_relay_scope","evidence":{"state":"current","checkedAtSeconds":0},"state":"ready","sourceGeneration":{"kind":"provision","admissionRevision":0,"policyFingerprint":"`+fingerprint+`"},"reason":null},"selectionOperation":null}`)
 }
 
 func TestPublicIdentityConfigQualifiedVariantsLoadAndRoundTrip(t *testing.T) {
@@ -149,10 +149,10 @@ func TestPublicIdentitySchemaErrorsKeepOnlyTheEnvironmentIdentityPath(t *testing
 	}
 }
 
-func TestPublicIdentityAbsenceAndRelayDefaultsRemainExact(t *testing.T) {
+func TestPublicIdentityAbsenceAndSignalProtocolRelayDefaultsRemainExact(t *testing.T) {
 	raw := configIdentityFixture[map[string]any](t, `{"product":"signal-relay","project":"typed-chat","relay":{"deliveryRetention":"7d","attachmentRetention":"7d"},"environments":{"sandbox":{}}}`)
 	value, err := validate(raw)
-	if err != nil || !value.Relay.RelayReceipts {
+	if err != nil || !value.SignalProtocolRelay.SignalProtocolRelayReceipts {
 		t.Fatal("old defaults changed", err)
 	}
 	target, err := value.IdentityFor("sandbox")

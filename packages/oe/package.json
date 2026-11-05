@@ -10,7 +10,7 @@
     "signal-protocol",
     "cli",
     "command-line",
-    "relay",
+    "signal-protocol-relay",
     "developer-tools",
     "typescript",
     "nodejs"

@@ -18,14 +18,14 @@ func TestCommandAliasesUseCanonicalResults(t *testing.T) {
 		Store: store, WorkingDir: initializedProject(t, "local-chat"),
 		API: &fakeAPI{
 			getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
-				return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxRelayURL, "1"), Production: projectEnvironment(productionRelayURL, "2")}, nil
+				return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1"), Production: projectEnvironment(productionSignalProtocolRelayURL, "2")}, nil
 			},
 			listProjects: func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error) {
 				return []control.ProjectSummary{{Slug: "local-chat"}}, nil
 			},
 			projectUsage: func(_ context.Context, _ control.CredentialRequest, slug, environment string) (control.Usage, error) {
 				return control.Usage{Project: slug, Environment: environment, Period: "2026-10", Status: "no_usage", Reported: &control.UsageReported{
-					DeliveryUnits: &zero, AttachmentOperations: &zero, RelayMAU: &zero, LiveBytes: "0",
+					DeliveryUnits: &zero, AttachmentOperations: &zero, SignalProtocolRelayMAU: &zero, LiveBytes: "0",
 				}}, nil
 			},
 			session: func(context.Context, control.CredentialRequest) (control.Session, error) {

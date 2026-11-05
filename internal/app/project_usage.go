@@ -18,7 +18,7 @@ func (r *runner) projectUsage(ctx context.Context, slug string) error {
 		return err
 	}
 	environment := environmentOf(project, r.environment)
-	if environment == nil || environment.RelayURL == "" {
+	if environment == nil || environment.SignalProtocolRelayURL == "" {
 		return r.environmentNotActive(project.Slug, project.Writer, r.environment)
 	}
 	usage, err := r.api.ProjectUsage(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, project.Slug, r.environment)
@@ -50,14 +50,14 @@ func (r *runner) usageUnavailable(slug string) error {
 	return &problem{
 		code: "USAGE_UNAVAILABLE", exit: exitTemporary, next: command,
 		data:    map[string]any{"project": slug, "environment": r.environment},
-		message: "Relay usage reporting is unavailable; no usage value can be confirmed",
+		message: "OpenE2EE Signal Protocol Relay usage reporting is unavailable; no usage value can be confirmed",
 	}
 }
 
 func usageIsZero(reported control.UsageReported) bool {
 	return reported.DeliveryUnits != nil && *reported.DeliveryUnits == "0" &&
 		reported.AttachmentOperations != nil && *reported.AttachmentOperations == "0" &&
-		reported.RelayMAU != nil && *reported.RelayMAU == "0" && reported.LiveBytes == "0"
+		reported.SignalProtocolRelayMAU != nil && *reported.SignalProtocolRelayMAU == "0" && reported.LiveBytes == "0"
 }
 
 func usageText(usage control.Usage) string {
@@ -74,7 +74,7 @@ func usageText(usage control.Usage) string {
 	if usage.Reported != nil {
 		fmt.Fprintf(&text, "Delivery units: %s\nAttachment operations: %s\nRelay MAU: %s\nLive bytes: %s",
 			usageFigure(usage.Reported.DeliveryUnits), usageFigure(usage.Reported.AttachmentOperations),
-			usageFigure(usage.Reported.RelayMAU), usage.Reported.LiveBytes)
+			usageFigure(usage.Reported.SignalProtocolRelayMAU), usage.Reported.LiveBytes)
 	}
 	return text.String()
 }

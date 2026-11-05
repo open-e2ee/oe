@@ -3,15 +3,15 @@ package identity
 import "slices"
 
 type Scope struct {
-	EnvironmentID   ContractText `json:"environmentId"`
-	EnvironmentKind string       `json:"environmentKind"`
-	ProjectID       ContractText `json:"projectId"`
-	ProtocolProfile string       `json:"protocolProfile"`
-	RelayScopeID    ContractText `json:"relayScopeId"`
+	EnvironmentID              ContractText `json:"environmentId"`
+	EnvironmentKind            string       `json:"environmentKind"`
+	ProjectID                  ContractText `json:"projectId"`
+	ProtocolProfile            string       `json:"protocolProfile"`
+	SignalProtocolRelayScopeID ContractText `json:"relayScopeId"`
 }
 
 func (v Scope) Validate() error {
-	if !textBound(v.EnvironmentID, 1, 256) || !textBound(v.ProjectID, 1, 256) || !textBound(v.RelayScopeID, 1, 256) || !slices.Contains([]string{"sandbox", "production"}, v.EnvironmentKind) || v.ProtocolProfile != "signal" {
+	if !textBound(v.EnvironmentID, 1, 256) || !textBound(v.ProjectID, 1, 256) || !textBound(v.SignalProtocolRelayScopeID, 1, 256) || !slices.Contains([]string{"sandbox", "production"}, v.EnvironmentKind) || v.ProtocolProfile != "signal" {
 		return ErrIdentityValue
 	}
 	return nil
@@ -24,7 +24,7 @@ type Precondition struct {
 }
 
 func (v Precondition) Validate() error {
-	if v.Scope.Validate() != nil || !matches(`^[A-Za-z0-9_-]{1,255}$`, v.PublishableKey) || !asciiText(v.Scope.RelayScopeID, `^[A-Za-z0-9_-]{1,255}$`) || !positive(v.RecoveryGeneration) {
+	if v.Scope.Validate() != nil || !matches(`^[A-Za-z0-9_-]{1,255}$`, v.PublishableKey) || !asciiText(v.Scope.SignalProtocolRelayScopeID, `^[A-Za-z0-9_-]{1,255}$`) || !positive(v.RecoveryGeneration) {
 		return ErrIdentityValue
 	}
 	return nil
@@ -165,15 +165,15 @@ func (v ReadinessEvidence) Validate() error {
 }
 
 type AdmissionReadiness struct {
-	RelayScopeID     ContractText         `json:"relayScopeId"`
-	Evidence         ReadinessEvidence    `json:"evidence"`
-	State            string               `json:"state"`
-	SourceGeneration *ReadinessGeneration `json:"sourceGeneration" nullable:"true"`
-	Reason           *string              `json:"reason" nullable:"true"`
+	SignalProtocolRelayScopeID ContractText         `json:"relayScopeId"`
+	Evidence                   ReadinessEvidence    `json:"evidence"`
+	State                      string               `json:"state"`
+	SourceGeneration           *ReadinessGeneration `json:"sourceGeneration" nullable:"true"`
+	Reason                     *string              `json:"reason" nullable:"true"`
 }
 
 func (v AdmissionReadiness) Validate() error {
-	if !textBound(v.RelayScopeID, 1, 255) || v.Evidence.Validate() != nil || v.SourceGeneration != nil && v.SourceGeneration.Validate() != nil {
+	if !textBound(v.SignalProtocolRelayScopeID, 1, 255) || v.Evidence.Validate() != nil || v.SourceGeneration != nil && v.SourceGeneration.Validate() != nil {
 		return ErrIdentityValue
 	}
 	reason := ""
@@ -284,7 +284,7 @@ type CurrentContext struct {
 }
 
 func (v CurrentContext) Validate() error {
-	if v.Configuration.Validate() != nil || v.Precondition.Validate() != nil || !v.Configuration.AdmissionReadiness.RelayScopeID.Equal(v.Precondition.Scope.RelayScopeID) {
+	if v.Configuration.Validate() != nil || v.Precondition.Validate() != nil || !v.Configuration.AdmissionReadiness.SignalProtocolRelayScopeID.Equal(v.Precondition.Scope.SignalProtocolRelayScopeID) {
 		return ErrIdentityValue
 	}
 	return nil

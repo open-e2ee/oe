@@ -388,29 +388,29 @@ func loginPrompt(authorization control.Authorization) string {
 	return prompt
 }
 
-func controlPolicy(value config.Config, environment string) (control.RelayPolicyRequest, error) {
+func controlPolicy(value config.Config, environment string) (control.SignalProtocolRelayPolicyRequest, error) {
 	if environment == "production" && value.Environments.Production == nil {
-		return control.RelayPolicyRequest{}, &problem{
+		return control.SignalProtocolRelayPolicyRequest{}, &problem{
 			code: "USAGE_ERROR", exit: exitUsage,
 			message: config.Filename + " has no Production section; add production: {} under environments to opt in to Production",
 		}
 	}
-	policy, err := value.RelayPolicyFor(environment)
+	policy, err := value.SignalProtocolRelayPolicyFor(environment)
 	if err != nil {
-		return control.RelayPolicyRequest{}, err
+		return control.SignalProtocolRelayPolicyRequest{}, err
 	}
 	attachment, err := config.RetentionSeconds(policy.AttachmentRetention)
 	if err != nil {
-		return control.RelayPolicyRequest{}, err
+		return control.SignalProtocolRelayPolicyRequest{}, err
 	}
 	delivery, err := config.RetentionSeconds(policy.DeliveryRetention)
 	if err != nil {
-		return control.RelayPolicyRequest{}, err
+		return control.SignalProtocolRelayPolicyRequest{}, err
 	}
-	return control.RelayPolicyRequest{
-		AttachmentRetentionSeconds: attachment,
-		DeliveryRetentionSeconds:   delivery,
-		RelayReceipts:              policy.RelayReceipts,
+	return control.SignalProtocolRelayPolicyRequest{
+		AttachmentRetentionSeconds:  attachment,
+		DeliveryRetentionSeconds:    delivery,
+		SignalProtocolRelayReceipts: policy.SignalProtocolRelayReceipts,
 	}, nil
 }
 
@@ -725,10 +725,10 @@ func slug(value string) string {
 // connection.
 var environmentFiles = map[string]string{"sandbox": ".env.local", "production": ".env.production.local"}
 
-// writeRelayEnvironment writes relayURL to filename in the project directory
+// writeSignalProtocolRelayEnvironment writes signalRelayURL to filename in the project directory
 // under variable, and keeps the file out of version control.
-func writeRelayEnvironment(directory, filename, variable, relayURL string) error {
-	if err := envfile.Write(filepath.Join(directory, filename), variable, relayURL); err != nil {
+func writeSignalProtocolRelayEnvironment(directory, filename, variable, signalRelayURL string) error {
+	if err := envfile.Write(filepath.Join(directory, filename), variable, signalRelayURL); err != nil {
 		return err
 	}
 	return ensureIgnored(directory, filename)

@@ -129,19 +129,19 @@ export default defineConfig({
 		t.Fatal(err)
 	}
 	want := Config{
-		Product: "signal-relay",
-		Project: "secure-chat",
-		Relay:   RelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "7d", RelayReceipts: true},
+		Product:             "signal-relay",
+		Project:             "secure-chat",
+		SignalProtocolRelay: SignalProtocolRelayPolicy{DeliveryRetention: "30d", AttachmentRetention: "7d", SignalProtocolRelayReceipts: true},
 		Environments: Environments{
-			Sandbox:    Environment{Relay: &RelayOverride{DeliveryRetention: "1d"}},
+			Sandbox:    Environment{SignalProtocolRelay: &SignalProtocolRelayOverride{DeliveryRetention: "1d"}},
 			Production: &Environment{},
 		},
 	}
 	if !reflect.DeepEqual(value, want) {
 		t.Fatalf("want %#v, got %#v", want, value)
 	}
-	policy, err := value.RelayPolicyFor("sandbox")
-	if err != nil || policy != (RelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "7d", RelayReceipts: true}) {
+	policy, err := value.SignalProtocolRelayPolicyFor("sandbox")
+	if err != nil || policy != (SignalProtocolRelayPolicy{DeliveryRetention: "1d", AttachmentRetention: "7d", SignalProtocolRelayReceipts: true}) {
 		t.Fatalf("the Sandbox override must merge field by field: %#v, %v", policy, err)
 	}
 }
@@ -206,7 +206,7 @@ export default defineConfig({
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Project != "secure-chat" || value.Relay.DeliveryRetention != "7d" || value.Environments.Sandbox.Relay.AttachmentRetention != "7d" || value.Environments.Production == nil {
+	if value.Project != "secure-chat" || value.SignalProtocolRelay.DeliveryRetention != "7d" || value.Environments.Sandbox.SignalProtocolRelay.AttachmentRetention != "7d" || value.Environments.Production == nil {
 		t.Fatalf("unexpected config: %#v", value)
 	}
 }
@@ -317,7 +317,7 @@ func TestProductionSectionIsOptional(t *testing.T) {
 	if value.Environments.Production != nil {
 		t.Fatalf("no Production section was written: %#v", value.Environments.Production)
 	}
-	if _, err := value.RelayPolicyFor("production"); err == nil || !strings.Contains(err.Error(), "environments.production") {
+	if _, err := value.SignalProtocolRelayPolicyFor("production"); err == nil || !strings.Contains(err.Error(), "environments.production") {
 		t.Fatalf("a missing Production section must be named: %v", err)
 	}
 	withProduction := strings.Replace(sample, "\n  },\n});", "\n    production: {},\n  },\n});", 1)
@@ -325,8 +325,8 @@ func TestProductionSectionIsOptional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := value.RelayPolicyFor("production")
-	if err != nil || policy != value.Relay {
+	policy, err := value.SignalProtocolRelayPolicyFor("production")
+	if err != nil || policy != value.SignalProtocolRelay {
 		t.Fatalf("an empty Production section takes the shared policy: %#v, %v", policy, err)
 	}
 	withoutSandbox := strings.Replace(sample, `      relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, "", 1)
@@ -335,7 +335,7 @@ func TestProductionSectionIsOptional(t *testing.T) {
 	requireFieldError(t, failure, "environments.sandbox", "required")
 }
 
-func TestRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing.T) {
+func TestSignalProtocolRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing.T) {
 	const shared = "    attachmentRetention: \"30d\",\n  },"
 	const sandbox = `relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`
 	const production = "    production: {},\n"
@@ -379,18 +379,18 @@ func TestRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if value.Relay.RelayReceipts != test.shared {
-				t.Fatalf("the shared relayReceipts is %v, want %v", value.Relay.RelayReceipts, test.shared)
+			if value.SignalProtocolRelay.SignalProtocolRelayReceipts != test.shared {
+				t.Fatalf("the shared relayReceipts is %v, want %v", value.SignalProtocolRelay.SignalProtocolRelayReceipts, test.shared)
 			}
 			for environment, want := range map[string]bool{"sandbox": test.sandbox, "production": test.production} {
-				policy, err := value.RelayPolicyFor(environment)
-				if err != nil || policy.RelayReceipts != want {
+				policy, err := value.SignalProtocolRelayPolicyFor(environment)
+				if err != nil || policy.SignalProtocolRelayReceipts != want {
 					t.Fatalf("the %s policy is %#v (%v), want relayReceipts %v", environment, policy, err, want)
 				}
 			}
 		})
 	}
-	if !New("secure-chat").Relay.RelayReceipts {
+	if !New("secure-chat").SignalProtocolRelay.SignalProtocolRelayReceipts {
 		t.Fatal("a new config must turn Relay delivery receipts on")
 	}
 }
@@ -692,8 +692,8 @@ func TestApplyGivesTheValueThatEditWrites(t *testing.T) {
 	if !reflect.DeepEqual(applied, edited) {
 		t.Fatalf("Apply gave %#v, Edit wrote %#v", applied, edited)
 	}
-	if applied.Environments.Production == nil || applied.Environments.Sandbox.Relay.DeliveryRetention != "3d" ||
-		applied.Environments.Production.Relay.RelayReceipts == nil || *applied.Environments.Production.Relay.RelayReceipts {
+	if applied.Environments.Production == nil || applied.Environments.Sandbox.SignalProtocolRelay.DeliveryRetention != "3d" ||
+		applied.Environments.Production.SignalProtocolRelay.SignalProtocolRelayReceipts == nil || *applied.Environments.Production.SignalProtocolRelay.SignalProtocolRelayReceipts {
 		t.Fatalf("Apply did not apply the changes: %#v", applied)
 	}
 }
