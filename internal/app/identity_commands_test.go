@@ -303,9 +303,9 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // consoleIdentityBodyKeys are the strict body key sets of
-// managedRelayCliIdentityPostBodySchema in
-// console/src/shared/managed-relay-cli-identity.ts. Console answers any other
-// key set with 400 IDENTITY_INPUT_INVALID, so the fixture does the same.
+// managedSignalProtocolRelayCliIdentityPostBodySchema in
+// console/src/shared/managed-signal-relay-cli-identity.ts. Console answers any
+// other key set with 400 IDENTITY_INPUT_INVALID, so the fixture does the same.
 var consoleIdentityBodyKeys = map[string][][]string{
 	"preview": {
 		{"action", "kind", "expectedConfigurationVersion", "target"},

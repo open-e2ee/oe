@@ -31,7 +31,7 @@ const (
 
 // frameworks maps a package.json dependency to the variable that the
 // framework exposes to client code. The names match the console mapping in
-// src/lib/managed-relay-setup-guidance.ts. The order is the precedence:
+// src/lib/managed-signal-relay-setup-guidance.ts. The order is the precedence:
 // other frameworks and their test tools can also depend on vite, so vite is
 // last.
 var frameworks = []struct{ dependency, framework, variable string }{
