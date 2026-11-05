@@ -1,9 +1,9 @@
 ---
 name: open-e2ee-relay-config
-description: Use this skill to change the OpenE2EE Relay policy of a project with open-e2ee.config.ts and the oe CLI. It covers oe config push, oe config pull, and --dry-run. Use it when a person asks to change a retention value, to apply the config, or to bring a console change into the file. Use it when the oe CLI returns CONFIRMATION_REQUIRED, CONFIG_EDIT_REQUIRED, CONFIG_NOT_FOUND, CONFIG_INVALID, or CONSOLE_WRITER.
+description: Use this skill to change the OpenE2EE Signal Protocol Relay policy of a project with open-e2ee.config.ts and the oe CLI. It covers oe config push, oe config pull, and --dry-run. Use it when a person asks to change a retention value, to apply the config, or to bring a console change into the file. Use it when the oe CLI returns CONFIRMATION_REQUIRED, CONFIG_EDIT_REQUIRED, CONFIG_NOT_FOUND, CONFIG_INVALID, or CONSOLE_WRITER.
 ---
 
-# OpenE2EE Relay config
+# OpenE2EE Signal Protocol Relay config
 
 `open-e2ee.config.ts` is the public service policy of one project. It is in
 the root of the app, next to `package.json`. Do not put secrets in it.

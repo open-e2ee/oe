@@ -20,19 +20,19 @@ import (
 const Filename = "open-e2ee.config.ts"
 
 type Config struct {
-	Product      string       `json:"product"`
-	Project      string       `json:"project"`
-	Relay        RelayPolicy  `json:"relay"`
-	Environments Environments `json:"environments"`
+	Product             string                    `json:"product"`
+	Project             string                    `json:"project"`
+	SignalProtocolRelay SignalProtocolRelayPolicy `json:"relay"`
+	Environments        Environments              `json:"environments"`
 }
 
-// RelayPolicy is the shared Relay policy. Each environment takes it unless
-// its own relay section overrides a field. RelayReceipts turns Relay delivery
+// SignalProtocolRelayPolicy is the shared Relay policy. Each environment takes it unless
+// its own relay section overrides a field. SignalProtocolRelayReceipts turns Relay delivery
 // receipts on or off. It is true when the file leaves it out.
-type RelayPolicy struct {
-	DeliveryRetention   string `json:"deliveryRetention"`
-	AttachmentRetention string `json:"attachmentRetention"`
-	RelayReceipts       bool   `json:"relayReceipts"`
+type SignalProtocolRelayPolicy struct {
+	DeliveryRetention           string `json:"deliveryRetention"`
+	AttachmentRetention         string `json:"attachmentRetention"`
+	SignalProtocolRelayReceipts bool   `json:"relayReceipts"`
 }
 
 // Environments holds the Sandbox section and, once the project deploys to
@@ -43,16 +43,16 @@ type Environments struct {
 }
 
 type Environment struct {
-	Identity *identity.SelectionTarget `json:"identity,omitempty"`
-	Relay    *RelayOverride            `json:"relay,omitempty"`
+	Identity            *identity.SelectionTarget    `json:"identity,omitempty"`
+	SignalProtocolRelay *SignalProtocolRelayOverride `json:"relay,omitempty"`
 }
 
-// RelayOverride holds the fields of the shared policy that one environment
+// SignalProtocolRelayOverride holds the fields of the shared policy that one environment
 // changes.
-type RelayOverride struct {
-	DeliveryRetention   string `json:"deliveryRetention,omitempty"`
-	AttachmentRetention string `json:"attachmentRetention,omitempty"`
-	RelayReceipts       *bool  `json:"relayReceipts,omitempty"`
+type SignalProtocolRelayOverride struct {
+	DeliveryRetention           string `json:"deliveryRetention,omitempty"`
+	AttachmentRetention         string `json:"attachmentRetention,omitempty"`
+	SignalProtocolRelayReceipts *bool  `json:"relayReceipts,omitempty"`
 }
 
 // Error is a config failure with a stable code. Data holds the field errors
@@ -88,9 +88,9 @@ type Change struct {
 	Value any      `json:"value"`
 }
 
-// RelayPolicyFor merges the environment's override into the shared policy,
+// SignalProtocolRelayPolicyFor merges the environment's override into the shared policy,
 // field by field.
-func (c Config) RelayPolicyFor(environment string) (RelayPolicy, error) {
+func (c Config) SignalProtocolRelayPolicyFor(environment string) (SignalProtocolRelayPolicy, error) {
 	var selected *Environment
 	switch environment {
 	case "sandbox":
@@ -98,21 +98,21 @@ func (c Config) RelayPolicyFor(environment string) (RelayPolicy, error) {
 	case "production":
 		selected = c.Environments.Production
 	default:
-		return RelayPolicy{}, fmt.Errorf("unsupported environment %q", environment)
+		return SignalProtocolRelayPolicy{}, fmt.Errorf("unsupported environment %q", environment)
 	}
 	if selected == nil {
-		return RelayPolicy{}, fmt.Errorf("%s has no environments.production section", Filename)
+		return SignalProtocolRelayPolicy{}, fmt.Errorf("%s has no environments.production section", Filename)
 	}
-	policy := c.Relay
-	if selected.Relay != nil {
-		if selected.Relay.DeliveryRetention != "" {
-			policy.DeliveryRetention = selected.Relay.DeliveryRetention
+	policy := c.SignalProtocolRelay
+	if selected.SignalProtocolRelay != nil {
+		if selected.SignalProtocolRelay.DeliveryRetention != "" {
+			policy.DeliveryRetention = selected.SignalProtocolRelay.DeliveryRetention
 		}
-		if selected.Relay.AttachmentRetention != "" {
-			policy.AttachmentRetention = selected.Relay.AttachmentRetention
+		if selected.SignalProtocolRelay.AttachmentRetention != "" {
+			policy.AttachmentRetention = selected.SignalProtocolRelay.AttachmentRetention
 		}
-		if selected.Relay.RelayReceipts != nil {
-			policy.RelayReceipts = *selected.Relay.RelayReceipts
+		if selected.SignalProtocolRelay.SignalProtocolRelayReceipts != nil {
+			policy.SignalProtocolRelayReceipts = *selected.SignalProtocolRelay.SignalProtocolRelayReceipts
 		}
 	}
 	return policy, nil
@@ -148,13 +148,13 @@ func New(project string) Config {
 	return Config{
 		Product: "signal-relay",
 		Project: project,
-		Relay: RelayPolicy{
-			DeliveryRetention:   "30d",
-			AttachmentRetention: "30d",
-			RelayReceipts:       true,
+		SignalProtocolRelay: SignalProtocolRelayPolicy{
+			DeliveryRetention:           "30d",
+			AttachmentRetention:         "30d",
+			SignalProtocolRelayReceipts: true,
 		},
 		Environments: Environments{
-			Sandbox:    Environment{Relay: &RelayOverride{DeliveryRetention: "1d", AttachmentRetention: "1d"}},
+			Sandbox:    Environment{SignalProtocolRelay: &SignalProtocolRelayOverride{DeliveryRetention: "1d", AttachmentRetention: "1d"}},
 			Production: &Environment{},
 		},
 	}

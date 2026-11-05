@@ -1,4 +1,4 @@
-/** A retention period that the managed Relay accepts. */
+/** A retention period that the OpenE2EE Signal Protocol Relay accepts. */
 export type Retention =
   "1h" | "6h" | "12h" | "1d" | "3d" | "7d" | "14d" | "30d";
 

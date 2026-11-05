@@ -17,7 +17,7 @@ func usageDependencies(t *testing.T, read func(string) control.Usage) Dependenci
 		Store: store, WorkingDir: initializedProject(t, "local-chat"),
 		API: &fakeAPI{
 			getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
-				return control.Project{Slug: slug, Sandbox: projectEnvironment(sandboxRelayURL, "1"), Production: projectEnvironment(productionRelayURL, "1")}, nil
+				return control.Project{Slug: slug, Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1"), Production: projectEnvironment(productionSignalProtocolRelayURL, "1")}, nil
 			},
 			projectUsage: func(_ context.Context, auth control.CredentialRequest, slug, environment string) (control.Usage, error) {
 				if auth.AccessToken == "" || slug != "local-chat" || environment != "sandbox" {
@@ -34,7 +34,7 @@ func TestProjectUsageDefaultsToDirectoryAndShowsVerifiedZero(t *testing.T) {
 	dependencies := usageDependencies(t, func(slug string) control.Usage {
 		return control.Usage{
 			Project: slug, Environment: "sandbox", Period: "2026-10", Status: "no_usage",
-			Reported: &control.UsageReported{DeliveryUnits: &zero, AttachmentOperations: &zero, RelayMAU: &zero, LiveBytes: "0"},
+			Reported: &control.UsageReported{DeliveryUnits: &zero, AttachmentOperations: &zero, SignalProtocolRelayMAU: &zero, LiveBytes: "0"},
 		}
 	})
 	exit, stdout, _ := run(t, dependencies, "project", "usage")

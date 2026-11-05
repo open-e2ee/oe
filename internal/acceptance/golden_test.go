@@ -34,15 +34,15 @@ func TestBuiltBinaryCreatesAProjectAndPassesDoctor(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	relayURL := server.URL + "/signal/v1/connection/pk_sandbox_public"
+	signalRelayURL := server.URL + "/signal/v1/connection/pk_sandbox_public"
 	mux.HandleFunc("POST /v1/projects/bootstrap", func(response http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(response, `{"created":true,"project":"loaded-chat","writer":"config","revision":"1","environment":"sandbox","sandboxRelayUrl":%q}`, relayURL)
+		fmt.Fprintf(response, `{"created":true,"project":"loaded-chat","writer":"config","revision":"1","environment":"sandbox","sandboxRelayUrl":%q}`, signalRelayURL)
 	})
 	mux.HandleFunc("GET /v1/health", func(response http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(response, `{"status":"ok"}`)
 	})
 	mux.HandleFunc("GET /v1/projects/loaded-chat", func(response http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(response, `{"slug":"loaded-chat","writer":"config","sandbox":{"relayUrl":%q,"revision":"1"}}`, relayURL)
+		fmt.Fprintf(response, `{"slug":"loaded-chat","writer":"config","sandbox":{"relayUrl":%q,"revision":"1"}}`, signalRelayURL)
 	})
 	mux.HandleFunc("GET /signal/v1/connection/pk_sandbox_public", func(response http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(response, `{"schemaVersion":1}`)

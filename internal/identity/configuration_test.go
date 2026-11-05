@@ -7,9 +7,9 @@ import (
 )
 
 const fingerprintWire = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-const scopeWire = `{"environmentId":"env","environmentKind":"sandbox","projectId":"project","protocolProfile":"signal","relayScopeId":"relay_scope"}`
+const scopeWire = `{"environmentId":"env","environmentKind":"sandbox","projectId":"project","protocolProfile":"signal","relayScopeId":"signal_relay_scope"}`
 const preconditionWire = `{"publishableKey":"pk_public","recoveryGeneration":1,"scope":` + scopeWire + `}`
-const completeWire = `{"configurationVersion":1,"admissionRevision":0,"verificationPolicyFingerprint":"` + fingerprintWire + `","identityProfile":` + configuredWire + `,"inventory":{"everAdmitted":false,"bindingCount":0,"historyCount":0,"pendingOperationId":null},"identityRecovery":null,"identityMigration":null,"mixedModeMigration":{"available":false},"selection":null,"providerValidation":{"state":"not_checked"},"applicationIntegration":{"state":"unverified"},"admissionReadiness":{"relayScopeId":"relay_scope","evidence":{"state":"current","checkedAtSeconds":0},"state":"ready","sourceGeneration":{"kind":"provision","admissionRevision":0,"policyFingerprint":"` + fingerprintWire + `"},"reason":null},"selectionOperation":null}`
+const completeWire = `{"configurationVersion":1,"admissionRevision":0,"verificationPolicyFingerprint":"` + fingerprintWire + `","identityProfile":` + configuredWire + `,"inventory":{"everAdmitted":false,"bindingCount":0,"historyCount":0,"pendingOperationId":null},"identityRecovery":null,"identityMigration":null,"mixedModeMigration":{"available":false},"selection":null,"providerValidation":{"state":"not_checked"},"applicationIntegration":{"state":"unverified"},"admissionReadiness":{"relayScopeId":"signal_relay_scope","evidence":{"state":"current","checkedAtSeconds":0},"state":"ready","sourceGeneration":{"kind":"provision","admissionRevision":0,"policyFingerprint":"` + fingerprintWire + `"},"reason":null},"selectionOperation":null}`
 const currentWire = `{"configuration":` + completeWire + `,"precondition":` + preconditionWire + `}`
 
 func TestCompleteConfigurationHasNoLegacyFallback(t *testing.T) {
@@ -38,7 +38,7 @@ func TestCompleteConfigurationHasNoLegacyFallback(t *testing.T) {
 		{`"configurationVersion":1`, `"configurationVersion":0`}, {`"admissionRevision":0`, `"admissionRevision":-1`},
 		{`"available":false`, `"available":true`}, {`"not_checked"`, `"verified"`}, {`"unverified"`, `"ready"`},
 		{`"identityMigration":null`, `"identityMigration":{"manifestId":"summary","revision":1}`},
-		{`"relayScopeId":"relay_scope","evidence"`, `"relayScopeId":"other_scope","evidence"`},
+		{`"relayScopeId":"signal_relay_scope","evidence"`, `"relayScopeId":"other_scope","evidence"`},
 		{`"policyFingerprint":"` + fingerprintWire + `"`, `"policyFingerprint":"BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"`},
 	} {
 		rejectJSON[CurrentContext](t, []byte(strings.Replace(currentWire, change.old, change.new, 1)))
@@ -131,7 +131,7 @@ func TestScopeAndPublicPreconditionBounds(t *testing.T) {
 	v := mustDecode[Precondition](t, preconditionWire)
 	v.Scope.EnvironmentID = TextFromUnits([]uint16{0xd800})
 	roundTrip(t, v)
-	v.Scope.RelayScopeID = TextFromUnits([]uint16{0xd800})
+	v.Scope.SignalProtocolRelayScopeID = TextFromUnits([]uint16{0xd800})
 	if v.Validate() == nil {
 		t.Fatal("precondition accepted non-ASCII scope ID")
 	}

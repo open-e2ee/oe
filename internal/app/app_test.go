@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	sandboxRelayURL    = "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/pk_sandbox_public"
-	productionRelayURL = "https://relay.open-e2ee.dev/signal/v1/connection/pk_prod_public"
+	sandboxSignalProtocolRelayURL    = "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/pk_sandbox_public"
+	productionSignalProtocolRelayURL = "https://relay.open-e2ee.dev/signal/v1/connection/pk_prod_public"
 )
 
 func TestAuthLoginStoresBrowserCredentialWithoutPrintingToken(t *testing.T) {
@@ -82,7 +82,7 @@ func TestNewWritesTheNextJSVariable(t *testing.T) {
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:write")
 	api := &fakeAPI{bootstrapSandbox: func(context.Context, control.CredentialRequest, control.BootstrapRequest) (control.Bootstrap, error) {
-		return control.Bootstrap{Created: true, ProjectSlug: "next-chat", Writer: "config", Environment: "sandbox", SandboxRelayURL: sandboxRelayURL}, nil
+		return control.Bootstrap{Created: true, ProjectSlug: "next-chat", Writer: "config", Environment: "sandbox", SandboxSignalProtocolRelayURL: sandboxSignalProtocolRelayURL}, nil
 	}}
 	exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "new")
 	connection, _ := decodeEvent(t, []byte(stdout)).Data["connection"].(map[string]any)
@@ -93,7 +93,7 @@ func TestNewWritesTheNextJSVariable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(environment), "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL="+sandboxRelayURL+"\n") || strings.Contains(string(environment), "\nOPEN_E2EE_RELAY_URL=") {
+	if !strings.Contains(string(environment), "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL="+sandboxSignalProtocolRelayURL+"\n") || strings.Contains(string(environment), "\nOPEN_E2EE_RELAY_URL=") {
 		t.Fatalf("a Next.js client cannot read the Sandbox connection: %q", environment)
 	}
 }
@@ -113,7 +113,7 @@ func TestPushAndConnectionNameTheExpoVariable(t *testing.T) {
 		t.Fatalf("push did not name the Expo variable: %s", stdout)
 	}
 	environment, err := os.ReadFile(filepath.Join(directory, ".env.production.local"))
-	if err != nil || !strings.Contains(string(environment), "\nEXPO_PUBLIC_OPEN_E2EE_RELAY_URL="+productionRelayURL+"\n") {
+	if err != nil || !strings.Contains(string(environment), "\nEXPO_PUBLIC_OPEN_E2EE_RELAY_URL="+productionSignalProtocolRelayURL+"\n") {
 		t.Fatalf("production environment has no Expo variable: %q %v", environment, err)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "project", "connection", "--env", "production")
@@ -146,16 +146,16 @@ func TestUnreadablePackageJSONFailsBeforeRemoteMutation(t *testing.T) {
 
 func TestDoctorReportsSafeConnectionOriginAndRefusesProjectDrift(t *testing.T) {
 	directory := initializedProject(t, "doctor-chat")
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
 	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
-		return control.Project{Slug: "doctor-chat", Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
+		return control.Project{Slug: "doctor-chat", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1")}, nil
 	}}
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.String() != sandboxRelayURL {
+		if request.URL.String() != sandboxSignalProtocolRelayURL {
 			t.Fatalf("doctor requested an unexpected URL: %s", request.URL)
 		}
 		return &http.Response{Body: io.NopCloser(strings.NewReader(`{"schemaVersion":1}`)), Header: make(http.Header), StatusCode: http.StatusOK}, nil
@@ -233,7 +233,7 @@ func TestConsoleWriterFailsBeforeRemoteMutation(t *testing.T) {
 	storeCredential(t, store, "deploy:write")
 	api := &fakeAPI{
 		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
-			return control.Project{Slug: "console-chat", Writer: "console", Production: projectEnvironment(productionRelayURL, "7")}, nil
+			return control.Project{Slug: "console-chat", Writer: "console", Production: projectEnvironment(productionSignalProtocolRelayURL, "7")}, nil
 		},
 		plan: func(context.Context, control.CredentialRequest, control.PlanRequest) (control.Plan, error) {
 			t.Fatal("console-first project reached the plan")
@@ -254,7 +254,7 @@ func TestConsoleWriterFailsBeforeRemoteMutation(t *testing.T) {
 func TestConfigRefusalsKeepTheirCodes(t *testing.T) {
 	directory := initializedProject(t, "refusal-chat")
 	path := filepath.Join(directory, config.Filename)
-	if err := os.WriteFile(path, []byte("export const relay = {};\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("export const signalRelay = {};\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "doctor")
@@ -316,20 +316,20 @@ func TestPushToProductionRefusesAConfigWithoutProduction(t *testing.T) {
 	}
 }
 
-func TestRelayEnvironmentRemovalCannotLeaveAnotherProjectConnection(t *testing.T) {
+func TestSignalProtocolRelayEnvironmentRemovalCannotLeaveAnotherProjectConnection(t *testing.T) {
 	directory := t.TempDir()
 	filename := ".env.production.local"
-	if err := writeRelayEnvironment(directory, filename, envfile.DefaultVariable, productionRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, filename, envfile.DefaultVariable, productionSignalProtocolRelayURL); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeRelayEnvironment(directory, filename, envfile.DefaultVariable, ""); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, filename, envfile.DefaultVariable, ""); err != nil {
 		t.Fatal(err)
 	}
 	contents, err := os.ReadFile(filepath.Join(directory, filename))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(contents), "OPEN_E2EE_RELAY_URL=") || strings.Contains(string(contents), productionRelayURL) {
+	if strings.Contains(string(contents), "OPEN_E2EE_RELAY_URL=") || strings.Contains(string(contents), productionSignalProtocolRelayURL) {
 		t.Fatalf("removed environment retained a Relay connection: %q", contents)
 	}
 	if !strings.Contains(string(contents), "not configured for this environment") {
@@ -338,7 +338,7 @@ func TestRelayEnvironmentRemovalCannotLeaveAnotherProjectConnection(t *testing.T
 }
 
 func TestValidatePlanRejectsCrossBoundaryResponses(t *testing.T) {
-	project := control.Project{Slug: "project-one", Production: projectEnvironment(productionRelayURL, "1")}
+	project := control.Project{Slug: "project-one", Production: projectEnvironment(productionSignalProtocolRelayURL, "1")}
 	valid := control.Plan{ID: "plan-1", ProjectSlug: "project-one", Environment: "production", ExpectedRevision: "1"}
 	if err := validatePlan(valid, project, "production"); err != nil {
 		t.Fatal(err)
@@ -367,7 +367,7 @@ func TestJSONOutputIsOneDocumentAfterAutomaticLogin(t *testing.T) {
 			return control.Token{AccessToken: "token"}, nil
 		},
 		bootstrapSandbox: func(context.Context, control.CredentialRequest, control.BootstrapRequest) (control.Bootstrap, error) {
-			return control.Bootstrap{Created: true, ProjectSlug: "login-dev", Writer: "config", Environment: "sandbox", SandboxRelayURL: sandboxRelayURL}, nil
+			return control.Bootstrap{Created: true, ProjectSlug: "login-dev", Writer: "config", Environment: "sandbox", SandboxSignalProtocolRelayURL: sandboxSignalProtocolRelayURL}, nil
 		},
 	}
 	var stdout bytes.Buffer
@@ -455,13 +455,13 @@ func TestTerminalRefreshRemovesTheExpiredSession(t *testing.T) {
 	}
 }
 
-func projectEnvironment(relayURL, revision string) *control.ProjectEnvironment {
+func projectEnvironment(signalRelayURL, revision string) *control.ProjectEnvironment {
 	return &control.ProjectEnvironment{
-		AttachmentRetentionSeconds: 86_400,
-		DeliveryRetentionSeconds:   86_400,
-		RelayReceipts:              new(true),
-		RelayURL:                   relayURL,
-		Revision:                   revision,
+		AttachmentRetentionSeconds:  86_400,
+		DeliveryRetentionSeconds:    86_400,
+		SignalProtocolRelayReceipts: new(true),
+		SignalProtocolRelayURL:      signalRelayURL,
+		Revision:                    revision,
 	}
 }
 

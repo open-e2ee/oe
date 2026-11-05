@@ -621,7 +621,7 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
 		case "GET /v1/projects/chat":
-			response.Write([]byte(`{"production":{"blockedBy":"card","canActivate":false,"cardOnFile":false,"state":"inactive"},"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true,"relayUrl":"https://sandbox.example/relay","revision":"2"},"slug":"chat","writer":"config"}`))
+			response.Write([]byte(`{"production":{"blockedBy":"card","canActivate":false,"cardOnFile":false,"state":"inactive"},"sandbox":{"attachmentRetentionSeconds":86400,"deliveryTtlSeconds":86400,"relayReceipts":true,"relayUrl":"https://sandbox.example/signal-relay","revision":"2"},"slug":"chat","writer":"config"}`))
 		case "POST /v1/deploys":
 			body, _ := io.ReadAll(request.Body)
 			bodies = append(bodies, string(body))
@@ -638,10 +638,10 @@ func TestProductionStandingDeployBodiesAndCardRefusalMatchTheConsole(t *testing.
 	}
 	project, err := client.GetProject(context.Background(), CredentialRequest{}, "chat")
 	if err != nil || project.Production == nil || project.Production.State != ProductionInactive || project.Production.BlockedBy != BlockedByCard ||
-		project.Production.CardOnFile || project.Production.RelayURL != "" || project.Sandbox.Revision != "2" || project.Sandbox.State != "" {
+		project.Production.CardOnFile || project.Production.SignalProtocolRelayURL != "" || project.Sandbox.Revision != "2" || project.Sandbox.State != "" {
 		t.Fatalf("project read lost the Production standing: %#v %v", project, err)
 	}
-	policy := RelayPolicyRequest{AttachmentRetentionSeconds: 86_400, DeliveryRetentionSeconds: 86_400, RelayReceipts: true}
+	policy := SignalProtocolRelayPolicyRequest{AttachmentRetentionSeconds: 86_400, DeliveryRetentionSeconds: 86_400, SignalProtocolRelayReceipts: true}
 	for _, request := range []DeployRequest{
 		{Environment: "production", ExpectedRevision: "0", PlanID: "plan_production", Policy: policy, ProjectSlug: "chat", Writer: "config"},
 		{Environment: "sandbox", ExpectedRevision: "2", PlanID: "plan_sandbox", Policy: policy, ProjectSlug: "chat", Writer: "config"},

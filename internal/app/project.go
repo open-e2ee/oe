@@ -48,11 +48,11 @@ func (r *runner) project(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		relayURL := ""
+		signalRelayURL := ""
 		if environment := environmentOf(project, r.environment); environment != nil {
-			relayURL = environment.RelayURL
+			signalRelayURL = environment.SignalProtocolRelayURL
 		}
-		if relayURL == "" {
+		if signalRelayURL == "" {
 			return r.environmentNotActive(project.Slug, project.Writer, r.environment)
 		}
 		connection, err := envfile.Detect(filepath.Dir(mustConfigPath(r.directory)), "")
@@ -60,9 +60,9 @@ func (r *runner) project(ctx context.Context, args []string) error {
 			return err
 		}
 		// Text mode prints only the URL, so a shell can capture it.
-		return r.out.Success("project connection", relayURL, map[string]any{
+		return r.out.Success("project connection", signalRelayURL, map[string]any{
 			"project": project.Slug, "environment": r.environment,
-			"relayUrl": relayURL, "variable": connection.Variable,
+			"relayUrl": signalRelayURL, "variable": connection.Variable,
 		})
 	default:
 		return usageError("project", fmt.Sprintf("unknown project command %q", args[0]))
@@ -163,7 +163,7 @@ func projectSummary(project control.Project, names []string) map[string]any {
 	environments := map[string]any{}
 	for _, name := range names {
 		environment := environmentOf(project, name)
-		if environment == nil || environment.RelayURL == "" {
+		if environment == nil || environment.SignalProtocolRelayURL == "" {
 			environments[name] = map[string]any{"active": false}
 			continue
 		}
@@ -172,7 +172,7 @@ func projectSummary(project control.Project, names []string) map[string]any {
 			"revision":                   environment.Revision,
 			"attachmentRetentionSeconds": environment.AttachmentRetentionSeconds,
 			"deliveryRetentionSeconds":   environment.DeliveryRetentionSeconds,
-			"relayReceipts":              environment.RelayReceipts,
+			"relayReceipts":              environment.SignalProtocolRelayReceipts,
 		}
 	}
 	return map[string]any{
@@ -187,7 +187,7 @@ func projectText(project control.Project, names []string) string {
 	fmt.Fprintf(&text, "Project %s (writer: %s)", project.Slug, project.Writer)
 	for _, name := range names {
 		environment := environmentOf(project, name)
-		if environment == nil || environment.RelayURL == "" {
+		if environment == nil || environment.SignalProtocolRelayURL == "" {
 			fmt.Fprintf(&text, "\n  %s: not active", name)
 			continue
 		}

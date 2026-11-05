@@ -199,24 +199,24 @@ func TestControlRefusalKeepsTheConsoleCode(t *testing.T) {
 	}
 }
 
-func TestProjectConnectionPrintsTheServerRelayURL(t *testing.T) {
+func TestProjectConnectionPrintsTheServerSignalProtocolRelayURL(t *testing.T) {
 	directory := initializedProject(t, "connection-chat")
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
 	var requested []string
 	api := &fakeAPI{getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
 		requested = append(requested, slug)
-		return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxRelayURL, "3")}, nil
+		return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "3")}, nil
 	}}
 	dependencies := Dependencies{API: api, Store: store, WorkingDir: directory}
 
 	exit, stdout, _ := run(t, dependencies, "project", "connection")
-	if exit != 0 || stdout != sandboxRelayURL+"\n" {
+	if exit != 0 || stdout != sandboxSignalProtocolRelayURL+"\n" {
 		t.Fatalf("text connection is not the bare URL: exit=%d %q", exit, stdout)
 	}
 	exit, stdout, _ = run(t, dependencies, "project", "connection", "other-chat", "--json", "--env=sandbox")
 	connection := decodeEvent(t, []byte(stdout))
-	if exit != 0 || connection.Data["relayUrl"] != sandboxRelayURL || connection.Data["project"] != "other-chat" || connection.Data["variable"] != "OPEN_E2EE_RELAY_URL" {
+	if exit != 0 || connection.Data["relayUrl"] != sandboxSignalProtocolRelayURL || connection.Data["project"] != "other-chat" || connection.Data["variable"] != "OPEN_E2EE_RELAY_URL" {
 		t.Fatalf("JSON connection is incomplete: %s", stdout)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "project", "connection", "--env", "production")
@@ -233,7 +233,7 @@ func TestProjectShowNeedsNoConfigAndOmitsTheConnection(t *testing.T) {
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
 	api := &fakeAPI{getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
-		return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxRelayURL, "3")}, nil
+		return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "3")}, nil
 	}}
 	exit, stdout, _ := run(t, Dependencies{API: api, Store: store}, "--json", "project", "show", "show-chat")
 	shown := decodeEvent(t, []byte(stdout))
@@ -464,7 +464,7 @@ func TestAgentDefaultsToJSON(t *testing.T) {
 func TestProjectReadNamesTheProjectList(t *testing.T) {
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
-	conflict := &control.APIError{Status: 409, Code: "CONTROL_CONFLICT", Message: "The managed Relay project does not exist."}
+	conflict := &control.APIError{Status: 409, Code: "CONTROL_CONFLICT", Message: "The managed Signal Protocol Relay project does not exist."}
 	notFound := &control.APIError{Status: 404, Code: "PROJECT_NOT_FOUND", Message: "Relay project not found."}
 	for _, test := range []struct {
 		name, slug string
@@ -501,7 +501,7 @@ func TestProjectReadNamesTheProjectList(t *testing.T) {
 				t.Fatalf("%s project %s: exit=%d %s", test.name, command, exit, stdout)
 			}
 			if test.code == "CONTROL_CONFLICT" && (failure.Action.URL != reportURL || failure.Action.Reason != "report" ||
-				failure.Data["listed"] != true || !strings.Contains(failure.Error, "The managed Relay project does not exist") ||
+				failure.Data["listed"] != true || !strings.Contains(failure.Error, "The managed Signal Protocol Relay project does not exist") ||
 				!strings.Contains(failure.Error, "when a retry gets the same refusal, the service holds an inconsistent record")) {
 				t.Fatalf("a listed project that the read refuses did not name the report page: %s", stdout)
 			}
@@ -543,7 +543,7 @@ func TestCommandFieldIsTheCommandPath(t *testing.T) {
 	storeCredential(t, store, "project:read")
 	api := &fakeAPI{
 		getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
-			return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxRelayURL, "3")}, nil
+			return control.Project{Slug: slug, Writer: "config", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "3")}, nil
 		},
 		listProjects: func(context.Context, control.CredentialRequest) ([]control.ProjectSummary, error) {
 			return []control.ProjectSummary{{Slug: "path-chat"}}, nil

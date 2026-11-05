@@ -142,7 +142,7 @@ func TestCancellationMetadataCannotRebaseOrSettleEnrichedOriginal(t *testing.T) 
 		func(v *SelectionCommand) { v.OperationID = "changed_001" }, func(v *SelectionCommand) { v.ExpectedConfigurationVersion++ },
 		func(v *SelectionCommand) { v.Precondition.PublishableKey = "pk_changed" }, func(v *SelectionCommand) { v.Precondition.RecoveryGeneration++ },
 		func(v *SelectionCommand) { v.Precondition.Scope.EnvironmentID = mustText(t, "other") }, func(v *SelectionCommand) { v.Precondition.Scope.EnvironmentKind = "production" },
-		func(v *SelectionCommand) { v.Precondition.Scope.ProjectID = mustText(t, "other") }, func(v *SelectionCommand) { v.Precondition.Scope.RelayScopeID = mustText(t, "other") },
+		func(v *SelectionCommand) { v.Precondition.Scope.ProjectID = mustText(t, "other") }, func(v *SelectionCommand) { v.Precondition.Scope.SignalProtocolRelayScopeID = mustText(t, "other") },
 		func(v *SelectionCommand) { v.Target = mustDecode[SelectionTarget](t, configuredWire) },
 	} {
 		changed, e := command.Clone()

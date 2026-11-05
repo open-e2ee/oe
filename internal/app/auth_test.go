@@ -26,8 +26,8 @@ import (
 	"github.com/open-e2ee/oe/internal/envfile"
 )
 
-// relayTerms is the terms document list of the console route tests.
-var relayTerms = []map[string]any{{
+// signalRelayTerms is the terms document list of the console route tests.
+var signalRelayTerms = []map[string]any{{
 	"name": "Relay service terms", "url": "https://open-e2ee.dev/legal/relay-terms/2026-08-26",
 	"version": "relay-2026-08-26",
 }}
@@ -234,7 +234,7 @@ func (c *console) terms() map[string]any {
 		acceptedAt = "2026-09-01T09:30:00.000Z"
 	}
 	return map[string]any{
-		"acceptedAt": acceptedAt, "canAccept": c.canAccept, "documents": relayTerms, "state": c.state,
+		"acceptedAt": acceptedAt, "canAccept": c.canAccept, "documents": signalRelayTerms, "state": c.state,
 	}
 }
 
@@ -773,7 +773,7 @@ func TestLoginInASetUpDirectoryOffersNothing(t *testing.T) {
 func TestTermsInALinkedDirectoryNameDoctor(t *testing.T) {
 	t.Setenv("OE_ACCESS_TOKEN", "")
 	directory := initializedProject(t, "linked-chat")
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"auth", "login", "--accept-terms"}, {"auth", "login"}} {
@@ -950,7 +950,7 @@ func TestRefusedAccessTokenKeepsTheData(t *testing.T) {
 	directory := initializedProject(t, "push-chat")
 	api := &fakeAPI{
 		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
-			return control.Project{Slug: "push-chat", Writer: "config", Sandbox: &control.ProjectEnvironment{RelayURL: "https://relay.example/signal/v1/connection/pk_sandbox"}}, nil
+			return control.Project{Slug: "push-chat", Writer: "config", Sandbox: &control.ProjectEnvironment{SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_sandbox"}}, nil
 		},
 		plan: func(context.Context, control.CredentialRequest, control.PlanRequest) (control.Plan, error) {
 			return control.Plan{}, &control.APIError{Status: 401, Code: "INVALID_SESSION", Message: "Run oe auth login again."}

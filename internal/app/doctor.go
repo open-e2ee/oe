@@ -66,7 +66,7 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	}
 	expected := ""
 	if environment := environmentOf(project, r.environment); environment != nil {
-		expected = environment.RelayURL
+		expected = environment.SignalProtocolRelayURL
 	}
 	if local == "" {
 		// oe link writes the env file of an active Production. The step that
@@ -85,21 +85,21 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	if expected != local {
 		return &problem{
 			code: "RELAY_CONNECTION_STALE", exit: exitFailure, next: "oe link",
-			message: fmt.Sprintf("doctor found a problem: the local %s Relay connection is stale or belongs to another project", r.environment),
+			message: fmt.Sprintf("doctor found a problem: the local %s OpenE2EE Signal Protocol Relay connection is stale or belongs to another project", r.environment),
 		}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, local, nil)
 	if err != nil {
-		return fmt.Errorf("doctor found a problem: Relay connection is invalid")
+		return fmt.Errorf("doctor found a problem: the OpenE2EE Signal Protocol Relay connection is invalid")
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := r.http.Do(request)
 	if err != nil {
-		return fmt.Errorf("doctor found a problem: Relay connection is unreachable")
+		return fmt.Errorf("doctor found a problem: the OpenE2EE Signal Protocol Relay connection is unreachable")
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("doctor found a problem: Relay connection returned status %d", response.StatusCode)
+		return fmt.Errorf("doctor found a problem: the OpenE2EE Signal Protocol Relay connection returned status %d", response.StatusCode)
 	}
 	origin, _ := url.Parse(local)
 	checks["project"] = value.Project
@@ -123,7 +123,7 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 func connectionMissing(environment, environmentFile, next string) *problem {
 	return &problem{
 		code: "RELAY_CONNECTION_MISSING", exit: exitFailure, next: next,
-		message: fmt.Sprintf("doctor found a problem: the %s Relay connection is not in %s", environment, environmentFile),
+		message: fmt.Sprintf("doctor found a problem: the %s OpenE2EE Signal Protocol Relay connection is not in %s", environment, environmentFile),
 	}
 }
 
@@ -156,7 +156,7 @@ func (r *runner) waitForFirstMessage(ctx context.Context, access credential.Cred
 				data: map[string]any{"project": project, "firstDevice": state.FirstDevice, "firstAcknowledged": true},
 				message: fmt.Sprintf("the first managed message of project %s was acknowledged before this wait started, "+
 					"and the control API reports only that first acknowledgment, so oe doctor --wait cannot see a new message; "+
-					"run oe doctor to check the Relay connection", project),
+					"run oe doctor to check the OpenE2EE Signal Protocol Relay connection", project),
 			}
 		case state.FirstDevice && state.FirstAcknowledged:
 			return nil

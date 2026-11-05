@@ -21,7 +21,7 @@ func twoEnvironments(read *[]string) *fakeAPI {
 		getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
 			return control.Project{
 				Slug: slug, Writer: "config",
-				Sandbox: projectEnvironment(sandboxRelayURL, "3"), Production: projectEnvironment(productionRelayURL, "7"),
+				Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "3"), Production: projectEnvironment(productionSignalProtocolRelayURL, "7"),
 			}, nil
 		},
 		notifications: func(_ context.Context, _ control.CredentialRequest, _, environment string) (control.NotificationConfiguration, error) {
@@ -42,12 +42,12 @@ func TestEnvFlagSelectsTheEnvironmentAndDefaultsToSandbox(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"project", "connection"}, sandboxRelayURL},
-		{[]string{"project", "connection", "--env", "production"}, productionRelayURL},
-		{[]string{"project", "connection", "-e", "production"}, productionRelayURL},
-		{[]string{"project", "connection", "-e=production"}, productionRelayURL},
-		{[]string{"--env=production", "project", "connection"}, productionRelayURL},
-		{[]string{"-e", "sandbox", "project", "connection"}, sandboxRelayURL},
+		{[]string{"project", "connection"}, sandboxSignalProtocolRelayURL},
+		{[]string{"project", "connection", "--env", "production"}, productionSignalProtocolRelayURL},
+		{[]string{"project", "connection", "-e", "production"}, productionSignalProtocolRelayURL},
+		{[]string{"project", "connection", "-e=production"}, productionSignalProtocolRelayURL},
+		{[]string{"--env=production", "project", "connection"}, productionSignalProtocolRelayURL},
+		{[]string{"-e", "sandbox", "project", "connection"}, sandboxSignalProtocolRelayURL},
 	} {
 		exit, stdout, stderr := run(t, dependencies, test.args...)
 		if exit != 0 || stdout != test.want+"\n" {
@@ -88,30 +88,30 @@ func TestEnvFlagSelectsTheEnvironmentAndDefaultsToSandbox(t *testing.T) {
 
 func TestOEEnvSelectsForReads(t *testing.T) {
 	directory := initializedProject(t, "variable-chat")
-	if err := writeRelayEnvironment(directory, ".env.production.local", envfile.DefaultVariable, productionRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.production.local", envfile.DefaultVariable, productionSignalProtocolRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read", "project:write", "deploy:write")
 	var read []string
 	api := twoEnvironments(&read)
-	relay := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.String() != productionRelayURL {
+	signalRelay := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != productionSignalProtocolRelayURL {
 			t.Fatalf("doctor requested an unexpected URL: %s", request.URL)
 		}
 		return &http.Response{Body: io.NopCloser(strings.NewReader(`{"schemaVersion":1}`)), Header: make(http.Header), StatusCode: http.StatusOK}, nil
 	})}
 	production := Dependencies{
-		API: api, HTTP: relay, Store: store, WorkingDir: directory,
+		API: api, HTTP: signalRelay, Store: store, WorkingDir: directory,
 		Getenv: environment(map[string]string{"OE_ENV": "production"}),
 	}
 
 	exit, stdout, _ := run(t, production, "project", "connection")
-	if exit != 0 || stdout != productionRelayURL+"\n" {
+	if exit != 0 || stdout != productionSignalProtocolRelayURL+"\n" {
 		t.Fatalf("OE_ENV=production did not select Production: exit=%d %q", exit, stdout)
 	}
 	exit, stdout, _ = run(t, production, "project", "connection", "--env", "sandbox")
-	if exit != 0 || stdout != sandboxRelayURL+"\n" {
+	if exit != 0 || stdout != sandboxSignalProtocolRelayURL+"\n" {
 		t.Fatalf("--env did not override OE_ENV: exit=%d %q", exit, stdout)
 	}
 	exit, stdout, _ = run(t, production, "--json", "notifications", "status")
@@ -209,7 +209,7 @@ func TestInactiveProductionNamesTheStepThatActivatesIt(t *testing.T) {
 		{"config of another project", initializedProject(t, "other-chat"), "config", "", "of project prod-chat, then run oe config push in its directory"},
 	} {
 		api := &fakeAPI{getProject: func(_ context.Context, _ control.CredentialRequest, slug string) (control.Project, error) {
-			return control.Project{Slug: slug, Writer: test.writer, Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
+			return control.Project{Slug: slug, Writer: test.writer, Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1")}, nil
 		}}
 		exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: test.directory},
 			"--json", "project", "connection", "prod-chat", "--env", "production")

@@ -92,7 +92,7 @@ type line struct {
 	text, ending string
 }
 
-// Write sets variable to relayURL in the env file at path. An empty relayURL
+// Write sets variable to signalRelayURL in the env file at path. An empty signalRelayURL
 // removes the variable and writes a comment that the environment has no
 // connection.
 //
@@ -103,14 +103,14 @@ type line struct {
 // byte for byte. New lines use the line break of the first line. The file
 // keeps its permissions, and a new file gets 0644, because the connection is
 // public.
-func Write(path, variable, relayURL string) error {
+func Write(path, variable, signalRelayURL string) error {
 	if !variableName.MatchString(variable) {
 		return fmt.Errorf("%q is not an environment variable name", variable)
 	}
-	if strings.ContainsFunc(relayURL, func(character rune) bool {
+	if strings.ContainsFunc(signalRelayURL, func(character rune) bool {
 		return character <= ' ' || character == 0x7f || strings.ContainsRune("\"#$'\\`", character)
 	}) {
-		return fmt.Errorf("the Relay connection URL for %s has a character that an env file changes", variable)
+		return fmt.Errorf("the OpenE2EE Signal Protocol Relay connection URL for %s has a character that an env file changes", variable)
 	}
 	if target, err := filepath.EvalSymlinks(path); err == nil {
 		path = target
@@ -157,14 +157,14 @@ func Write(path, variable, relayURL string) error {
 	}
 
 	var replacement []line
-	if relayURL == "" {
+	if signalRelayURL == "" {
 		replacement = []line{{unconfiguredComment, newline}}
 	} else {
 		prefix := ""
 		if exported {
 			prefix = "export "
 		}
-		replacement = []line{{configuredComment, newline}, {prefix + variable + "=" + relayURL, newline}}
+		replacement = []line{{configuredComment, newline}, {prefix + variable + "=" + signalRelayURL, newline}}
 	}
 	if block < 0 {
 		if last := len(output) - 1; last >= 0 && output[last].ending == "" {

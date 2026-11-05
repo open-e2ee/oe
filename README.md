@@ -146,7 +146,7 @@ Save a public draft profile in `public-profile.json`:
   "mode": "custom-token",
   "algorithms": ["ES256"],
   "issuer": "https://members.example",
-  "audience": "relay-production",
+  "audience": "signal-relay-production",
   "subjectClaim": "sub",
   "keys": [
     {

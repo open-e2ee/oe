@@ -163,7 +163,7 @@ func (f *publicIdentityFixture) serve(w http.ResponseWriter, r *http.Request) {
 			f.project.Production.State = control.ProductionActive
 			f.project.Production.Revision = "5"
 		}
-		_ = json.NewEncoder(w).Encode(control.Deployment{ID: "owned_deploy", Revision: "5", Status: "applied", RelayURL: "https://relay.example/signal/v1/connection/pk_public"})
+		_ = json.NewEncoder(w).Encode(control.Deployment{ID: "owned_deploy", Revision: "5", Status: "applied", SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_public"})
 	case "/v1/projects/sample/identity":
 		current, err := f.current.Clone()
 		if err != nil {

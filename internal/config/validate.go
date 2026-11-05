@@ -46,7 +46,7 @@ func validate(value any) (Config, error) {
 	}
 	// A shared policy that leaves out relayReceipts keeps Relay delivery
 	// receipts on.
-	result := Config{Relay: RelayPolicy{RelayReceipts: true}}
+	result := Config{SignalProtocolRelay: SignalProtocolRelayPolicy{SignalProtocolRelayReceipts: true}}
 	if len(fields) == 0 {
 		encoded, err := json.Marshal(value)
 		if err != nil {
@@ -56,7 +56,7 @@ func validate(value any) (Config, error) {
 			return Config{}, identityConfigError("environments")
 		}
 		for _, environment := range []string{"sandbox", "production"} {
-			policy, err := result.RelayPolicyFor(environment)
+			policy, err := result.SignalProtocolRelayPolicyFor(environment)
 			if err != nil {
 				continue
 			}

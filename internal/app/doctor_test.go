@@ -24,12 +24,12 @@ func TestDoctorWaitSeesTheFirstAcknowledgedMessage(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	relayURL := server.URL + "/signal/v1/connection/pk_sandbox_public"
+	signalRelayURL := server.URL + "/signal/v1/connection/pk_sandbox_public"
 	mux.HandleFunc("GET /v1/health", func(response http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(response, `{"status":"ok"}`)
 	})
 	mux.HandleFunc("GET /v1/projects/wait-chat", func(response http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(response, `{"slug":"wait-chat","writer":"config","sandbox":{"relayUrl":%q,"revision":"1"}}`, relayURL)
+		fmt.Fprintf(response, `{"slug":"wait-chat","writer":"config","sandbox":{"relayUrl":%q,"revision":"1"}}`, signalRelayURL)
 	})
 	mux.HandleFunc("GET /v1/projects/wait-chat/activation", func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer test-token" {
@@ -47,7 +47,7 @@ func TestDoctorWaitSeesTheFirstAcknowledgedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := initializedProject(t, "wait-chat")
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, relayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, signalRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -93,7 +93,7 @@ func TestDoctorWaitRefusesAnInvalidRequestBeforeAnyRead(t *testing.T) {
 
 func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 	directory := initializedProject(t, "refresh-wait")
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -110,7 +110,7 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 	var tokens []string
 	api := &fakeAPI{
 		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
-			return control.Project{Slug: "refresh-wait", Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
+			return control.Project{Slug: "refresh-wait", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1")}, nil
 		},
 		refreshAuthorization: func(_ context.Context, refreshToken, organizationID string) (control.Token, error) {
 			if refreshToken != "refresh-1" || organizationID != "" {
@@ -123,7 +123,7 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 			return control.Activation{FirstDevice: true, FirstAcknowledged: len(tokens) > 1}, nil
 		},
 	}
-	relay := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	signalRelay := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{Body: http.NoBody, Header: make(http.Header), StatusCode: http.StatusOK}, nil
 	})}
 	// Each poll moves the clock past the session expiry.
@@ -132,7 +132,7 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 		return nil
 	}
 	exit, stdout, _ := run(t, Dependencies{
-		API: api, HTTP: relay, Store: store, WorkingDir: directory, Sleep: sleep, Now: func() time.Time { return now },
+		API: api, HTTP: signalRelay, Store: store, WorkingDir: directory, Sleep: sleep, Now: func() time.Time { return now },
 	}, "--json", "doctor", "--wait")
 	if exit != 0 || strings.Join(tokens, ",") != "first-token,second-token" {
 		t.Fatalf("the wait did not refresh the session: exit=%d tokens=%v %s", exit, tokens, stdout)
@@ -153,12 +153,12 @@ func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 	t.Setenv("OE_ACCESS_TOKEN", "")
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
-	sandbox := &control.ProjectEnvironment{RelayURL: "https://relay.example/signal/v1/connection/pk_sandbox"}
+	sandbox := &control.ProjectEnvironment{SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_sandbox"}
 	for _, test := range []struct {
 		production *control.ProjectEnvironment
 		next       string
 	}{
-		{&control.ProjectEnvironment{State: control.ProductionActive, RelayURL: "https://relay.example/signal/v1/connection/pk_production"}, "oe link"},
+		{&control.ProjectEnvironment{State: control.ProductionActive, SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_production"}, "oe link"},
 		{&control.ProjectEnvironment{State: "available"}, "oe config push"},
 	} {
 		api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
@@ -177,7 +177,7 @@ func waitDoctor(t *testing.T, activation func(int) control.Activation, sleep fun
 	t.Helper()
 	t.Setenv("OE_ACCESS_TOKEN", "")
 	directory := initializedProject(t, "wait-chat")
-	if err := writeRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -185,17 +185,17 @@ func waitDoctor(t *testing.T, activation func(int) control.Activation, sleep fun
 	reads := 0
 	api := &fakeAPI{
 		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
-			return control.Project{Slug: "wait-chat", Sandbox: projectEnvironment(sandboxRelayURL, "1")}, nil
+			return control.Project{Slug: "wait-chat", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1")}, nil
 		},
 		activation: func(context.Context, control.CredentialRequest, string) (control.Activation, error) {
 			reads++
 			return activation(reads), nil
 		},
 	}
-	relay := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	signalRelay := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{Body: http.NoBody, Header: make(http.Header), StatusCode: http.StatusOK}, nil
 	})}
-	exit, stdout, _ := run(t, Dependencies{API: api, HTTP: relay, Store: store, WorkingDir: directory, Sleep: sleep},
+	exit, stdout, _ := run(t, Dependencies{API: api, HTTP: signalRelay, Store: store, WorkingDir: directory, Sleep: sleep},
 		"--json", "doctor", "--wait", "--timeout", "1m")
 	return exit, decodeEvent(t, []byte(stdout)), reads
 }

@@ -13,9 +13,10 @@ real access tokens, private keys, recovery material, or customer data.
 - `OE_ACCESS_TOKEN` is a scoped CI input. The CLI does not persist it.
 - The CLI sends secret values only to the protected control API. The CLI does not
   write or print them.
-- Public project configuration can contain one Relay connection URL for each
-  environment. The URL can resolve public bootstrap data. It must not contain a
-  service credential, protocol private key, or secret query value.
+- Public project configuration can contain one OpenE2EE Signal Protocol Relay
+  connection URL for each environment. The URL can resolve public bootstrap
+  data. It must not contain a service credential, protocol private key, or
+  secret query value.
 - The npm launcher selects an installed optional native package. It does not
   download or execute a binary during package installation.
 

@@ -178,13 +178,13 @@ func (r *runner) link(ctx context.Context, args []string) error {
 	ignored := []string{projectlock.Filename}
 	var connected []string
 	for _, environment := range []string{"sandbox", "production"} {
-		relayURL := ""
+		signalRelayURL := ""
 		if selected := environmentOf(project, environment); selected != nil {
-			relayURL = selected.RelayURL
+			signalRelayURL = selected.SignalProtocolRelayURL
 		}
 		filename := environmentFiles[environment]
 		target := filepath.Join(directory, filename)
-		if relayURL != "" {
+		if signalRelayURL != "" {
 			connected = append(connected, filename)
 		} else if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
 			// An inactive environment gets no file. A file that is there loses
@@ -192,7 +192,7 @@ func (r *runner) link(ctx context.Context, args []string) error {
 			continue
 		}
 		change, err := fileChange(target, *dryRun, func(path string) error {
-			return envfile.Write(path, connection.Variable, relayURL)
+			return envfile.Write(path, connection.Variable, signalRelayURL)
 		})
 		if err != nil {
 			return err
@@ -249,7 +249,7 @@ func linkEnvironments(project control.Project) map[string]any {
 		switch {
 		case environment == nil:
 			return "inactive"
-		case environment.RelayURL != "":
+		case environment.SignalProtocolRelayURL != "":
 			return "active"
 		}
 		return cmp.Or(environment.State, "inactive")
@@ -320,7 +320,7 @@ func (r *runner) pickProject(ctx context.Context) (string, error) {
 	if len(projects) == 0 {
 		return "", &problem{
 			code: "PROJECT_REQUIRED", exit: exitUsage, next: "oe org switch",
-			message: "this account can read no Relay project in the organization of the session; oe org switch changes the organization",
+			message: "this account can read no OpenE2EE Signal Protocol Relay project in the organization of the session; oe org switch changes the organization",
 		}
 	}
 	for index, project := range projects {

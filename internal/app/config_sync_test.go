@@ -48,8 +48,8 @@ export default defineConfig({
 // Relay delivery receipts on.
 func retention(delivery, attachment int) *control.ProjectEnvironment {
 	return &control.ProjectEnvironment{
-		DeliveryRetentionSeconds: delivery, AttachmentRetentionSeconds: attachment, RelayReceipts: new(true),
-		RelayURL: "https://relay.example/signal/v1/connection/pk_public", Revision: "4",
+		DeliveryRetentionSeconds: delivery, AttachmentRetentionSeconds: attachment, SignalProtocolRelayReceipts: new(true),
+		SignalProtocolRelayURL: "https://signal-relay.example/signal/v1/connection/pk_public", Revision: "4",
 	}
 }
 
@@ -138,8 +138,8 @@ func TestPullAddsWithoutConsent(t *testing.T) {
 	// The shared policy already gives the attachment retention, so only the
 	// delivery retention becomes an override.
 	value := mustLoad(t, path)
-	if value.Environments.Production == nil || value.Environments.Production.Relay == nil ||
-		*value.Environments.Production.Relay != (config.RelayOverride{DeliveryRetention: "7d"}) || value.Relay.DeliveryRetention != "30d" {
+	if value.Environments.Production == nil || value.Environments.Production.SignalProtocolRelay == nil ||
+		*value.Environments.Production.SignalProtocolRelay != (config.SignalProtocolRelayOverride{DeliveryRetention: "7d"}) || value.SignalProtocolRelay.DeliveryRetention != "30d" {
 		t.Fatalf("the pull did not add the fewest values: %#v", value)
 	}
 
@@ -203,7 +203,7 @@ func TestPullReplacingAValueNeedsYes(t *testing.T) {
 			if !strings.Contains(string(mustRead(t, path)), `deliveryRetention: "`) {
 				t.Fatal("the pull removed the delivery retention")
 			}
-			policy, err := mustLoad(t, path).RelayPolicyFor(strings.Split(test.path, ".")[1])
+			policy, err := mustLoad(t, path).SignalProtocolRelayPolicyFor(strings.Split(test.path, ".")[1])
 			if err != nil || (policy.DeliveryRetention != "3d" && policy.DeliveryRetention != "7d") {
 				t.Fatalf("pull --yes did not write the server value: %#v %v", policy, err)
 			}
@@ -419,7 +419,7 @@ type pushConsole struct {
 // newPushConsole answers a project whose active Sandbox keeps a 30d policy and
 // whose Production can open on the Free plan now.
 func newPushConsole(t *testing.T, slug string) *pushConsole {
-	sandbox := projectEnvironment(sandboxRelayURL, "3")
+	sandbox := projectEnvironment(sandboxSignalProtocolRelayURL, "3")
 	sandbox.DeliveryRetentionSeconds, sandbox.AttachmentRetentionSeconds = 2_592_000, 2_592_000
 	return &pushConsole{
 		t: t, fail: map[string]error{}, deployed: map[string]control.DeployRequest{},
@@ -435,7 +435,7 @@ func newPushConsole(t *testing.T, slug string) *pushConsole {
 
 // activeProduction makes Production active with a policy of seconds.
 func (c *pushConsole) activeProduction(seconds int) {
-	production := projectEnvironment(productionRelayURL, "7")
+	production := projectEnvironment(productionSignalProtocolRelayURL, "7")
 	production.DeliveryRetentionSeconds, production.AttachmentRetentionSeconds = seconds, seconds
 	production.State, production.CardOnFile = control.ProductionActive, true
 	c.project.Production = production
@@ -494,13 +494,13 @@ func (c *pushConsole) Plan(_ context.Context, request control.CredentialRequest,
 			result.Changes = append(result.Changes, control.Change{Path: field.path, Before: field.before, After: field.after})
 		}
 	}
-	switch receipts := plan.Policy.RelayReceipts; {
+	switch receipts := plan.Policy.SignalProtocolRelayReceipts; {
 	case !active:
 		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", After: receipts})
-	case current.RelayReceipts == nil:
+	case current.SignalProtocolRelayReceipts == nil:
 		c.t.Fatalf("the active %s environment has no relayReceipts", plan.Environment)
-	case *current.RelayReceipts != receipts:
-		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", Before: *current.RelayReceipts, After: receipts})
+	case *current.SignalProtocolRelayReceipts != receipts:
+		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", Before: *current.SignalProtocolRelayReceipts, After: receipts})
 	}
 	return result, nil
 }
@@ -523,11 +523,11 @@ func (c *pushConsole) Deploy(_ context.Context, request control.CredentialReques
 	current.Revision = strconv.Itoa(revision + 1)
 	current.DeliveryRetentionSeconds = deploy.Policy.DeliveryRetentionSeconds
 	current.AttachmentRetentionSeconds = deploy.Policy.AttachmentRetentionSeconds
-	current.RelayReceipts = new(deploy.Policy.RelayReceipts)
+	current.SignalProtocolRelayReceipts = new(deploy.Policy.SignalProtocolRelayReceipts)
 	if name == "production" {
-		current.RelayURL, current.State, current.BlockedBy, current.CanActivate = productionRelayURL, control.ProductionActive, "", false
+		current.SignalProtocolRelayURL, current.State, current.BlockedBy, current.CanActivate = productionSignalProtocolRelayURL, control.ProductionActive, "", false
 	}
-	return control.Deployment{ID: "deployment_" + name, Revision: current.Revision, Status: "complete", RelayURL: current.RelayURL}, nil
+	return control.Deployment{ID: "deployment_" + name, Revision: current.Revision, Status: "complete", SignalProtocolRelayURL: current.SignalProtocolRelayURL}, nil
 }
 
 func (c *pushConsole) Terms(context.Context, control.CredentialRequest) (control.Terms, error) {
@@ -594,11 +594,11 @@ func TestPushAppliesSandboxThenProduction(t *testing.T) {
 	if result.Next != "oe doctor --env production" || connection["file"] != ".env.production.local" || connection["variable"] != "OPEN_E2EE_RELAY_URL" {
 		t.Fatalf("push did not hand over the Production connection: %s", stdout)
 	}
-	if strings.Contains(stdout, productionRelayURL) {
+	if strings.Contains(stdout, productionSignalProtocolRelayURL) {
 		t.Fatalf("push printed the Production connection URL: %s", stdout)
 	}
 	environment := mustRead(t, filepath.Join(directory, ".env.production.local"))
-	if !strings.Contains(string(environment), "\nOPEN_E2EE_RELAY_URL="+productionRelayURL+"\n") {
+	if !strings.Contains(string(environment), "\nOPEN_E2EE_RELAY_URL="+productionSignalProtocolRelayURL+"\n") {
 		t.Fatalf(".env.production.local has no Production connection: %q", environment)
 	}
 }
@@ -1043,7 +1043,7 @@ func TestConfigWritesIgnoreTheLockFile(t *testing.T) {
 	})
 }
 
-func TestPushCarriesRelayReceipts(t *testing.T) {
+func TestPushCarriesSignalProtocolRelayReceipts(t *testing.T) {
 	for _, test := range []struct {
 		name                string
 		from, to            string
@@ -1102,10 +1102,10 @@ func TestPushCarriesRelayReceipts(t *testing.T) {
 				if !ok && name == "production" && want {
 					continue
 				}
-				if !ok || deploy.Policy.RelayReceipts != want {
+				if !ok || deploy.Policy.SignalProtocolRelayReceipts != want {
 					t.Fatalf("the %s deploy sent %#v (deployed %v), want relayReceipts %v", name, deploy.Policy, ok, want)
 				}
-				if receipts := console.environment(name).RelayReceipts; receipts == nil || *receipts != want {
+				if receipts := console.environment(name).SignalProtocolRelayReceipts; receipts == nil || *receipts != want {
 					t.Fatalf("the console holds relayReceipts %v for %s, want %v", receipts, name, want)
 				}
 			}
@@ -1113,9 +1113,9 @@ func TestPushCarriesRelayReceipts(t *testing.T) {
 	}
 }
 
-func TestPullWritesRelayReceipts(t *testing.T) {
+func TestPullWritesSignalProtocolRelayReceipts(t *testing.T) {
 	off := func(environment *control.ProjectEnvironment) *control.ProjectEnvironment {
-		environment.RelayReceipts = new(false)
+		environment.SignalProtocolRelayReceipts = new(false)
 		return environment
 	}
 	for _, test := range []struct {
@@ -1160,12 +1160,12 @@ func TestPullWritesRelayReceipts(t *testing.T) {
 			}
 			value := mustLoad(t, path)
 			for environment, want := range test.want {
-				if policy, err := value.RelayPolicyFor(environment); err != nil || policy.RelayReceipts != want {
+				if policy, err := value.SignalProtocolRelayPolicyFor(environment); err != nil || policy.SignalProtocolRelayReceipts != want {
 					t.Fatalf("the %s policy is %#v (%v), want relayReceipts %v", environment, policy, err, want)
 				}
 			}
-			if !value.Relay.RelayReceipts {
-				t.Fatalf("the pull changed the shared policy: %#v", value.Relay)
+			if !value.SignalProtocolRelay.SignalProtocolRelayReceipts {
+				t.Fatalf("the pull changed the shared policy: %#v", value.SignalProtocolRelay)
 			}
 		})
 	}
@@ -1174,7 +1174,7 @@ func TestPullWritesRelayReceipts(t *testing.T) {
 		directory, path := projectWith(t, sandboxOnly)
 		before := mustRead(t, path)
 		sandbox := retention(day, day)
-		sandbox.RelayReceipts = nil
+		sandbox.SignalProtocolRelayReceipts = nil
 		dependencies, _ := pullServer(t, "pull-chat", sandbox, nil)
 		dependencies.WorkingDir = directory
 		exit, stdout, _ := run(t, dependencies, "--json", "config", "pull", "--yes")
