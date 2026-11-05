@@ -306,7 +306,7 @@ func decodeEvents(t *testing.T, stdout string) []event {
 var underClaudeCode = environment(map[string]string{"CLAUDECODE": "1"})
 
 func TestAuthLoginUnderAnAgentWritesPendingThenResult(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "accepted", true)
 	store := credential.NewMemory()
 	browser := &opener{}
@@ -342,7 +342,7 @@ func TestAuthLoginUnderAnAgentWritesPendingThenResult(t *testing.T) {
 }
 
 func TestAuthLoginTermsRequiredUnderAnAgentExitsZeroWithNext(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "required", true)
 	dependencies := server.dependencies(credential.NewMemory(), underClaudeCode)
 	dependencies.Interactive, dependencies.In = terminal, unreadable{t}
@@ -372,7 +372,7 @@ func TestAuthLoginAcceptTermsSendsTheDetectedAgent(t *testing.T) {
 		{"person", environment(nil), map[string]any{"actor": "person"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("OE_ACCESS_TOKEN", "")
+			t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 			server := newConsole(t, "required", true)
 			store := credential.NewMemory()
 			server.storeSession(t, store)
@@ -399,7 +399,7 @@ func TestAuthLoginAcceptTermsSendsTheDetectedAgent(t *testing.T) {
 }
 
 func TestAuthLoginAsksAPersonAtATerminal(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	for _, test := range []struct {
 		answer string
 		terms  string
@@ -428,7 +428,7 @@ func TestAuthLoginAsksAPersonAtATerminal(t *testing.T) {
 }
 
 func TestAcceptTermsWithoutPermissionExitsFiveAndKeepsTheSession(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "required", false)
 	store := credential.NewMemory()
 	server.storeSession(t, store)
@@ -453,7 +453,7 @@ func TestAcceptTermsWithoutPermissionExitsFiveAndKeepsTheSession(t *testing.T) {
 }
 
 func TestAuthStatusExitsFourWithoutASession(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	exit, stdout, _ := run(t, Dependencies{}, "--json", "auth", "status")
 	failure := decodeEvent(t, []byte(stdout))
 	if exit != exitAuthentication || failure.Command != "auth status" || failure.Code != "AUTHENTICATION_REQUIRED" || failure.Next != "oe auth login" {
@@ -462,7 +462,7 @@ func TestAuthStatusExitsFourWithoutASession(t *testing.T) {
 }
 
 func TestAuthStatusReportsTermsAndTokenSource(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "required", false)
 	store := credential.NewMemory()
 	server.storeSession(t, store)
@@ -508,15 +508,15 @@ func TestAuthStatusTextNamesThePersonNotAnID(t *testing.T) {
 		{"agent", agent, false, "accepted",
 			"Signed in as an agent for Jane Doe (jane@example.com) in Acme Inc. (" + keychain + ")\nAcme Inc. has accepted the OpenE2EE terms.\n"},
 		{"environment credential", personSession(), true, "accepted",
-			"Signed in as Jane Doe (jane@example.com) in Acme Inc. (OE_ACCESS_TOKEN)\nAcme Inc. has accepted the OpenE2EE terms.\n"},
+			"Signed in as Jane Doe (jane@example.com) in Acme Inc. (OPEN_E2EE_ACCESS_TOKEN)\nAcme Inc. has accepted the OpenE2EE terms.\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("OE_ACCESS_TOKEN", "")
+			t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 			server := newConsole(t, test.terms, true)
 			server.session = test.session
 			store := credential.NewMemory()
 			if test.environment {
-				t.Setenv("OE_ACCESS_TOKEN", sessionToken())
+				t.Setenv("OPEN_E2EE_ACCESS_TOKEN", sessionToken())
 			} else {
 				// A stored session reads as the OS keychain, as Keychain.Get sets it.
 				server.storeSession(t, keychainStore{store})
@@ -554,7 +554,7 @@ func (s keychainStore) Get(profile string) (credential.Credential, error) {
 }
 
 func TestAuthStatusWithoutTheSessionRouteFails(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "accepted", true)
 	server.session = map[string]any{"schemaVersion": 1, "user": map[string]any{"id": "user_example"}}
 	store := credential.NewMemory()
@@ -665,7 +665,7 @@ func projectRoutes(t *testing.T, server *console) {
 }
 
 func TestLoginOffersCreateLinkSkipInAnAppDirectory(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	for _, test := range []struct {
 		name    string
 		terms   string
@@ -720,7 +720,7 @@ func TestLoginOffersCreateLinkSkipInAnAppDirectory(t *testing.T) {
 }
 
 func TestLoginOutsideAnAppDirectoryOffersNothing(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	// A package.json in a parent does not make an app directory.
 	child := filepath.Join(appDirectory(t, "parent-chat"), "notes")
 	if err := os.Mkdir(child, 0o755); err != nil {
@@ -741,7 +741,7 @@ func TestLoginOutsideAnAppDirectoryOffersNothing(t *testing.T) {
 }
 
 func TestLoginInASetUpDirectoryOffersNothing(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	root := initializedProject(t, "set-chat")
 	web := filepath.Join(root, "web")
 	if err := os.Mkdir(web, 0o755); err != nil {
@@ -771,9 +771,9 @@ func TestLoginInASetUpDirectoryOffersNothing(t *testing.T) {
 // directory whose setup is done names oe doctor, not oe link: the config sets
 // the directory up, and .env.local holds the Sandbox Relay connection.
 func TestTermsInALinkedDirectoryNameDoctor(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	directory := initializedProject(t, "linked-chat")
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.DefaultVariable, sandboxSignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, sandboxSignalProtocolRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"auth", "login", "--accept-terms"}, {"auth", "login"}} {
@@ -798,7 +798,7 @@ func TestTermsInALinkedDirectoryNameDoctor(t *testing.T) {
 }
 
 func TestLoginUnderAnAgentNamesNewInNext(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	directory := appDirectory(t, "agent-chat")
 	server := newConsole(t, "accepted", true)
 	dependencies := server.dependencies(credential.NewMemory(), underClaudeCode)
@@ -837,7 +837,7 @@ func TestLoginUnderAnAgentNamesNewInNext(t *testing.T) {
 }
 
 func TestRefusedAccessTokenNamesTheVariableAndNoLogin(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "refused-ci-token")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "refused-ci-token")
 	refused := &control.APIError{Status: 401, Code: "INVALID_SESSION", Message: "Run oe auth login again."}
 	api := &fakeAPI{
 		session: func(context.Context, control.CredentialRequest) (control.Session, error) {
@@ -855,8 +855,8 @@ func TestRefusedAccessTokenNamesTheVariableAndNoLogin(t *testing.T) {
 		exit, stdout, stderr := run(t, Dependencies{API: api}, args...)
 		failure := decodeEvent(t, []byte(stdout))
 		if exit != exitAuthentication || failure.Code != "ACCESS_TOKEN_INVALID" || failure.Next != "" ||
-			!strings.Contains(failure.Error, "OE_ACCESS_TOKEN") || !strings.Contains(failure.Error, "unset OE_ACCESS_TOKEN") {
-			t.Fatalf("%v with a refused OE_ACCESS_TOKEN: exit=%d %s", args, exit, stdout)
+			!strings.Contains(failure.Error, "OPEN_E2EE_ACCESS_TOKEN") || !strings.Contains(failure.Error, "unset OPEN_E2EE_ACCESS_TOKEN") {
+			t.Fatalf("%v with a refused OPEN_E2EE_ACCESS_TOKEN: exit=%d %s", args, exit, stdout)
 		}
 		if strings.Contains(stdout+stderr, "refused-ci-token") {
 			t.Fatalf("%v printed the access token", args)
@@ -865,7 +865,7 @@ func TestRefusedAccessTokenNamesTheVariableAndNoLogin(t *testing.T) {
 }
 
 func TestStoredSessionRefusalStillNamesLogin(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	store := credential.NewMemory()
 	storeCredential(t, store, "project:read")
 	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
@@ -878,19 +878,19 @@ func TestStoredSessionRefusalStillNamesLogin(t *testing.T) {
 }
 
 func TestAccessTokenFailureThatNamesLoginLosesTheNext(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "ci-token")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "ci-token")
 	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
 		return control.Project{}, &control.APIError{Status: 403, Code: "ORGANIZATION_REQUIRED", Message: "Sign in to an organization."}
 	}}
 	exit, stdout, _ := run(t, Dependencies{API: api}, "--json", "project", "show", "any-chat")
 	failure := decodeEvent(t, []byte(stdout))
-	if exit != exitFailure || failure.Code != "ORGANIZATION_REQUIRED" || failure.Next != "" || !strings.Contains(failure.Error, "OE_ACCESS_TOKEN") {
-		t.Fatalf("ORGANIZATION_REQUIRED under OE_ACCESS_TOKEN named a login: exit=%d %s", exit, stdout)
+	if exit != exitFailure || failure.Code != "ORGANIZATION_REQUIRED" || failure.Next != "" || !strings.Contains(failure.Error, "OPEN_E2EE_ACCESS_TOKEN") {
+		t.Fatalf("ORGANIZATION_REQUIRED under OPEN_E2EE_ACCESS_TOKEN named a login: exit=%d %s", exit, stdout)
 	}
 }
 
 func TestLoginThatNoPersonApprovesTimesOut(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	start := func(context.Context, control.AuthorizationRequest) (control.Authorization, error) {
 		return control.Authorization{DeviceCode: "device", VerificationURL: "https://login.example/device", UserCode: "ABCD", IntervalSeconds: 1}, nil
 	}
@@ -933,7 +933,7 @@ func TestEndedParentKeepsTheLoginError(t *testing.T) {
 }
 
 func TestLoginNeedsAPositiveTimeout(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	for _, timeout := range []string{"0s", "-1s"} {
 		exit, stdout, _ := run(t, Dependencies{API: &fakeAPI{}, Getenv: environment(nil)}, "--json", "auth", "login", "--timeout="+timeout)
 		if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || failure.Next != "oe help auth" {
@@ -945,8 +945,8 @@ func TestLoginNeedsAPositiveTimeout(t *testing.T) {
 // TestRefusedAccessTokenKeepsTheData proves that ACCESS_TOKEN_INVALID keeps
 // the data of the failure, such as the state of each environment of a push.
 func TestRefusedAccessTokenKeepsTheData(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "ci-token")
-	t.Setenv("OE_ACCESS_TOKEN_SCOPES", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "ci-token")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN_SCOPES", "")
 	directory := initializedProject(t, "push-chat")
 	api := &fakeAPI{
 		getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
@@ -959,14 +959,14 @@ func TestRefusedAccessTokenKeepsTheData(t *testing.T) {
 	exit, stdout, _ := run(t, Dependencies{API: api, WorkingDir: directory}, "--json", "config", "push", "--dry-run")
 	failure := decodeEvent(t, []byte(stdout))
 	if exit != exitAuthentication || failure.Code != "ACCESS_TOKEN_INVALID" || failure.Data["environments"] == nil {
-		t.Fatalf("a refused OE_ACCESS_TOKEN lost the push data: exit=%d %s", exit, stdout)
+		t.Fatalf("a refused OPEN_E2EE_ACCESS_TOKEN lost the push data: exit=%d %s", exit, stdout)
 	}
 }
 
 // A login with --organization runs the device flow, then moves the session
 // to the organization with one refresh, and stores the rotated pair.
 func TestAuthLoginOrganizationSwitchesAfterTheDeviceFlow(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "accepted", true)
 	server.organizations = twoOrganizations()
 	store := credential.NewMemory()
@@ -1001,7 +1001,7 @@ func TestAuthLoginOrganizationSwitchesAfterTheDeviceFlow(t *testing.T) {
 // the device flow stays stored, and the message says to choose the
 // organization on the sign-in page.
 func TestAuthLoginOrganizationNeedsItsOwnSignIn(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "accepted", true)
 	server.organizations, server.signIn = twoOrganizations(), "sso_required"
 	store := credential.NewMemory()
@@ -1021,12 +1021,12 @@ func TestAuthLoginOrganizationNeedsItsOwnSignIn(t *testing.T) {
 }
 
 func TestAuthLoginOrganizationRefusesAnEnvironmentToken(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", sessionToken())
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", sessionToken())
 	server := newConsole(t, "accepted", true)
-	dependencies := server.dependencies(credential.NewMemory(), environment(map[string]string{"OE_ACCESS_TOKEN": sessionToken()}))
+	dependencies := server.dependencies(credential.NewMemory(), environment(map[string]string{"OPEN_E2EE_ACCESS_TOKEN": sessionToken()}))
 	exit, stdout, _ := run(t, dependencies, "--json", "--control-url", server.controlURL(), "auth", "login", "--organization", "org_beta")
-	if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || !strings.Contains(failure.Error, "unset OE_ACCESS_TOKEN") {
-		t.Fatalf("login --organization under OE_ACCESS_TOKEN: exit=%d %s", exit, stdout)
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || !strings.Contains(failure.Error, "unset OPEN_E2EE_ACCESS_TOKEN") {
+		t.Fatalf("login --organization under OPEN_E2EE_ACCESS_TOKEN: exit=%d %s", exit, stdout)
 	}
 	if len(server.requested()) != 0 {
 		t.Fatalf("the refusal reached the console: %q", server.requested())
@@ -1044,7 +1044,7 @@ func TestAuthLoginNeverPromptsForTheOrganizationUnderJSONOrAnAgent(t *testing.T)
 		"agent": {nil, underClaudeCode},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("OE_ACCESS_TOKEN", "")
+			t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 			server := newConsole(t, "accepted", true)
 			server.organizations = twoOrganizations()
 			dependencies := server.dependencies(credential.NewMemory(), global.getenv)
@@ -1075,7 +1075,7 @@ func TestAuthLoginLetsAPersonChooseTheOrganization(t *testing.T) {
 		{"\n", "Acme Inc.", 0},
 	} {
 		t.Run(test.organization, func(t *testing.T) {
-			t.Setenv("OE_ACCESS_TOKEN", "")
+			t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 			server := newConsole(t, "accepted", true)
 			server.organizations = twoOrganizations()
 			dependencies := server.dependencies(credential.NewMemory(), nil)
@@ -1095,7 +1095,7 @@ func TestAuthLoginLetsAPersonChooseTheOrganization(t *testing.T) {
 // auth status names each organization with its role. A console without the
 // list keeps the output of TestAuthStatusTextNamesThePersonNotAnID.
 func TestAuthStatusListsTheOrganizations(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "accepted", true)
 	server.organizations = twoOrganizations()
 	store := credential.NewMemory()
@@ -1119,7 +1119,7 @@ func TestAuthStatusListsTheOrganizations(t *testing.T) {
 }
 
 func TestAuthLoginPersistsProtectionBypassForLaterCommands(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	server := newConsole(t, "accepted", true)
 	server.protectionBypass = new("login-bypass")
 	store := credential.NewMemory()
@@ -1128,7 +1128,7 @@ func TestAuthLoginPersistsProtectionBypassForLaterCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, env := range []map[string]string{
-		{"OE_PROTECTION_BYPASS": "  login-bypass \n"},
+		{"OPEN_E2EE_PROTECTION_BYPASS": "  login-bypass \n"},
 		nil,
 	} {
 		dependencies := server.dependencies(store, environment(env))
@@ -1170,9 +1170,9 @@ func TestAuthStatusProtectionBypassSources(t *testing.T) {
 		{name: "environment token", env: "env-bypass", expected: "env-bypass", source: "environment", environmentToken: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("OE_ACCESS_TOKEN", "")
+			t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 			if test.environmentToken {
-				t.Setenv("OE_ACCESS_TOKEN", sessionToken())
+				t.Setenv("OPEN_E2EE_ACCESS_TOKEN", sessionToken())
 			}
 			server := newConsole(t, "accepted", true)
 			server.protectionBypass = new(test.expected)
@@ -1191,7 +1191,7 @@ func TestAuthStatusProtectionBypassSources(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mode := range []string{"--json", "--agent=no"} {
-				deps := server.dependencies(store, environment(map[string]string{"OE_PROTECTION_BYPASS": test.env}))
+				deps := server.dependencies(store, environment(map[string]string{"OPEN_E2EE_PROTECTION_BYPASS": test.env}))
 				exit, stdout, stderr := run(t, deps, "--control-url", server.controlURL(), mode, "auth", "status")
 				if exit != 0 {
 					t.Fatal("auth status failed")
@@ -1220,7 +1220,7 @@ func TestAuthStatusProtectionBypassSources(t *testing.T) {
 func TestRefreshPreservesStoredProtectionBypass(t *testing.T) {
 	for _, env := range []string{"", "override-bypass"} {
 		t.Run("override="+fmt.Sprint(env != ""), func(t *testing.T) {
-			t.Setenv("OE_ACCESS_TOKEN", "")
+			t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 			server := newConsole(t, "accepted", true)
 			expected := "stored-bypass"
 			if env != "" {
@@ -1234,7 +1234,7 @@ func TestRefreshPreservesStoredProtectionBypass(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			deps := server.dependencies(store, environment(map[string]string{"OE_PROTECTION_BYPASS": env}))
+			deps := server.dependencies(store, environment(map[string]string{"OPEN_E2EE_PROTECTION_BYPASS": env}))
 			exit, _, _ := run(t, deps, "--control-url", server.controlURL(), "--json", "auth", "status")
 			if exit != 0 || len(server.refreshed()) != 1 {
 				t.Fatal("session refresh failed")

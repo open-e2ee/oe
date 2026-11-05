@@ -17,6 +17,7 @@ import (
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
+	"github.com/open-e2ee/oe/internal/envvar"
 	"github.com/open-e2ee/oe/internal/output"
 )
 
@@ -39,7 +40,7 @@ func (r *runner) auth(ctx context.Context, args []string) error {
 }
 
 // authLogin logs in with the device flow, then runs the terms step. With
-// --accept-terms and a valid session, or with OE_ACCESS_TOKEN, it starts no
+// --accept-terms and a valid session, or with OPEN_E2EE_ACCESS_TOKEN, it starts no
 // device flow. A terms state that stays required is not a failure: the login
 // succeeded, and next names the acceptance when the caller may give it. With
 // accepted terms, next names the setup step of the directory. A person at a
@@ -60,10 +61,10 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 	if *timeout <= 0 {
 		return usageError("auth", "--timeout must be positive")
 	}
-	if *target != "" && r.getenv("OE_ACCESS_TOKEN") != "" {
+	if *target != "" && r.getenv(envvar.AccessToken.Current) != "" {
 		return &problem{
 			code: "USAGE_ERROR", exit: exitUsage,
-			message: "the session comes from OE_ACCESS_TOKEN, which a login never replaces; unset OE_ACCESS_TOKEN to choose the organization",
+			message: "the session comes from OPEN_E2EE_ACCESS_TOKEN, which a login never replaces; unset OPEN_E2EE_ACCESS_TOKEN to choose the organization",
 		}
 	}
 	session, loggedIn, err := r.loginSession(ctx, *timeout, *acceptTerms)
@@ -114,7 +115,7 @@ func (r *runner) authLogin(ctx context.Context, args []string) error {
 		}
 	}
 	if session.Source == "environment" {
-		message = append(message, "Using the scoped CI credential from OE_ACCESS_TOKEN. It was not stored.")
+		message = append(message, "Using the scoped CI credential from OPEN_E2EE_ACCESS_TOKEN. It was not stored.")
 	}
 	next := ""
 	switch {
@@ -211,7 +212,7 @@ func setupNext(directory string) string {
 		if err != nil {
 			return "oe doctor"
 		}
-		local, err := envfile.Read(filepath.Join(root, environmentFiles["sandbox"]), connection.Variable)
+		local, _, err := envfile.ReadConnection(filepath.Join(root, environmentFiles["sandbox"]), connection)
 		if err != nil || local != "" {
 			return "oe doctor"
 		}
@@ -256,10 +257,10 @@ func (r *runner) offerSetup(ctx context.Context, login string, data map[string]a
 }
 
 // loginSession returns the session for the terms step, and reports whether
-// this run logged in. OE_ACCESS_TOKEN is never replaced by a login. With
+// this run logged in. OPEN_E2EE_ACCESS_TOKEN is never replaced by a login. With
 // acceptTerms, a stored session that is still valid is used as it is.
 func (r *runner) loginSession(ctx context.Context, timeout time.Duration, acceptTerms bool) (credential.Credential, bool, error) {
-	if acceptTerms || r.getenv("OE_ACCESS_TOKEN") != "" {
+	if acceptTerms || r.getenv(envvar.AccessToken.Current) != "" {
 		value, err := r.access(ctx, "", false)
 		if err == nil {
 			return value, false, nil
@@ -404,9 +405,9 @@ func (r *runner) authLogout(args []string) error {
 		return err
 	}
 	message := "Logged out. The OS keychain holds no session for " + profile + "."
-	environment := r.getenv("OE_ACCESS_TOKEN") != ""
+	environment := r.getenv(envvar.AccessToken.Current) != ""
 	if environment {
-		message += " OE_ACCESS_TOKEN is still set, so later commands still use it."
+		message += " OPEN_E2EE_ACCESS_TOKEN is still set, so later commands still use it."
 	}
 	return r.out.Success("auth logout", message, map[string]any{"profile": profile, "environmentCredential": environment})
 }

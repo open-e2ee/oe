@@ -27,7 +27,7 @@ var identityFailures = map[string]struct {
 	"IDENTITY_PROFILE_UNSUPPORTED":   {400, "This identity profile is not supported by this check."},
 	"IDENTITY_ASSERTION_INVALID":     {400, "The test assertion is invalid. Request a fresh assertion and check the public profile."},
 	"IDENTITY_CHECK_UNAVAILABLE":     {503, "The identity check is unavailable."},
-	"DEPLOYMENT_PROTECTION_REQUIRED": {401, "Vercel deployment protection blocked the identity check. Set OE_PROTECTION_BYPASS to a valid bypass and retry."},
+	"DEPLOYMENT_PROTECTION_REQUIRED": {401, "Vercel deployment protection blocked the identity check. Set OPEN_E2EE_PROTECTION_BYPASS to a valid bypass and retry."},
 }
 
 func identityFailure(code string) error {

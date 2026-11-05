@@ -137,12 +137,13 @@ func TestBuiltBinaryLinksExistingProjectAndReadsExplicitIdentity(t *testing.T) {
 		for _, entry := range os.Environ() {
 			name, _, _ := strings.Cut(entry, "=")
 			switch name {
-			case "OE_ACCESS_TOKEN", "OE_ACCESS_TOKEN_SCOPES", "OE_ENV", "OE_OPERATION_ID", "OE_PROTECTION_BYPASS":
+			case "OPEN_E2EE_ACCESS_TOKEN", "OPEN_E2EE_ACCESS_TOKEN_SCOPES", "OPEN_E2EE_ENV", "OPEN_E2EE_OPERATION_ID", "OPEN_E2EE_PROTECTION_BYPASS",
+				"OE_ACCESS_TOKEN", "OE_ACCESS_TOKEN_SCOPES", "OE_ENV", "OE_OPERATION_ID", "OE_PROTECTION_BYPASS":
 				continue
 			}
 			command.Env = append(command.Env, entry)
 		}
-		command.Env = append(command.Env, "OE_ACCESS_TOKEN=owned_binary_token", "OE_ACCESS_TOKEN_SCOPES=project:read project:write", "OE_ENV=", "OE_OPERATION_ID=", "OE_PROTECTION_BYPASS=")
+		command.Env = append(command.Env, "OPEN_E2EE_ACCESS_TOKEN=owned_binary_token", "OPEN_E2EE_ACCESS_TOKEN_SCOPES=project:read project:write", "OPEN_E2EE_ENV=", "OPEN_E2EE_OPERATION_ID=", "OPEN_E2EE_PROTECTION_BYPASS=")
 		var stderr bytes.Buffer
 		command.Stderr = &stderr
 		data, err := command.Output()

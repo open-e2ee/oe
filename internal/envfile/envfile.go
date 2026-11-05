@@ -1,6 +1,8 @@
 // Package envfile owns the connection env files, .env.local and
 // .env.production.local. It chooses the variable that the app's framework
-// reads, and it replaces only the CLI's own lines in a file.
+// reads, and it replaces only the CLI's own lines in a file. Until
+// envvar.RemovalRelease, it keeps a line of the deprecated variable current
+// and reads that line when the current variable has no value.
 //
 // The files use the dotenv format that Next.js, Vite, and Expo load. A line
 // is an assignment when it is "KEY=value" or "KEY: value", with optional
@@ -18,11 +20,13 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/open-e2ee/oe/internal/envvar"
 )
 
-// DefaultVariable holds the connection when package.json names no framework
-// that needs a prefix.
-const DefaultVariable = "OPEN_E2EE_RELAY_URL"
+// Default holds the connection when package.json names no framework that
+// needs a prefix.
+var Default = detected("", envvar.SignalRelayURL)
 
 const (
 	configuredComment   = "# Public Signal Protocol Relay connection. This is not a credential."
@@ -34,10 +38,13 @@ const (
 // src/lib/managed-signal-relay-setup-guidance.ts. The order is the precedence:
 // other frameworks and their test tools can also depend on vite, so vite is
 // last.
-var frameworks = []struct{ dependency, framework, variable string }{
-	{"next", "Next.js", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"},
-	{"expo", "Expo", "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL"},
-	{"vite", "Vite", "VITE_OPEN_E2EE_RELAY_URL"},
+var frameworks = []struct {
+	dependency, framework string
+	variable              envvar.Name
+}{
+	{"next", "Next.js", envvar.NextSignalRelayURL},
+	{"expo", "Expo", envvar.ExpoSignalRelayURL},
+	{"vite", "Vite", envvar.ViteSignalRelayURL},
 }
 
 var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -45,15 +52,22 @@ var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // Connection names the variable that holds the Relay connection URL.
 // Framework is the framework that chose the variable. It is empty when an
 // override chose the variable or package.json names no known framework.
+// Deprecated is the name that Variable replaces. It is empty when an override
+// chose the variable.
 type Connection struct {
-	Framework string
-	Variable  string
+	Framework  string
+	Variable   string
+	Deprecated string
+}
+
+func detected(framework string, name envvar.Name) Connection {
+	return Connection{Framework: framework, Variable: name.Current, Deprecated: name.Deprecated}
 }
 
 // Detect chooses the variable for the app in directory from the dependencies
 // and devDependencies in its package.json. A non-empty override wins, and
 // Detect then does not read package.json. A directory with no package.json
-// gets DefaultVariable.
+// gets Default.
 func Detect(directory, override string) (Connection, error) {
 	if override != "" {
 		if !variableName.MatchString(override) {
@@ -64,7 +78,7 @@ func Detect(directory, override string) (Connection, error) {
 	path := filepath.Join(directory, "package.json")
 	contents, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Connection{Variable: DefaultVariable}, nil
+		return Default, nil
 	}
 	if err != nil {
 		return Connection{}, fmt.Errorf("read %s: %w", path, err)
@@ -80,10 +94,10 @@ func Detect(directory, override string) (Connection, error) {
 		_, dependency := manifest.Dependencies[candidate.dependency]
 		_, devDependency := manifest.DevDependencies[candidate.dependency]
 		if dependency || devDependency {
-			return Connection{Framework: candidate.framework, Variable: candidate.variable}, nil
+			return detected(candidate.framework, candidate.variable), nil
 		}
 	}
-	return Connection{Variable: DefaultVariable}, nil
+	return Default, nil
 }
 
 // line is one line of an env file. ending is "\n", "\r\n", or "" for a last
@@ -92,25 +106,33 @@ type line struct {
 	text, ending string
 }
 
-// Write sets variable to signalRelayURL in the env file at path. An empty signalRelayURL
-// removes the variable and writes a comment that the environment has no
-// connection.
+// Write sets connection.Variable to signalRelayURL in the env file at path.
+// An empty signalRelayURL removes the variable and writes a comment that the
+// environment has no connection.
 //
-// The CLI owns its comment lines and every assignment of variable. Write
-// removes them and puts one new block where the first of them was, or at
-// the end of the file. It keeps an "export " prefix from the first
+// The CLI owns its comment lines and every assignment of connection.Variable.
+// Write removes them and puts one new block where the first of them was, or
+// at the end of the file. It keeps an "export " prefix from the first
 // assignment. It keeps every other line, and the line break of each line,
 // byte for byte. New lines use the line break of the first line. The file
 // keeps its permissions, and a new file gets 0644, because the connection is
 // public.
-func Write(path, variable, signalRelayURL string) error {
+//
+// When the file assigns connection.Deprecated, the CLI also owns those
+// assignments. The block then sets the deprecated variable to the same URL
+// after the current one, so an app that still reads the deprecated name never
+// gets a stale connection. An empty signalRelayURL removes them too. Write
+// never adds a deprecated assignment to a file that has none. deprecated
+// reports that the file assigned connection.Deprecated.
+func Write(path string, connection Connection, signalRelayURL string) (deprecated bool, err error) {
+	variable := connection.Variable
 	if !variableName.MatchString(variable) {
-		return fmt.Errorf("%q is not an environment variable name", variable)
+		return false, fmt.Errorf("%q is not an environment variable name", variable)
 	}
 	if strings.ContainsFunc(signalRelayURL, func(character rune) bool {
 		return character <= ' ' || character == 0x7f || strings.ContainsRune("\"#$'\\`", character)
 	}) {
-		return fmt.Errorf("the OpenE2EE Signal Protocol Relay connection URL for %s has a character that an env file changes", variable)
+		return false, fmt.Errorf("the OpenE2EE Signal Protocol Relay connection URL for %s has a character that an env file changes", variable)
 	}
 	if target, err := filepath.EvalSymlinks(path); err == nil {
 		path = target
@@ -121,11 +143,11 @@ func Write(path, variable, signalRelayURL string) error {
 	case err == nil:
 		info, err := os.Stat(path)
 		if err != nil {
-			return err
+			return false, err
 		}
 		mode = info.Mode().Perm()
 	case !errors.Is(err, os.ErrNotExist):
-		return err
+		return false, err
 	}
 
 	lines := split(string(contents))
@@ -135,13 +157,15 @@ func Write(path, variable, signalRelayURL string) error {
 	}
 	output := make([]line, 0, len(lines)+2)
 	block, assigned, exported := -1, false, false
+	deprecatedExported := false
 	for index := 0; index < len(lines); index++ {
 		key, value, export, isAssignment := assignment(lines[index].text)
 		end := index
 		if isAssignment {
 			end = valueEnd(lines, index, value)
 		}
-		owned := lines[index].text == configuredComment || lines[index].text == unconfiguredComment || (isAssignment && key == variable)
+		isDeprecated := isAssignment && connection.Deprecated != "" && key == connection.Deprecated
+		owned := lines[index].text == configuredComment || lines[index].text == unconfiguredComment || (isAssignment && key == variable) || isDeprecated
 		if !owned {
 			output = append(output, lines[index:end+1]...)
 			index = end
@@ -152,6 +176,9 @@ func Write(path, variable, signalRelayURL string) error {
 		}
 		if isAssignment && key == variable && !assigned {
 			assigned, exported = true, export
+		}
+		if isDeprecated && !deprecated {
+			deprecated, deprecatedExported = true, export
 		}
 		index = end
 	}
@@ -165,6 +192,13 @@ func Write(path, variable, signalRelayURL string) error {
 			prefix = "export "
 		}
 		replacement = []line{{configuredComment, newline}, {prefix + variable + "=" + signalRelayURL, newline}}
+		if deprecated {
+			prefix = ""
+			if deprecatedExported {
+				prefix = "export "
+			}
+			replacement = append(replacement, line{prefix + connection.Deprecated + "=" + signalRelayURL, newline})
+		}
 	}
 	if block < 0 {
 		if last := len(output) - 1; last >= 0 && output[last].ending == "" {
@@ -180,9 +214,32 @@ func Write(path, variable, signalRelayURL string) error {
 		result.WriteString(current.ending)
 	}
 	if contents != nil && result.String() == string(contents) {
-		return nil
+		return deprecated, nil
 	}
-	return writeAtomic(path, []byte(result.String()), mode)
+	return deprecated, writeAtomic(path, []byte(result.String()), mode)
+}
+
+// ReadConnection returns the value of connection.Variable in the env file at
+// path. When that value is empty, it returns the value of
+// connection.Deprecated, and deprecated is true.
+func ReadConnection(path string, connection Connection) (value string, deprecated bool, err error) {
+	if value, err = Read(path, connection.Variable); err != nil || value != "" || connection.Deprecated == "" {
+		return value, false, err
+	}
+	value, err = Read(path, connection.Deprecated)
+	return value, value != "", err
+}
+
+// DeprecationWarning tells a person that file still assigns
+// connection.Deprecated. read is true when the CLI read the connection from
+// that name, and false when the CLI kept that line current.
+func DeprecationWarning(file string, connection Connection, read bool) string {
+	action := "oe keeps it current"
+	if read {
+		action = "Run oe link to write " + connection.Variable
+	}
+	return fmt.Sprintf("warning: %s assigns %s, which is deprecated. %s. Read %s in the app. oe %s stops reading and writing %s.",
+		file, connection.Deprecated, action, connection.Variable, envvar.RemovalRelease, connection.Deprecated)
 }
 
 // Read returns the value of the last assignment of variable in the env file at

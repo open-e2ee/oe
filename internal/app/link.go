@@ -192,7 +192,11 @@ func (r *runner) link(ctx context.Context, args []string) error {
 			continue
 		}
 		change, err := fileChange(target, *dryRun, func(path string) error {
-			return envfile.Write(path, connection.Variable, signalRelayURL)
+			deprecated, err := envfile.Write(path, connection, signalRelayURL)
+			if deprecated {
+				r.warn(envfile.DeprecationWarning(filename, connection, false))
+			}
+			return err
 		})
 		if err != nil {
 			return err

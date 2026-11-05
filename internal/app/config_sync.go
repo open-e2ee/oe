@@ -15,6 +15,7 @@ import (
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
+	"github.com/open-e2ee/oe/internal/envvar"
 	"github.com/open-e2ee/oe/internal/output"
 )
 
@@ -289,14 +290,14 @@ func (entry *pushEntry) stop(status string, failure *problem) *pushEntry {
 
 // pusher holds one run of oe config push.
 type pusher struct {
-	r         *runner
-	yes       bool
-	value     config.Config
-	directory string
-	variable  string
-	access    credential.Credential
-	project   control.Project
-	policies  map[string]control.SignalProtocolRelayPolicyRequest
+	r          *runner
+	yes        bool
+	value      config.Config
+	directory  string
+	connection envfile.Connection
+	access     credential.Credential
+	project    control.Project
+	policies   map[string]control.SignalProtocolRelayPolicyRequest
 	// identity holds the identity options when the config declares identity
 	// for an environment of the run, and is nil otherwise.
 	identity *identityCommandOptions
@@ -306,7 +307,7 @@ type pusher struct {
 
 // configPush applies the environment sections of the config: Sandbox, then
 // Production when the file has its section. --env narrows the sections, and
-// OE_ENV does not. A Production change needs --yes or a person's consent. A
+// OPEN_E2EE_ENV does not. A Production change needs --yes or a person's consent. A
 // Sandbox failure skips Production, so a policy never reaches Production when
 // it did not apply to Sandbox. A section that declares identity applies its
 // retention policy and then its identity.
@@ -332,9 +333,9 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 	if configManagesIdentity(value, environments) {
 		identityOptions = &identityCommandOptions{yes: *yes, dryRun: *dryRun}
 		// One run can send an identity operation to each environment, so one
-		// key cannot repeat it. The identity commands take OE_OPERATION_ID.
-		if r.getenv("OE_OPERATION_ID") != "" {
-			return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "A config push that declares identity takes no OE_OPERATION_ID. Read an identity operation by its operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
+		// key cannot repeat it. The identity commands take OPEN_E2EE_OPERATION_ID.
+		if r.getenv(envvar.OperationID.Current) != "" {
+			return identityCommandProblem("IDENTITY_OPERATION_CONFLICT", "A config push that declares identity takes no OPEN_E2EE_OPERATION_ID. Read an identity operation by its operation ID.", "oe identity operation status --kind selection --env "+r.environment, exitUsage)
 		}
 	}
 	policies := map[string]control.SignalProtocolRelayPolicyRequest{}
@@ -377,7 +378,7 @@ func (r *runner) configPush(ctx context.Context, args []string) error {
 		defer lock.Release()
 	}
 	push := &pusher{
-		r: r, yes: *yes, value: value, directory: directory, variable: connection.Variable,
+		r: r, yes: *yes, value: value, directory: directory, connection: connection,
 		access: access, project: project, policies: policies, identity: identityOptions,
 	}
 	return push.run(ctx, environments, *dryRun)
@@ -453,7 +454,7 @@ func (p *pusher) environment(ctx context.Context, environment string, dryRun boo
 }
 
 func (p *pusher) plan(ctx context.Context, environment string) (control.Plan, error) {
-	operation, err := operationID()
+	operation, err := operationID(p.r.getenv)
 	if err != nil {
 		return control.Plan{}, err
 	}
@@ -597,7 +598,7 @@ func (p *pusher) cardRequired(setupURL, reason string) *problem {
 // apply deploys a plan. A Production deploy writes the Production
 // connection file.
 func (p *pusher) apply(ctx context.Context, plan control.Plan, environment string) (control.Deployment, error) {
-	operation, err := operationID()
+	operation, err := operationID(p.r.getenv)
 	if err != nil {
 		return control.Deployment{}, err
 	}
@@ -614,7 +615,7 @@ func (p *pusher) apply(ctx context.Context, plan control.Plan, environment strin
 	if deployment.SignalProtocolRelayURL == "" {
 		return control.Deployment{}, errors.New("control API returned an incomplete production OpenE2EE Signal Protocol Relay connection")
 	}
-	if err := writeSignalProtocolRelayEnvironment(p.directory, environmentFiles["production"], p.variable, deployment.SignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(p.directory, environmentFiles["production"], p.connection, deployment.SignalProtocolRelayURL, p.r.warn); err != nil {
 		return control.Deployment{}, err
 	}
 	p.wrote = true
@@ -646,8 +647,8 @@ func (p *pusher) report(order []string, entries map[string]*pushEntry, first str
 	}
 	next := ""
 	if p.wrote {
-		data["connection"] = map[string]any{"file": environmentFiles["production"], "variable": p.variable}
-		summary += " Wrote " + environmentFiles["production"] + ": " + p.variable + "."
+		data["connection"] = map[string]any{"file": environmentFiles["production"], "variable": p.connection.Variable}
+		summary += " Wrote " + environmentFiles["production"] + ": " + p.connection.Variable + "."
 		next = "oe doctor --env production"
 	}
 	return p.r.out.SuccessNext("config push", summary, next, data)

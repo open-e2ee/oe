@@ -660,7 +660,7 @@ func decodeResponse(response *http.Response, output any) error {
 		if decodeErr == nil && problem.deploymentProtection(response.StatusCode) {
 			return &APIError{
 				Status: response.StatusCode, Code: "DEPLOYMENT_PROTECTION_REQUIRED",
-				Message: "Vercel deployment protection blocked the control API. Ask the deployment owner for a valid bypass and set OE_PROTECTION_BYPASS. Then retry.",
+				Message: "Vercel deployment protection blocked the control API. Ask the deployment owner for a valid bypass and set OPEN_E2EE_PROTECTION_BYPASS. Then retry.",
 			}
 		}
 		return &APIError{

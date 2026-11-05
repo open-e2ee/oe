@@ -28,7 +28,7 @@ const identityPublicProfile = `{"mode":"custom-token","algorithms":["ES256"],"is
 
 func identityFixture(t *testing.T, profile string) (string, string, credential.Store) {
 	t.Helper()
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	directory := initializedProject(t, "identity-check")
 	file := filepath.Join(directory, "public-profile.json")
 	if err := os.WriteFile(file, []byte(profile), 0o600); err != nil {
@@ -46,7 +46,7 @@ func acceptedIdentity(environment string) identity.Check {
 func TestIdentityExternalCheckIsTransientHistoricalAndReadOnly(t *testing.T) {
 	for _, output := range [][]string{{"--json"}, {"--json-stream"}, {"--agent", "no"}} {
 		t.Run(strings.Join(output, " "), func(t *testing.T) {
-			t.Setenv("OE_ENV", "production")
+			t.Setenv("OPEN_E2EE_ENV", "production")
 			directory, profile, store := identityFixture(t, identityPublicProfile)
 			before := mustRead(t, filepath.Join(directory, "open-e2ee.config.ts"))
 			calls := 0
@@ -152,7 +152,7 @@ func TestIdentityBoundsStdinAndRejectsContradictoryOrUnsafeResponses(t *testing.
 }
 
 func TestIdentityCheckDeviceOwnedUsesTheAddressedReadAndNoAssertion(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -215,7 +215,7 @@ func TestIdentityCheckUsesStoredOrEnvironmentProtection(t *testing.T) {
 				t.Fatal(err)
 			}
 			in := &unreadIdentityInput{}
-			exit, out, stderr := run(t, Dependencies{API: api, Store: store, WorkingDir: directory, In: in, Getenv: environment(map[string]string{"OE_PROTECTION_BYPASS": test.environment})}, "--json", "--agent=yes", "--control-url", server.URL+"/api/cli", "--env", "sandbox", "identity", "check", "--profile", profile)
+			exit, out, stderr := run(t, Dependencies{API: api, Store: store, WorkingDir: directory, In: in, Getenv: environment(map[string]string{"OPEN_E2EE_PROTECTION_BYPASS": test.environment})}, "--json", "--agent=yes", "--control-url", server.URL+"/api/cli", "--env", "sandbox", "identity", "check", "--profile", profile)
 			if exit != test.wantExit || stderr != "" || calls != 1 || in.reads != 0 {
 				t.Fatalf("check: exit=%d calls=%d reads=%d out=%s stderr=%s", exit, calls, in.reads, out, stderr)
 			}
@@ -224,7 +224,7 @@ func TestIdentityCheckUsesStoredOrEnvironmentProtection(t *testing.T) {
 			}
 			if test.wantExit != 0 {
 				result := decodeEvent(t, []byte(out))
-				if result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next == "oe auth login" || !strings.Contains(result.Error, "OE_PROTECTION_BYPASS") {
+				if result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next == "oe auth login" || !strings.Contains(result.Error, "OPEN_E2EE_PROTECTION_BYPASS") {
 					t.Fatal("protection refusal lost its corrective action")
 				}
 			}

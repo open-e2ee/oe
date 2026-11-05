@@ -20,6 +20,7 @@ import (
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/envfile"
+	"github.com/open-e2ee/oe/internal/envvar"
 	"github.com/open-e2ee/oe/internal/projectlock"
 )
 
@@ -189,7 +190,7 @@ func (r *runner) new(ctx context.Context, args []string) error {
 		return errors.New("control API returned an incomplete sandbox OpenE2EE Signal Protocol Relay connection")
 	}
 
-	files, err := writeNewProject(ctx, directory, value, connection.Variable, bootstrap.SandboxSignalProtocolRelayURL)
+	files, err := writeNewProject(ctx, directory, value, connection, bootstrap.SandboxSignalProtocolRelayURL, r.warn)
 	if err != nil {
 		return err
 	}
@@ -206,7 +207,7 @@ func (r *runner) new(ctx context.Context, args []string) error {
 // writeNewProject writes the files of a created project under the project
 // lock and reports each file that changed. The config is last, so a run that
 // stops early leaves no config and its retry replays the operation.
-func writeNewProject(ctx context.Context, directory string, value config.Config, variable, signalRelayURL string) ([]newFileChange, error) {
+func writeNewProject(ctx context.Context, directory string, value config.Config, connection envfile.Connection, signalRelayURL string, warn func(string)) ([]newFileChange, error) {
 	lock, err := projectlock.Acquire(ctx, directory)
 	if err != nil {
 		return nil, err
@@ -227,7 +228,7 @@ func writeNewProject(ctx context.Context, directory string, value config.Config,
 	if err != nil {
 		return nil, err
 	}
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", variable, signalRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", connection, signalRelayURL, warn); err != nil {
 		return nil, err
 	}
 	if err := ensureIgnored(directory, projectlock.Filename); err != nil {
@@ -376,10 +377,10 @@ func newProject(flag, directory string) (string, error) {
 	}
 }
 
-// newOperationID is the idempotency key of the create call. OE_OPERATION_ID
+// newOperationID is the idempotency key of the create call. OPEN_E2EE_OPERATION_ID
 // overrides it.
 func newOperationID(getenv func(string) string, organization, project, directory string) string {
-	if supplied := strings.TrimSpace(getenv("OE_OPERATION_ID")); supplied != "" {
+	if supplied := strings.TrimSpace(getenv(envvar.OperationID.Current)); supplied != "" {
 		return supplied
 	}
 	sum := sha256.Sum256([]byte(organization + "\x00" + project + "\x00" + directory))

@@ -34,7 +34,7 @@ document to stdout. It never prompts and never opens a browser.
    [The organization](#the-organization).
 5. If `data.terms` is `required`, follow [The terms](#the-terms).
 
-For a control URL behind Vercel Authentication, set `OE_PROTECTION_BYPASS`
+For a control URL behind Vercel Authentication, set `OPEN_E2EE_PROTECTION_BYPASS`
 before login. Login stores the bypass with the session for that control URL.
 The environment value takes precedence over the stored value. The CLI sends
 `x-vercel-protection-bypass` only to the control URL, never to WorkOS or another
@@ -121,7 +121,7 @@ message. Only an acknowledgment that comes after the wait starts counts.
 | `code`                               | What to do                                                                                                                                                                                                                                          |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AUTHENTICATION_REQUIRED`            | No session is stored. Follow [Log in](#log-in), then run the command again.                                                                                                                                                                         |
-| `ACCESS_TOKEN_INVALID`               | The control API refused the token in `OE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OE_ACCESS_TOKEN` to a new token, or to unset it and log in.                                                                  |
+| `ACCESS_TOKEN_INVALID`               | The control API refused the token in `OPEN_E2EE_ACCESS_TOKEN`, and `oe auth login` never replaces it. Tell the person to set `OPEN_E2EE_ACCESS_TOKEN` to a new token, or to unset it and log in.                                                    |
 | `LOGIN_TIMED_OUT`                    | No person approved the device in time. Run `next` again, and give the person the new URL and code.                                                                                                                                                  |
 | `ORGANIZATION_REQUIRED`              | The session is in no organization. Follow [The organization](#the-organization), then run the command again.                                                                                                                                        |
 | `ORGANIZATION_SIGN_IN_REQUIRED`      | The organization needs its own sign-in, for example SSO. The stored session did not change. Run `next` as in [Log in](#log-in). The person chooses that organization on the sign-in page.                                                           |

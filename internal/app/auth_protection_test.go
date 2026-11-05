@@ -11,7 +11,7 @@ import (
 )
 
 func TestExpiredSessionRetainsProtectionForNextLogin(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	// Exercise the credential encoding and validation without the OS keychain.
 	keyring.MockInit()
 	for _, bypass := range []string{"stored-bypass", ""} {
@@ -55,7 +55,7 @@ func TestExpiredSessionRetainsProtectionForNextLogin(t *testing.T) {
 			} else if err != nil || stored.ProtectionBypass != bypass || stored.AccessToken != "" || stored.RefreshToken != "" || stored.ExpiresAt != "" || len(stored.Scopes) != 0 {
 				t.Errorf("expired session cleanup did not retain only protection: %v", err)
 			}
-			if _, err := credential.Resolve(store, profile); !errors.Is(err, credential.ErrNotFound) {
+			if _, err := credential.Resolve(store, profile, environment(nil)); !errors.Is(err, credential.ErrNotFound) {
 				t.Errorf("expired session still resolves: %v", err)
 			}
 			// A new invocation must recover the bypass from storage before its
@@ -83,7 +83,7 @@ func TestExpiredSessionRetainsProtectionForNextLogin(t *testing.T) {
 }
 
 func TestDeploymentProtectionDoesNotSendLoginBackToLogin(t *testing.T) {
-	t.Setenv("OE_ACCESS_TOKEN", "")
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
 	for _, test := range []struct {
 		name string
 		body map[string]any
@@ -110,7 +110,7 @@ func TestDeploymentProtectionDoesNotSendLoginBackToLogin(t *testing.T) {
 			})
 			exit, stdout, stderr := run(t, server.dependencies(credential.NewMemory(), environment(nil)), "--control-url", server.controlURL(), "--agent=yes", "auth", "login")
 			result := decodeEvent(t, []byte(stdout))
-			if exit != 5 || result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next != "" || !strings.Contains(result.Error, "OE_PROTECTION_BYPASS") {
+			if exit != 5 || result.Code != "DEPLOYMENT_PROTECTION_REQUIRED" || result.Next != "" || !strings.Contains(result.Error, "OPEN_E2EE_PROTECTION_BYPASS") {
 				t.Fatalf("deployment protection gave no actionable diagnosis: exit=%d %s", exit, stdout)
 			}
 			for _, private := range []string{"vendor-access-instruction", "vendor-mcp-instruction", "vendor-callback-nonce", "Protected deployment"} {

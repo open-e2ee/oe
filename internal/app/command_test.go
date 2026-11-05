@@ -83,7 +83,7 @@ func TestRootAndLeafHumanHelp(t *testing.T) {
 	if len(strings.Split(strings.TrimSpace(root), "\n")) > 60 {
 		t.Fatalf("root help is too long: %d lines", len(strings.Split(strings.TrimSpace(root), "\n")))
 	}
-	for _, want := range []string{"Commands:", "Global flags", "Exit codes:", "Environment variables:", "OE_ACCESS_TOKEN", "OE_PROTECTION_BYPASS", "OE_ENV", "OE_OPERATION_ID", "oe help <command>"} {
+	for _, want := range []string{"Commands:", "Global flags", "Exit codes:", "Environment variables:", "OPEN_E2EE_ACCESS_TOKEN", "OPEN_E2EE_PROTECTION_BYPASS", "OPEN_E2EE_ENV", "OPEN_E2EE_OPERATION_ID", "oe help <command>"} {
 		if !strings.Contains(root, want) {
 			t.Errorf("root help omitted %q", want)
 		}

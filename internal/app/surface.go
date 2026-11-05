@@ -59,7 +59,7 @@ var commandSurface = []commandSpec{
 		"oe auth status",
 		"oe auth logout",
 	}},
-	{"org", "Show the organization of the current session, list the organizations of the account, or move the stored session to another organization. ORG is an ID or a unique name. Without ORG, a person at a terminal chooses one. A session from OE_ACCESS_TOKEN or an agent session cannot switch.", []string{
+	{"org", "Show the organization of the current session, list the organizations of the account, or move the stored session to another organization. ORG is an ID or a unique name. Without ORG, a person at a terminal chooses one. A session from OPEN_E2EE_ACCESS_TOKEN or an agent session cannot switch.", []string{
 		"oe org show",
 		"oe org list",
 		"oe org switch [ORG]",
@@ -114,7 +114,7 @@ var globalFlagSurface = []globalFlagSpec{
 	{"--json", "Write one JSON document to stdout for the result, for success and for failure. oe auth login writes one pending event before it, while a person approves the device."},
 	{"--json-stream", "Write newline-delimited JSON progress events, then one final event, to stdout."},
 	{"--agent yes|no|auto", "Say whether a coding agent runs oe. The default, auto, reads the environment variables that coding agents set. Under an agent, the default output is JSON, and oe never prompts and never opens a browser. --agent no restores text output."},
-	{"--env sandbox|production", "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."},
+	{"--env sandbox|production", "Select the environment. -e is the short form. Without it, doctor, identity, project, and notifications read OPEN_E2EE_ENV, then use sandbox. config pull reads each active environment, and config push applies each section of the config; --env narrows either to one."},
 	{"--control-url URL", "Use another control API. It must use HTTPS except on loopback."},
 	{"-h, --help", "Show help."},
 	{"--version", "Print the CLI version."},
@@ -190,17 +190,17 @@ var exitCodeSurface = []exitCodeSpec{
 	{0, "The command succeeded."},
 	{exitFailure, "The command failed. The error and its code tell why."},
 	{exitUsage, "The command line is invalid or a required input is missing."},
-	{exitAuthentication, "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."},
+	{exitAuthentication, "Authentication is required. Run next, which is oe auth login, with --organization ORG after a failed switch. ACCESS_TOKEN_INVALID has no next: set OPEN_E2EE_ACCESS_TOKEN to a new token, or unset it and run oe auth login."},
 	{exitPersonAction, "A person must act before the command can continue. The error tells what to do. When action.url is present, it is the page that the person opens."},
 	{exitTemporary, "The failure is temporary. Run next later. Identity next reads the same server operation by its operation ID and never creates a replacement."},
 }
 
 var variableSurface = []variableSpec{
-	{"OE_ACCESS_TOKEN", "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."},
-	{"OE_ACCESS_TOKEN_SCOPES", "The scopes of OE_ACCESS_TOKEN, separated by commas or spaces."},
-	{"OE_PROTECTION_BYPASS", "A protection bypass secret for the control URL. Login stores it with that session. It takes precedence over the stored bypass and never appears in output."},
-	{"OE_ENV", "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
-	{"OE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to repeat the same command."},
+	{"OPEN_E2EE_ACCESS_TOKEN", "A scoped CI credential. It takes precedence over the stored session, and oe auth login never replaces it. The CLI keeps it in memory and never stores it."},
+	{"OPEN_E2EE_ACCESS_TOKEN_SCOPES", "The scopes of OPEN_E2EE_ACCESS_TOKEN, separated by commas or spaces."},
+	{"OPEN_E2EE_PROTECTION_BYPASS", "A protection bypass secret for the control URL. Login stores it with that session. It takes precedence over the stored bypass and never appears in output."},
+	{"OPEN_E2EE_ENV", "The environment of doctor, identity, project, and notifications when --env is not given: sandbox or production. new and config ignore it."},
+	{"OPEN_E2EE_OPERATION_ID", "The idempotency key for each remote mutation of one run. Set it only to repeat the same command."},
 }
 
 // commandPath gives the words of usage that name the command: the words

@@ -219,10 +219,10 @@ func TestPublicOperationStatusDoesNotRequireNativeCapability(t *testing.T) {
 	}
 }
 
-// operationEnvironment sets OE_OPERATION_ID for every later fixture run.
+// operationEnvironment sets OPEN_E2EE_OPERATION_ID for every later fixture run.
 func (f *publicIdentityFixture) operationEnvironment(id string) {
 	f.dependencies.Getenv = func(key string) string {
-		if key == "OE_OPERATION_ID" {
+		if key == "OPEN_E2EE_OPERATION_ID" {
 			return id
 		}
 		return ""
@@ -305,7 +305,7 @@ func TestIdentityLifecycleRefusesOperationEnvironment(t *testing.T) {
 			refusal := decodeEvent(t, []byte(out))
 			if exit != exitUsage || refusal.Code != "IDENTITY_OPERATION_CONFLICT" ||
 				refusal.Next != "oe identity operation resume --kind lifecycle --operation-id ID --env sandbox" {
-				t.Fatal("a lifecycle command accepted OE_OPERATION_ID", exit, out, stderr)
+				t.Fatal("a lifecycle command accepted OPEN_E2EE_OPERATION_ID", exit, out, stderr)
 			}
 			if strings.Contains(out+stderr, "PRIVATE_TARGET_SENTINEL") {
 				t.Fatal("the refusal echoed the private target")
@@ -434,7 +434,7 @@ func TestIdentityPendingSelectionNamesRepeatAndCancelAborts(t *testing.T) {
 	operation, _ := pending.Data["operation"].(map[string]any)
 	id, _ := operation["operationId"].(string)
 	if exit != exitTemporary || pending.Code != "IDENTITY_PENDING" || !strings.HasPrefix(id, "oe_") ||
-		!strings.Contains(pending.Error, "OE_OPERATION_ID="+id+" oe identity select --env sandbox") ||
+		!strings.Contains(pending.Error, "OPEN_E2EE_OPERATION_ID="+id+" oe identity select --env sandbox") ||
 		pending.Next != "oe identity operation status --kind selection --operation-id "+id+" --env sandbox" {
 		t.Fatal("a pending selection did not name its repeat", exit, out, stderr)
 	}
@@ -563,12 +563,12 @@ func TestIdentityInvalidOperationEnvironmentSendsNothing(t *testing.T) {
 				f.operationEnvironment(value)
 				exit, out, stderr := f.run(t, args...)
 				if exit != exitUsage || decodeEvent(t, []byte(out)).Code != "IDENTITY_INPUT_INVALID" {
-					t.Fatal("an invalid OE_OPERATION_ID was not a usage error", exit, out, stderr)
+					t.Fatal("an invalid OPEN_E2EE_OPERATION_ID was not a usage error", exit, out, stderr)
 				}
 				f.mu.Lock()
 				defer f.mu.Unlock()
 				if len(f.calls) != 0 {
-					t.Fatal("an invalid OE_OPERATION_ID sent a request", f.calls)
+					t.Fatal("an invalid OPEN_E2EE_OPERATION_ID sent a request", f.calls)
 				}
 			})
 		}
@@ -583,7 +583,7 @@ func TestIdentityCancelRefusesItsOwnOperationID(t *testing.T) {
 			exit, out, stderr := f.run(t, "identity", "operation", "cancel", "--kind", kind, "--operation-id", "held_exact_001", "--env", "sandbox")
 			failure := decodeEvent(t, []byte(out))
 			if exit != exitUsage || failure.Code != "IDENTITY_OPERATION_CONFLICT" ||
-				!strings.Contains(failure.Error, "OE_OPERATION_ID held_exact_001") || !strings.Contains(failure.Error, "--operation-id held_exact_001") {
+				!strings.Contains(failure.Error, "OPEN_E2EE_OPERATION_ID held_exact_001") || !strings.Contains(failure.Error, "--operation-id held_exact_001") {
 				t.Fatal("a cancel with its own operation ID was not refused", exit, out, stderr)
 			}
 			f.mu.Lock()
@@ -668,7 +668,7 @@ func TestIdentityAppliedCancellationRefusalReportsBothIDs(t *testing.T) {
 			if exit != exitFailure || refusal.Code != "IDENTITY_CONFLICT" || refusal.Data["operationId"] != id ||
 				!strings.HasPrefix(cancellation, "oe_") || cancellation == id ||
 				!strings.Contains(refusal.Error, "The cancel has operation ID "+cancellation+" and targets operation "+id+".") ||
-				!strings.Contains(refusal.Error, "OE_OPERATION_ID="+cancellation+" oe identity operation cancel --kind selection --operation-id "+id+" --env sandbox") {
+				!strings.Contains(refusal.Error, "OPEN_E2EE_OPERATION_ID="+cancellation+" oe identity operation cancel --kind selection --operation-id "+id+" --env sandbox") {
 				t.Fatal("the applied cancellation refusal did not report both IDs", exit, out, stderr)
 			}
 			f.operationEnvironment(cancellation)

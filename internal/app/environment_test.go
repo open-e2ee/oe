@@ -88,7 +88,7 @@ func TestEnvFlagSelectsTheEnvironmentAndDefaultsToSandbox(t *testing.T) {
 
 func TestOEEnvSelectsForReads(t *testing.T) {
 	directory := initializedProject(t, "variable-chat")
-	if err := writeSignalProtocolRelayEnvironment(directory, ".env.production.local", envfile.DefaultVariable, productionSignalProtocolRelayURL); err != nil {
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.production.local", envfile.Default, productionSignalProtocolRelayURL, noWarning(t)); err != nil {
 		t.Fatal(err)
 	}
 	store := credential.NewMemory()
@@ -103,34 +103,34 @@ func TestOEEnvSelectsForReads(t *testing.T) {
 	})}
 	production := Dependencies{
 		API: api, HTTP: signalRelay, Store: store, WorkingDir: directory,
-		Getenv: environment(map[string]string{"OE_ENV": "production"}),
+		Getenv: environment(map[string]string{"OPEN_E2EE_ENV": "production"}),
 	}
 
 	exit, stdout, _ := run(t, production, "project", "connection")
 	if exit != 0 || stdout != productionSignalProtocolRelayURL+"\n" {
-		t.Fatalf("OE_ENV=production did not select Production: exit=%d %q", exit, stdout)
+		t.Fatalf("OPEN_E2EE_ENV=production did not select Production: exit=%d %q", exit, stdout)
 	}
 	exit, stdout, _ = run(t, production, "project", "connection", "--env", "sandbox")
 	if exit != 0 || stdout != sandboxSignalProtocolRelayURL+"\n" {
-		t.Fatalf("--env did not override OE_ENV: exit=%d %q", exit, stdout)
+		t.Fatalf("--env did not override OPEN_E2EE_ENV: exit=%d %q", exit, stdout)
 	}
 	exit, stdout, _ = run(t, production, "--json", "notifications", "status")
 	if exit != 0 || strings.Join(read, ",") != "production" {
-		t.Fatalf("notifications did not read OE_ENV: %v %s", read, stdout)
+		t.Fatalf("notifications did not read OPEN_E2EE_ENV: %v %s", read, stdout)
 	}
 	exit, stdout, _ = run(t, production, "--json", "doctor")
 	if checks := decodeEvent(t, []byte(stdout)); exit != 0 || checks.Data["environment"] != "production" || checks.Data["configurationSource"] != ".env.production.local" {
-		t.Fatalf("doctor did not read OE_ENV: exit=%d %s", exit, stdout)
+		t.Fatalf("doctor did not read OPEN_E2EE_ENV: exit=%d %s", exit, stdout)
 	}
 
 	invalid := production
-	invalid.Getenv = environment(map[string]string{"OE_ENV": "stage"})
+	invalid.Getenv = environment(map[string]string{"OPEN_E2EE_ENV": "stage"})
 	exit, stdout, _ = run(t, invalid, "--json", "project", "connection")
-	if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || failure.Error != "OE_ENV must be sandbox or production" {
-		t.Fatalf("OE_ENV=stage was accepted: exit=%d %s", exit, stdout)
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitUsage || failure.Code != "USAGE_ERROR" || failure.Error != "OPEN_E2EE_ENV must be sandbox or production" {
+		t.Fatalf("OPEN_E2EE_ENV=stage was accepted: exit=%d %s", exit, stdout)
 	}
 	if exit, stdout, _ := run(t, invalid, "--json", "project", "connection", "-e", "sandbox"); exit != 0 {
-		t.Fatalf("--env did not override an invalid OE_ENV: %s", stdout)
+		t.Fatalf("--env did not override an invalid OPEN_E2EE_ENV: %s", stdout)
 	}
 }
 

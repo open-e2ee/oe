@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/open-e2ee/oe/internal/control"
+	"github.com/open-e2ee/oe/internal/envvar"
 	"github.com/open-e2ee/oe/internal/identity"
 )
 
@@ -108,46 +109,46 @@ func identityOperationError(kind identity.Kind, id string, err error) error {
 	return &identityOperationFailure{kind: kind, id: id, err: err}
 }
 
-// identityOperationEnvironment checks OE_OPERATION_ID for one selection or
+// identityOperationEnvironment checks OPEN_E2EE_OPERATION_ID for one selection or
 // keys-only mutation before any network read. A cancel sends its own
 // operation ID, so that ID cannot be the ID of the operation it cancels.
 func (r *runner) identityOperationEnvironment(action identity.Action, cancelled string) error {
-	value := r.getenv("OE_OPERATION_ID")
+	value := r.getenv(envvar.OperationID.Current)
 	if value == "" {
 		return nil
 	}
 	if identity.SelectionOperationID(value).Validate() != nil {
-		return identityCommandProblem("IDENTITY_INPUT_INVALID", "OE_OPERATION_ID must be 8 to 96 letters, digits, underscores or hyphens.", "oe help identity", exitUsage)
+		return identityCommandProblem("IDENTITY_INPUT_INVALID", "OPEN_E2EE_OPERATION_ID must be 8 to 96 letters, digits, underscores or hyphens.", "oe help identity", exitUsage)
 	}
 	if action.Cancel() && value == cancelled {
 		return identityCommandProblem("IDENTITY_OPERATION_CONFLICT",
-			"OE_OPERATION_ID "+value+" equals the --operation-id "+cancelled+" of the operation to cancel. A cancel needs its own operation ID. Unset OE_OPERATION_ID, or set it to a new ID.",
+			"OPEN_E2EE_OPERATION_ID "+value+" equals the --operation-id "+cancelled+" of the operation to cancel. A cancel needs its own operation ID. Unset OPEN_E2EE_OPERATION_ID, or set it to a new ID.",
 			"oe help identity", exitUsage)
 	}
 	return nil
 }
 
 // identityMutationOperationID resolves the idempotency key of one selection or
-// keys-only mutation. OE_OPERATION_ID repeats an earlier command, and the
+// keys-only mutation. OPEN_E2EE_OPERATION_ID repeats an earlier command, and the
 // server replays its result while the command is the same.
 func (r *runner) identityMutationOperationID(action identity.Action, cancelled string) (identity.SelectionOperationID, error) {
 	if err := r.identityOperationEnvironment(action, cancelled); err != nil {
 		return "", err
 	}
-	if value := r.getenv("OE_OPERATION_ID"); value != "" {
+	if value := r.getenv(envvar.OperationID.Current); value != "" {
 		return identity.SelectionOperationID(value), nil
 	}
 	return identityNewID()
 }
 
-// identityLifecycleOperationIDRefusal refuses OE_OPERATION_ID on a lifecycle
+// identityLifecycleOperationIDRefusal refuses OPEN_E2EE_OPERATION_ID on a lifecycle
 // command. Its operation ID comes from the server preparation.
 func (r *runner) identityLifecycleOperationIDRefusal() error {
-	if r.getenv("OE_OPERATION_ID") == "" {
+	if r.getenv(envvar.OperationID.Current) == "" {
 		return nil
 	}
 	return identityCommandProblem("IDENTITY_OPERATION_CONFLICT",
-		"A lifecycle command takes no OE_OPERATION_ID. Continue a lifecycle operation by its prepared operation ID.",
+		"A lifecycle command takes no OPEN_E2EE_OPERATION_ID. Continue a lifecycle operation by its prepared operation ID.",
 		"oe identity operation resume --kind lifecycle --operation-id ID --env "+r.environment, exitUsage)
 }
 
@@ -167,7 +168,7 @@ func (r *runner) executeIdentity(ctx context.Context, input identityExecutionInp
 		}
 	}
 	// The mutation key is resolved before any network read, so an invalid
-	// OE_OPERATION_ID is a usage error that sends nothing.
+	// OPEN_E2EE_OPERATION_ID is a usage error that sends nothing.
 	var mutationID identity.SelectionOperationID
 	if input.Action == identity.SelectionApplyAction || input.Action == identity.KeysReplaceAction || input.Action.Cancel() {
 		id, err := r.identityMutationOperationID(input.Action, input.OperationID)

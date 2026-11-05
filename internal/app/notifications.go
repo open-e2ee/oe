@@ -177,7 +177,7 @@ func (r *runner) addNotificationProfile(ctx context.Context, profile control.Not
 	if !hasNotificationProfile(profiles, profile) {
 		profiles = append(profiles, profile)
 	}
-	operation, err := operationID()
+	operation, err := operationID(r.getenv)
 	if err != nil {
 		return control.NotificationConfiguration{}, err
 	}

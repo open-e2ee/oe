@@ -175,7 +175,7 @@ func TestNewCreatesSandboxAndWritesTheFiles(t *testing.T) {
 	if !strings.Contains(configSource, `project: "acme-chat"`) || !strings.Contains(configSource, "sandbox: {") || strings.Contains(configSource, "production") {
 		t.Fatalf("oe new wrote the wrong config:\n%s", configSource)
 	}
-	if env := string(mustRead(t, filepath.Join(directory, ".env.local"))); !strings.HasSuffix(env, "\nOPEN_E2EE_RELAY_URL="+sandboxSignalProtocolRelayURL+"\n") {
+	if env := string(mustRead(t, filepath.Join(directory, ".env.local"))); !strings.HasSuffix(env, "\nOPEN_E2EE_SIGNAL_RELAY_URL="+sandboxSignalProtocolRelayURL+"\n") {
 		t.Fatalf("oe new wrote the wrong .env.local: %q", env)
 	}
 	ignored := string(mustRead(t, filepath.Join(directory, ".gitignore")))
@@ -296,13 +296,13 @@ func TestNewRetryReplaysTheOperationID(t *testing.T) {
 	}
 	supplied := dependencies
 	supplied.WorkingDir = emptyDirectory(t, "retry-chat")
-	supplied.Getenv = environment(map[string]string{"OE_OPERATION_ID": "oe_supplied_key"})
+	supplied.Getenv = environment(map[string]string{"OPEN_E2EE_OPERATION_ID": "oe_supplied_key"})
 	if exit, stdout, _ := run(t, supplied, "--json", "new"); exit != 0 {
-		t.Fatalf("oe new with OE_OPERATION_ID failed: %s", stdout)
+		t.Fatalf("oe new with OPEN_E2EE_OPERATION_ID failed: %s", stdout)
 	}
 	keys, _, _ = server.calls()
 	if another, last := keys[len(keys)-2], keys[len(keys)-1]; another == want || !strings.HasPrefix(another, "oe_new_") || last != "oe_supplied_key" {
-		t.Fatalf("another directory used %s and OE_OPERATION_ID gave %s", another, last)
+		t.Fatalf("another directory used %s and OPEN_E2EE_OPERATION_ID gave %s", another, last)
 	}
 }
 

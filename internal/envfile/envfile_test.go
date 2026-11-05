@@ -16,16 +16,16 @@ func TestVariableFollowsTheFrameworkInPackageJSON(t *testing.T) {
 		name, manifest, override string
 		want                     Connection
 	}{
-		{"next", `{"dependencies":{"next":"16.0.0","react":"19.0.0"}}`, "", Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}},
-		{"vite", `{"devDependencies":{"vite":"7.0.0"}}`, "", Connection{"Vite", "VITE_OPEN_E2EE_RELAY_URL"}},
-		{"expo", `{"dependencies":{"expo":"55.0.0","react-native":"0.83.0"}}`, "", Connection{"Expo", "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL"}},
-		{"anything else", `{"dependencies":{"express":"5.0.0"}}`, "", Connection{"", "OPEN_E2EE_RELAY_URL"}},
-		{"no package.json", "", "", Connection{"", "OPEN_E2EE_RELAY_URL"}},
-		{"next before vite", `{"dependencies":{"next":"16.0.0"},"devDependencies":{"vite":"7.0.0"}}`, "", Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}},
-		{"expo before vite", `{"dependencies":{"expo":"55.0.0"},"devDependencies":{"vite":"7.0.0"}}`, "", Connection{"Expo", "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL"}},
-		{"byte order mark", "\xef\xbb\xbf" + `{"dependencies":{"next":"16.0.0"}}`, "", Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}},
-		{"override", `{"dependencies":{"next":"16.0.0"}}`, "SIGNAL_RELAY_URL", Connection{"", "SIGNAL_RELAY_URL"}},
-		{"override skips package.json", `{not json`, "SIGNAL_RELAY_URL", Connection{"", "SIGNAL_RELAY_URL"}},
+		{"next", `{"dependencies":{"next":"16.0.0","react":"19.0.0"}}`, "", Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}},
+		{"vite", `{"devDependencies":{"vite":"7.0.0"}}`, "", Connection{"Vite", "VITE_OPEN_E2EE_SIGNAL_RELAY_URL", "VITE_OPEN_E2EE_RELAY_URL"}},
+		{"expo", `{"dependencies":{"expo":"55.0.0","react-native":"0.83.0"}}`, "", Connection{"Expo", "EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL"}},
+		{"anything else", `{"dependencies":{"express":"5.0.0"}}`, "", Connection{"", "OPEN_E2EE_SIGNAL_RELAY_URL", "OPEN_E2EE_RELAY_URL"}},
+		{"no package.json", "", "", Connection{"", "OPEN_E2EE_SIGNAL_RELAY_URL", "OPEN_E2EE_RELAY_URL"}},
+		{"next before vite", `{"dependencies":{"next":"16.0.0"},"devDependencies":{"vite":"7.0.0"}}`, "", Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}},
+		{"expo before vite", `{"dependencies":{"expo":"55.0.0"},"devDependencies":{"vite":"7.0.0"}}`, "", Connection{"Expo", "EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", "EXPO_PUBLIC_OPEN_E2EE_RELAY_URL"}},
+		{"byte order mark", "\xef\xbb\xbf" + `{"dependencies":{"next":"16.0.0"}}`, "", Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}},
+		{"override", `{"dependencies":{"next":"16.0.0"}}`, "SIGNAL_RELAY_URL", Connection{"", "SIGNAL_RELAY_URL", ""}},
+		{"override skips package.json", `{not json`, "SIGNAL_RELAY_URL", Connection{"", "SIGNAL_RELAY_URL", ""}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -63,19 +63,19 @@ func TestWriteKeepsOtherLines(t *testing.T) {
 			"append after comments and blank lines",
 			"\n# Database\nDATABASE_URL=postgres://localhost/app\n\n# Keys\nAPI_KEY=secret\n\n",
 			"\n# Database\nDATABASE_URL=postgres://localhost/app\n\n# Keys\nAPI_KEY=secret\n\n" +
-				configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=" + signalRelayURL + "\n",
+				configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=" + signalRelayURL + "\n",
 		},
 		{
 			"no final line break",
 			"API_KEY=secret",
-			"API_KEY=secret\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=" + signalRelayURL + "\n",
+			"API_KEY=secret\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=" + signalRelayURL + "\n",
 		},
 		{
 			"replace in place",
-			"A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://old.example\n# after\nB=2",
-			"A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=" + signalRelayURL + "\n# after\nB=2",
+			"A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://old.example\n# after\nB=2",
+			"A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=" + signalRelayURL + "\n# after\nB=2",
 		},
-		{"new file", "", configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=" + signalRelayURL + "\n"},
+		{"new file", "", configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=" + signalRelayURL + "\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), ".env.local")
@@ -84,29 +84,29 @@ func TestWriteKeepsOtherLines(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			expectWrite(t, path, "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL", signalRelayURL, test.after)
+			expectWrite(t, path, "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", signalRelayURL, test.after)
 		})
 	}
 }
 
 func TestWriteReplacesOnlyTheSignalProtocolRelayVariable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".env.local")
-	before := "OPEN_E2EE_RELAY_URL=https://server.example\n" +
-		"NEXT_PUBLIC_OPEN_E2EE_RELAY_URL_BACKUP=https://backup.example\n" +
-		"# NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://commented.example\n" +
-		"  NEXT_PUBLIC_OPEN_E2EE_RELAY_URL = https://first.example # old\n" +
+	before := "OPEN_E2EE_SIGNAL_RELAY_URL=https://server.example\n" +
+		"NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL_BACKUP=https://backup.example\n" +
+		"# NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://commented.example\n" +
+		"  NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL = https://first.example # old\n" +
 		"KEEP=1\n" +
-		"NEXT_PUBLIC_OPEN_E2EE_RELAY_URL: https://colon.example\n" +
-		"NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://last.example\n"
+		"NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL: https://colon.example\n" +
+		"NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://last.example\n"
 	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	expectWrite(t, path, "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL", signalRelayURL,
-		"OPEN_E2EE_RELAY_URL=https://server.example\n"+
-			"NEXT_PUBLIC_OPEN_E2EE_RELAY_URL_BACKUP=https://backup.example\n"+
-			"# NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://commented.example\n"+
+	expectWrite(t, path, "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", signalRelayURL,
+		"OPEN_E2EE_SIGNAL_RELAY_URL=https://server.example\n"+
+			"NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL_BACKUP=https://backup.example\n"+
+			"# NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://commented.example\n"+
 			configuredComment+"\n"+
-			"NEXT_PUBLIC_OPEN_E2EE_RELAY_URL="+signalRelayURL+"\n"+
+			"NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL="+signalRelayURL+"\n"+
 			"KEEP=1\n")
 }
 
@@ -186,11 +186,11 @@ func TestWriteRecordsAnEnvironmentWithNoConnection(t *testing.T) {
 func TestWriteRefusesAValueThatAnEnvFileChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".env.local")
 	for _, value := range []string{"https://a.example/#x", "https://a.example/ x", "https://a.example/$X", "https://a.example/\"", "https://a.example/\nB=2"} {
-		if err := Write(path, "SIGNAL_RELAY", value); err == nil {
+		if _, err := Write(path, Connection{Variable: "SIGNAL_RELAY"}, value); err == nil {
 			t.Fatalf("Write accepted %q", value)
 		}
 	}
-	if err := Write(path, "SIGNAL_RELAY-URL", signalRelayURL); err == nil {
+	if _, err := Write(path, Connection{Variable: "SIGNAL_RELAY-URL"}, signalRelayURL); err == nil {
 		t.Fatal("Write accepted an invalid variable name")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -206,7 +206,7 @@ func TestWriteKeepsTheFilePermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte("API_KEY=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := Write(path, "SIGNAL_RELAY", signalRelayURL); err != nil {
+	if _, err := Write(path, Connection{Variable: "SIGNAL_RELAY"}, signalRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -214,7 +214,7 @@ func TestWriteKeepsTheFilePermissions(t *testing.T) {
 		t.Fatalf("the write changed the permissions of a file with a secret: %v %v", info.Mode(), err)
 	}
 	created := filepath.Join(t.TempDir(), ".env.local")
-	if err := Write(created, "SIGNAL_RELAY", signalRelayURL); err != nil {
+	if _, err := Write(created, Connection{Variable: "SIGNAL_RELAY"}, signalRelayURL); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(created); err != nil || info.Mode().Perm() != 0o644 {
@@ -241,9 +241,20 @@ func TestWriteFollowsASymlink(t *testing.T) {
 // expectWrite writes twice and checks that the second write changes nothing.
 func expectWrite(t *testing.T, path, variable, value, want string) {
 	t.Helper()
+	expectConnectionWrite(t, path, Connection{Variable: variable}, value, want, false)
+}
+
+// expectConnectionWrite writes twice, so the second write proves that the
+// first one is stable.
+func expectConnectionWrite(t *testing.T, path string, connection Connection, value, want string, wantDeprecated bool) {
+	t.Helper()
 	for range 2 {
-		if err := Write(path, variable, value); err != nil {
+		deprecated, err := Write(path, connection, value)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if deprecated != wantDeprecated {
+			t.Fatalf("Write reported deprecated=%t; want %t", deprecated, wantDeprecated)
 		}
 		got, err := os.ReadFile(path)
 		if err != nil {
@@ -278,5 +289,102 @@ func TestReadReturnsTheLastAssignment(t *testing.T) {
 				t.Fatalf("want %q, got %q, %v", test.want, value, err)
 			}
 		})
+	}
+}
+
+var nextConnection = Connection{"Next.js", "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL"}
+
+// A file that an earlier oe wrote keeps its deprecated line, with the same
+// URL as the current line, so an app that still reads the deprecated name
+// never gets a stale connection.
+func TestWriteKeepsADeprecatedLineCurrent(t *testing.T) {
+	for _, test := range []struct{ name, before, after string }{
+		{
+			"file from an earlier oe",
+			"A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://old.example\nB=2\n",
+			"A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=" + signalRelayURL + "\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=" + signalRelayURL + "\nB=2\n",
+		},
+		{
+			"both lines with an export prefix on the deprecated one",
+			"NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://old.example\nKEEP=1\nexport NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=\"https://old.example\"\n",
+			configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=" + signalRelayURL + "\nexport NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=" + signalRelayURL + "\nKEEP=1\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".env.local")
+			if err := os.WriteFile(path, []byte(test.before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			expectConnectionWrite(t, path, nextConnection, signalRelayURL, test.after, true)
+		})
+	}
+}
+
+func TestWriteNeverAddsADeprecatedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env.local")
+	if err := os.WriteFile(path, []byte("A=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectConnectionWrite(t, path, nextConnection, signalRelayURL,
+		"A=1\n"+configuredComment+"\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL="+signalRelayURL+"\n", false)
+}
+
+func TestWriteWithoutAConnectionRemovesTheDeprecatedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env.production.local")
+	before := "A=1\n" + configuredComment + "\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://old.example\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://old.example\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if deprecated, err := Write(path, nextConnection, ""); err != nil || !deprecated {
+		t.Fatalf("Write = %t, %v; want the deprecated line reported", deprecated, err)
+	}
+	expectConnectionWrite(t, path, nextConnection, "", "A=1\n"+unconfiguredComment+"\n", false)
+}
+
+// An override names one variable, so a write leaves every other line alone.
+func TestWriteWithAnOverrideLeavesTheDeprecatedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env.local")
+	if err := os.WriteFile(path, []byte("OPEN_E2EE_RELAY_URL=https://old.example\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectConnectionWrite(t, path, Connection{Variable: "SIGNAL_RELAY"}, signalRelayURL,
+		"OPEN_E2EE_RELAY_URL=https://old.example\n"+configuredComment+"\nSIGNAL_RELAY="+signalRelayURL+"\n", false)
+}
+
+func TestReadConnectionReadsTheCurrentNameFirst(t *testing.T) {
+	for _, test := range []struct {
+		name, contents string
+		connection     Connection
+		want           string
+		wantDeprecated bool
+	}{
+		{"current name", "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://new.example\n", nextConnection, "https://new.example", false},
+		{"deprecated name", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://old.example\n", nextConnection, "https://old.example", true},
+		{"both names", "NEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://old.example\nNEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=https://new.example\n", nextConnection, "https://new.example", false},
+		{"empty current name", "NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL=\nNEXT_PUBLIC_OPEN_E2EE_RELAY_URL=https://old.example\n", nextConnection, "https://old.example", true},
+		{"neither name", "A=1\n", nextConnection, "", false},
+		{"override", "OPEN_E2EE_RELAY_URL=https://old.example\n", Connection{Variable: "SIGNAL_RELAY"}, "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".env.local")
+			if err := os.WriteFile(path, []byte(test.contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			value, deprecated, err := ReadConnection(path, test.connection)
+			if err != nil || value != test.want || deprecated != test.wantDeprecated {
+				t.Fatalf("ReadConnection = %q, %t, %v; want %q, %t", value, deprecated, err, test.want, test.wantDeprecated)
+			}
+		})
+	}
+}
+
+func TestDeprecationWarningNamesBothVariablesAndTheRemovalRelease(t *testing.T) {
+	read := DeprecationWarning(".env.local", nextConnection, true)
+	if read != "warning: .env.local assigns NEXT_PUBLIC_OPEN_E2EE_RELAY_URL, which is deprecated. Run oe link to write NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL. Read NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL in the app. oe v6.0.0 stops reading and writing NEXT_PUBLIC_OPEN_E2EE_RELAY_URL." {
+		t.Fatalf("read warning = %q", read)
+	}
+	kept := DeprecationWarning(".env.local", nextConnection, false)
+	if kept != "warning: .env.local assigns NEXT_PUBLIC_OPEN_E2EE_RELAY_URL, which is deprecated. oe keeps it current. Read NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL in the app. oe v6.0.0 stops reading and writing NEXT_PUBLIC_OPEN_E2EE_RELAY_URL." {
+		t.Fatalf("kept warning = %q", kept)
 	}
 }
