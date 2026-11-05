@@ -9,8 +9,8 @@ import (
 
 const signalRelayURL = "https://sandbox.relay.open-e2ee.dev/signal/v1/connection/pk_sandbox_public"
 
-// The rows match managedRelayFrameworkConnections in the console's
-// src/lib/managed-relay-setup-guidance.ts.
+// The rows match managedSignalProtocolRelayFrameworkConnections in the
+// console's src/lib/managed-signal-relay-setup-guidance.ts.
 func TestVariableFollowsTheFrameworkInPackageJSON(t *testing.T) {
 	for _, test := range []struct {
 		name, manifest, override string
