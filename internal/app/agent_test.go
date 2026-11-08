@@ -220,7 +220,7 @@ func TestProjectConnectionPrintsTheServerSignalProtocolRelayURL(t *testing.T) {
 	}
 	exit, stdout, _ = run(t, dependencies, "project", "connection", "other-chat", "--json", "--env=sandbox")
 	connection := decodeEvent(t, []byte(stdout))
-	if exit != 0 || connection.Data["relayUrl"] != sandboxSignalProtocolRelayURL || connection.Data["project"] != "other-chat" || connection.Data["variable"] != "OPEN_E2EE_SIGNAL_RELAY_URL" {
+	if exit != 0 || connection.Data["signalRelayUrl"] != sandboxSignalProtocolRelayURL || connection.Data["relayUrl"] != sandboxSignalProtocolRelayURL || connection.Data["project"] != "other-chat" || connection.Data["variable"] != "OPEN_E2EE_SIGNAL_RELAY_URL" {
 		t.Fatalf("JSON connection is incomplete: %s", stdout)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "project", "connection", "--env", "production")
@@ -254,8 +254,9 @@ func TestProjectShowNeedsNoConfigAndOmitsTheConnection(t *testing.T) {
 		strings.Contains(stdout, "deliveryTtlSeconds") {
 		t.Fatalf("project show named the retention fields wrong: %s", stdout)
 	}
-	if sandbox["relayReceipts"] != true {
-		t.Fatalf("project show lost the relayReceipts policy: %s", stdout)
+	// relayReceipts is the deprecated copy of signalRelayReceipts until v7.0.0.
+	if sandbox["signalRelayReceipts"] != true || sandbox["relayReceipts"] != true {
+		t.Fatalf("project show lost the signalRelayReceipts policy: %s", stdout)
 	}
 	if strings.Contains(stdout, "pk_sandbox_public") {
 		t.Fatalf("project show printed a Relay connection URL: %s", stdout)

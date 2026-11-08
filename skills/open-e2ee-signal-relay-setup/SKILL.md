@@ -1,5 +1,5 @@
 ---
-name: open-e2ee-relay-setup
+name: open-e2ee-signal-relay-setup
 description: Use this skill to set up the OpenE2EE Signal Protocol Relay in an app with the oe CLI. It covers the login, the organization, the OpenE2EE terms, a new project, a link to a project that exists, and the first message check. Use it when a person asks to add the Relay to an app, or to create or link an OpenE2EE project. Use it when the oe CLI returns AUTHENTICATION_REQUIRED, ACCESS_TOKEN_INVALID, LOGIN_TIMED_OUT, ORGANIZATION_REQUIRED, ORGANIZATION_SIGN_IN_REQUIRED, ORGANIZATION_SWITCH_FAILED, CONTROL_UPDATE_REQUIRED, ALREADY_SET_UP, PROJECT_EXISTS, PROJECT_INVALID, PROJECT_NOT_FOUND, PROJECT_REQUIRED, CONTROL_CONFLICT, TERMS_REQUIRED, TERMS_PERMISSION_REQUIRED, FIRST_MESSAGE_TIMED_OUT, or FIRST_MESSAGE_ALREADY_ACKNOWLEDGED.
 ---
 

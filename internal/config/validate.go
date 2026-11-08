@@ -17,37 +17,51 @@ import (
 	"github.com/open-e2ee/oe/schema"
 )
 
-var configSchema = func() *jsonschema.Schema {
-	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schema.ConfigV2))
+// configSchemas holds the compiled schema of each config form.
+var configSchemas = map[Format]*jsonschema.Schema{
+	FormatV3: compileSchema("config-v3.json", schema.ConfigV3),
+	FormatV2: compileSchema("config-v2.json", schema.ConfigV2),
+}
+
+func compileSchema(url string, contents []byte) *jsonschema.Schema {
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(contents))
 	if err != nil {
 		panic(err)
 	}
 	compiler := jsonschema.NewCompiler()
-	const url = "config-v2.json"
 	if err := compiler.AddResource(url, document); err != nil {
 		panic(err)
 	}
 	return compiler.MustCompile(url)
-}()
+}
 
 // managedMaximum is the longest retention that each environment allows.
 var managedMaximum = map[string]string{"sandbox": "7d", "production": "30d"}
 
-// validate checks value against schema/config-v2.json and the managed
-// maximums, and returns it as a Config.
+// validate checks value against the schema of its form and the managed
+// maximums, and returns it as a Config. A value in the config-v2.json form
+// gives the same Config as the value in the config-v3.json form, with Format
+// set to FormatV2. Each error path uses the key names of the value.
 func validate(value any) (Config, error) {
+	format, err := formatOf(value)
+	if err != nil {
+		return Config{}, err
+	}
 	var fields []FieldError
-	if err := configSchema.Validate(value); err != nil {
+	if err := configSchemas[format].Validate(value); err != nil {
 		failure, ok := errors.AsType[*jsonschema.ValidationError](err)
 		if !ok {
 			return Config{}, err
 		}
 		fields = schemaErrors(failure, message.NewPrinter(language.English))
 	}
-	// A shared policy that leaves out relayReceipts keeps Relay delivery
+	// A shared policy that leaves out the receipts key keeps Relay delivery
 	// receipts on.
 	result := Config{SignalProtocolRelay: SignalProtocolRelayPolicy{SignalProtocolRelayReceipts: true}}
 	if len(fields) == 0 {
+		if format == FormatV2 {
+			value = renameKeys(value, nil, v2Names)
+		}
 		encoded, err := json.Marshal(value)
 		if err != nil {
 			return Config{}, err
@@ -67,7 +81,7 @@ func validate(value any) (Config, error) {
 			} {
 				if retentionSeconds[field.value] > retentionSeconds[maximum] {
 					fields = append(fields, FieldError{
-						Path:    "environments." + environment + ".relay." + field.name,
+						Path:    format.Path("environments", environment, "signalRelay", field.name),
 						Message: fmt.Sprintf("is %s, longer than the %s maximum of %s", field.value, environment, maximum),
 					})
 				}
@@ -75,8 +89,14 @@ func validate(value any) (Config, error) {
 		}
 	}
 	if len(fields) == 0 {
+		result.Format = format
 		return result, nil
 	}
+	return Config{}, invalid(fields)
+}
+
+// invalid returns CONFIG_INVALID with each field error, in path order.
+func invalid(fields []FieldError) error {
 	slices.SortFunc(fields, func(a, b FieldError) int {
 		return cmp.Or(strings.Compare(a.Path, b.Path), strings.Compare(a.Message, b.Message))
 	})
@@ -84,7 +104,7 @@ func validate(value any) (Config, error) {
 	for index, field := range fields {
 		details[index] = cmp.Or(field.Path, "the default export") + " " + field.Message
 	}
-	return Config{}, &Error{
+	return &Error{
 		Code:    "CONFIG_INVALID",
 		Message: fmt.Sprintf("%s is not valid: %s", Filename, strings.Join(details, "; ")),
 		Data:    map[string]any{"errors": fields},

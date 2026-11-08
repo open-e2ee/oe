@@ -37,14 +37,17 @@ test("stages six native optional packages without a postinstall downloader", asy
       path.join(directory, "artifacts/checksums.txt"),
       "utf8",
     );
-    assert.equal(checksums.trim().split("\n").length, 7);
-    const schema = JSON.parse(
-      await readFile(path.join(directory, "artifacts/config-v2.json"), "utf8"),
-    );
-    assert.equal(
-      schema.$id,
-      "https://github.com/open-e2ee/oe/releases/latest/download/config-v2.json",
-    );
+    assert.equal(checksums.trim().split("\n").length, 8);
+    for (const name of ["config-v3.json", "config-v2.json"]) {
+      const schema = JSON.parse(
+        await readFile(path.join(directory, "artifacts", name), "utf8"),
+      );
+      assert.equal(
+        schema.$id,
+        `https://github.com/open-e2ee/oe/releases/latest/download/${name}`,
+      );
+      assert.match(checksums, new RegExp(`^[0-9a-f]{64}  ${name}$`, "m"));
+    }
 
     const platformPackage = `oe-${process.platform}-${process.arch}`;
     const tarballs = [];

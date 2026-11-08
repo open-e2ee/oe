@@ -73,7 +73,7 @@ func TestDoctorWaitSeesTheFirstAcknowledgedMessage(t *testing.T) {
 	if calls := activations.Load(); calls != 2 {
 		t.Fatalf("doctor --wait read the activation %d times, want 2", calls)
 	}
-	if progress := decodeEvent(t, []byte(lines[0])); progress.Status != "progress" || progress.Data["relayOrigin"] != server.URL {
+	if progress := decodeEvent(t, []byte(lines[0])); progress.Status != "progress" || progress.Data["signalRelayOrigin"] != server.URL || progress.Data["relayOrigin"] != server.URL {
 		t.Fatalf("doctor --wait did not report the checks before the wait: %s", stdout)
 	}
 }
@@ -147,7 +147,7 @@ func TestDoctorWaitRefreshesASessionThatExpires(t *testing.T) {
 func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 	directory := initializedProject(t, "clone-chat")
 	exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "--env", "sandbox", "doctor")
-	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != "oe link" {
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "SIGNAL_RELAY_CONNECTION_MISSING" || failure.Next != "oe link" {
 		t.Fatalf("sandbox doctor in a clone gave exit=%d %s", exit, stdout)
 	}
 	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
@@ -165,7 +165,7 @@ func TestDoctorNamesLinkForAMissingConnection(t *testing.T) {
 			return control.Project{Slug: "clone-chat", Writer: "config", Sandbox: sandbox, Production: test.production}, nil
 		}}
 		exit, stdout, _ := run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "--env", "production", "doctor")
-		if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "RELAY_CONNECTION_MISSING" || failure.Next != test.next {
+		if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "SIGNAL_RELAY_CONNECTION_MISSING" || failure.Next != test.next {
 			t.Fatalf("production doctor in a clone with a %s Production gave exit=%d %s", test.production.State, exit, stdout)
 		}
 	}

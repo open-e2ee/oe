@@ -380,11 +380,11 @@ func TestReadConnectionReadsTheCurrentNameFirst(t *testing.T) {
 
 func TestDeprecationWarningNamesBothVariablesAndTheRemovalRelease(t *testing.T) {
 	read := DeprecationWarning(".env.local", nextConnection, true)
-	if read != "warning: .env.local assigns NEXT_PUBLIC_OPEN_E2EE_RELAY_URL, which is deprecated. Run oe link to write NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL. Read NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL in the app. oe v6.0.0 stops reading and writing NEXT_PUBLIC_OPEN_E2EE_RELAY_URL." {
+	if read != "warning: .env.local assigns NEXT_PUBLIC_OPEN_E2EE_RELAY_URL, which is deprecated. Run oe link to write NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL. Read NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL in the app. oe v7.0.0 stops reading and writing NEXT_PUBLIC_OPEN_E2EE_RELAY_URL." {
 		t.Fatalf("read warning = %q", read)
 	}
 	kept := DeprecationWarning(".env.local", nextConnection, false)
-	if kept != "warning: .env.local assigns NEXT_PUBLIC_OPEN_E2EE_RELAY_URL, which is deprecated. oe keeps it current. Read NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL in the app. oe v6.0.0 stops reading and writing NEXT_PUBLIC_OPEN_E2EE_RELAY_URL." {
+	if kept != "warning: .env.local assigns NEXT_PUBLIC_OPEN_E2EE_RELAY_URL, which is deprecated. oe keeps it current. Read NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL in the app. oe v7.0.0 stops reading and writing NEXT_PUBLIC_OPEN_E2EE_RELAY_URL." {
 		t.Fatalf("kept warning = %q", kept)
 	}
 }

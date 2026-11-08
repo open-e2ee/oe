@@ -310,7 +310,7 @@ func TestNewUnderAnAgentWithoutTermsExitsFive(t *testing.T) {
 	var accepted atomic.Bool
 	server := startNewControl(t, func(call int, body map[string]any) (int, string) {
 		if !accepted.Load() {
-			return http.StatusForbidden, `{"code":"TERMS_REQUIRED","message":"Accept the OpenE2EE terms.","canAccept":true,"documents":[{"name":"Relay Service Terms","url":"https://open-e2ee.dev/legal/relay-terms","version":"2026-09-29"}]}`
+			return http.StatusForbidden, `{"code":"TERMS_REQUIRED","message":"Accept the OpenE2EE terms.","canAccept":true,"documents":[{"name":"Relay Service Terms","url":"https://open-e2ee.dev/legal/signal-relay-terms/2026-11-05","version":"signal-relay-2026-11-05"}]}`
 		}
 		return created(call, body)
 	})

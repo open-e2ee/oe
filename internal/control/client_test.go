@@ -376,7 +376,7 @@ func TestNewRejectsNonHTTPURLs(t *testing.T) {
 }
 
 func TestTermsReadAndAcceptanceUseTheConsoleShapes(t *testing.T) {
-	const documents = `[{"name":"Relay service terms","url":"https://open-e2ee.dev/legal/relay-terms/2026-08-26","version":"relay-2026-08-26"}]`
+	const documents = `[{"name":"Relay service terms","url":"https://open-e2ee.dev/legal/signal-relay-terms/2026-11-05","version":"signal-relay-2026-11-05"}]`
 	var bodies []string
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -401,7 +401,7 @@ func TestTermsReadAndAcceptanceUseTheConsoleShapes(t *testing.T) {
 	}
 	terms, err := client.Terms(context.Background(), CredentialRequest{AccessToken: "token"})
 	if err != nil || terms.State != TermsRequired || !terms.CanAccept || terms.AcceptedAt != nil || len(terms.Documents) != 1 ||
-		terms.Documents[0].Version != "relay-2026-08-26" {
+		terms.Documents[0].Version != "signal-relay-2026-11-05" {
 		t.Fatalf("terms read: %#v %v", terms, err)
 	}
 	for _, request := range []TermsAcceptanceRequest{{Actor: "agent", AgentName: "claude-code"}, {Actor: "person"}} {
@@ -607,7 +607,7 @@ func TestTermsRefusalsKeepTheDocumentsAndRejectAnUnknownState(t *testing.T) {
 		t.Fatalf("an unknown terms state was accepted: %v", err)
 	}
 	status = http.StatusConflict
-	answer = `{"code":"TERMS_REQUIRED","message":"Your Organization has not accepted the Relay service terms. Accept them, then retry.","canAccept":true,"documents":[{"name":"Relay service terms","url":"https://open-e2ee.dev/legal/relay-terms/2026-08-26","version":"relay-2026-08-26"}]}`
+	answer = `{"code":"TERMS_REQUIRED","message":"Your Organization has not accepted the Relay service terms. Accept them, then retry.","canAccept":true,"documents":[{"name":"Relay service terms","url":"https://open-e2ee.dev/legal/signal-relay-terms/2026-11-05","version":"signal-relay-2026-11-05"}]}`
 	_, err = client.GetProject(context.Background(), CredentialRequest{}, "chat")
 	refusal, ok := errors.AsType[*APIError](err)
 	if !ok || refusal.Code != "TERMS_REQUIRED" || !refusal.CanAccept || len(refusal.Documents) != 1 {

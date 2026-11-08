@@ -102,10 +102,12 @@ func Check(root string) ([]Status, error) {
 	return statuses, nil
 }
 
-// Installed reports whether root holds a file of any skill.
+// Installed reports whether root holds a file of any skill, under its name or
+// its retired name.
 func Installed(root string) bool {
 	for _, name := range Names() {
-		for _, file := range []string{agentsFile(root, name), claudeFile(root, name)} {
+		retired := retiredNames[name]
+		for _, file := range []string{agentsFile(root, name), claudeFile(root, name), agentsFile(root, retired), claudeFile(root, retired)} {
 			if _, err := os.Stat(file); err == nil {
 				return true
 			}
@@ -119,24 +121,38 @@ func Installed(root string) bool {
 // on Windows without the symlink privilege, Install writes a copy and reports
 // it. A .claude/skills entry that is a copy stays a copy. A second Install
 // changes nothing.
-func Install(root string, link func(oldname, newname string) error) ([]Result, error) {
+//
+// Install then removes the entries of each retired skill name that hold only
+// an unchanged copy that oe wrote, and returns a Retirement for each retired
+// name that it finds.
+func Install(root string, link func(oldname, newname string) error) ([]Result, []Retirement, error) {
 	var results []Result
 	for _, name := range Names() {
 		change, err := writeSkill(agentsFile(root, name), Content(name))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		result := Result{Name: name, Change: change, Link: Symlink}
 		linkChange, err := installLink(root, name, link, &result)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if result.Change == Current && linkChange != Current {
 			result.Change = Updated
 		}
 		results = append(results, result)
 	}
-	return results, nil
+	var retirements []Retirement
+	for _, name := range Names() {
+		retirement, err := removeRetired(root, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if retirement != nil {
+			retirements = append(retirements, *retirement)
+		}
+	}
+	return results, retirements, nil
 }
 
 // installLink makes .claude/skills/<name> under root show the skill in

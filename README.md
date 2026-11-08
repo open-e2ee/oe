@@ -254,6 +254,64 @@ and the declared value in `to`. A keys-only change has the path
 before the Production prompt. The `next` of `CONFIRMATION_REQUIRED` is the
 command that ran, with `--yes` added.
 
+## Upgrade to 6.0
+
+Version 6.0 renames each OpenE2EE Signal Protocol Relay name that `oe` keeps in
+a file or prints in JSON output. Version 6.0 reads the old names and the new
+names. Version 7.0 stops reading the old names.
+
+| Place                            | Old name                                             | New name                                                           |
+| -------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| `open-e2ee.config.ts` key        | `relay`                                              | `signalRelay`                                                      |
+| `open-e2ee.config.ts` key        | `relayReceipts`                                      | `signalRelayReceipts`                                              |
+| Config schema                    | `schema/config-v2.json`                              | `schema/config-v3.json`                                            |
+| Skill directory                  | `open-e2ee-relay-config`                             | `open-e2ee-signal-relay-config`                                    |
+| Skill directory                  | `open-e2ee-relay-notifications`                      | `open-e2ee-signal-relay-notifications`                             |
+| Skill directory                  | `open-e2ee-relay-production`                         | `open-e2ee-signal-relay-production`                                |
+| Skill directory                  | `open-e2ee-relay-setup`                              | `open-e2ee-signal-relay-setup`                                     |
+| `oe doctor` error code           | `RELAY_CONNECTION_STALE`, `RELAY_CONNECTION_MISSING` | `SIGNAL_RELAY_CONNECTION_STALE`, `SIGNAL_RELAY_CONNECTION_MISSING` |
+| `oe doctor` JSON key             | `relay`, `relayOrigin`                               | `signalRelay`, `signalRelayOrigin`                                 |
+| `oe project connection` JSON key | `relayUrl`                                           | `signalRelayUrl`                                                   |
+| `oe project show` JSON key       | `relayReceipts`                                      | `signalRelayReceipts`                                              |
+| `oe project usage` JSON key      | `relayMau`                                           | `signalRelayMau`                                                   |
+
+Until version 7.0, `oe` does these things:
+
+- It reads a config file that uses the old keys or the new keys. A file that
+  sets `relay` and `signalRelay` fails with `CONFIG_INVALID`.
+- `oe new` writes the new keys. `oe config pull` writes the keys that the file
+  already uses, and names each change with those keys.
+- `oe doctor` prints one warning on stderr for a file that uses the old keys.
+- The `defineConfig` types of `@open-e2ee/oe/config` accept both forms. The
+  types of the old form are deprecated.
+- The JSON output gives each old key and its new key, with the same value.
+- `oe agent setup` installs each skill under its new name. It removes an old
+  skill directory that holds only an unchanged copy that `oe` wrote. It keeps
+  an old directory that you changed, and names it in the result.
+- It accepts the old names and the new names in OpenE2EE Console responses.
+- `oe doctor` returns each new error code in `code` and the old code in
+  `data.legacyCode`.
+- It reads the old environment variable names of
+  [Upgrade to 5.0](#upgrade-to-50).
+
+The old `oe doctor` error codes are deprecated. Version 7.0 removes
+`data.legacyCode`.
+
+Do these steps in each project.
+
+1. In `open-e2ee.config.ts`, rename `relay` to `signalRelay` in the shared
+   section and in each environment section.
+2. Rename each `relayReceipts` key to `signalRelayReceipts`.
+3. Run `oe doctor`. Make sure that it prints no warning about the config keys.
+4. Run `oe agent setup`. If you installed the skills in the home directory,
+   also run `oe agent setup --scope user`.
+5. Move your changes from each old skill directory that `oe agent setup` keeps
+   to the new skill. Then delete the old directory.
+6. Change scripts that switch on `RELAY_CONNECTION_STALE` or
+   `RELAY_CONNECTION_MISSING` to read `code` and use the new codes.
+7. Change scripts that read an old JSON key to the new key.
+8. Complete the steps of [Upgrade to 5.0](#upgrade-to-50) before version 7.0.
+
 ## Upgrade to 5.0
 
 Version 5.0 renames each environment variable that you set for `oe`, and each
@@ -272,8 +330,8 @@ variable that `oe` writes for the application. Each new name starts with
 | `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL` | `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL` |
 | `VITE_OPEN_E2EE_RELAY_URL`        | `VITE_OPEN_E2EE_SIGNAL_RELAY_URL`        |
 
-Version 5.0 accepts both names for 180 days after its release. Version 6.0
-stops reading and writing the old names. Until then, `oe` does these things:
+Versions 5.0 and 6.0 accept both names. Version 7.0 stops reading and writing
+the old names. Until then, `oe` does these things:
 
 - It reads the new name first. When the new name is empty, it reads the old
   name. It then prints one warning on stderr for that name. When you set both
@@ -301,7 +359,7 @@ Do these steps in each project.
 5. Change scripts that parse the JSON `variable` field or the `oe auth status`
    source.
 6. Remove the old name from each env file. `oe` stops updating it in version
-   6.0.
+   7.0.
 
 ## Upgrade to 4.0
 
@@ -582,7 +640,9 @@ the organization. After the card, the person can still get
 ## Configuration ownership
 
 `open-e2ee.config.ts` is public policy. `oe` evaluates it with Node.js 22.18 or
-later and validates its default export against `schema/config-v2.json`. The
+later and validates its default export against `schema/config-v3.json`. A file
+that uses the deprecated `relay` key validates against `schema/config-v2.json`
+until version 7.0. See [Upgrade to 6.0](#upgrade-to-60). The
 schema rejects unknown fields so a secret cannot silently remain in the file. Secrets belong in the service secret store. Login
 credentials belong in the operating-system keychain. Protected CI can supply a
 scoped `OPEN_E2EE_ACCESS_TOKEN`. The CLI keeps it in memory and never stores it.
@@ -605,7 +665,7 @@ revision. A console-first project or a revision conflict fails closed.
 
 `oe config pull` writes the Relay policy of each active environment from the
 console into `open-e2ee.config.ts` with the fewest changes. A value that the
-shared `relay` section already gives stays shared. A different value becomes an
+shared `signalRelay` section already gives stays shared. A different value becomes an
 override in the environment section, and the shared section never changes. The
 pull adds a missing section for an active environment, and it keeps the section
 of an inactive environment. It changes only the values and keeps every comment.
@@ -634,7 +694,7 @@ The variable follows the framework in `package.json`:
 
 The first match in the table wins. The CLI replaces only its own comment and
 the lines that assign its variable. It keeps every other line, the line
-breaks, an `export` prefix, and the file permissions. Until version 6.0, the
+breaks, an `export` prefix, and the file permissions. Until version 7.0, the
 CLI also sets a line that assigns the old name of its variable. See
 [Upgrade to 5.0](#upgrade-to-50).
 

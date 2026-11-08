@@ -1,5 +1,5 @@
 ---
-name: open-e2ee-relay-production
+name: open-e2ee-signal-relay-production
 description: Use this skill to activate or change the Production environment of an OpenE2EE Signal Protocol Relay project with the oe CLI. It covers the Production section of open-e2ee.config.ts, oe config push --dry-run, and oe config push --yes. Use it when a person asks to go to Production, or when the oe CLI returns CARD_REQUIRED, BILLING_PERMISSION_REQUIRED, FREE_PROJECT_LIMIT, FREE_PAYMENT_METHOD_LIMIT, or TERMS_REQUIRED for a push.
 ---
 
@@ -62,7 +62,7 @@ terms, the Free plan slot, the card, and the Free limit of the payment method.
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CONFIRMATION_REQUIRED`       | A Production change needs `--yes`. Show the changes to the person. Run `next` only after the person agrees.                                                 |
 | `BILLING_PERMISSION_REQUIRED` | This account does not have the billing permission. Tell the person that a billing administrator must run the push or grant the permission. `next` is empty. |
-| `TERMS_REQUIRED`              | The organization did not accept the terms. Use the terms steps of the `open-e2ee-relay-setup` skill. Then run the command in `data.retry`.                  |
+| `TERMS_REQUIRED`              | The organization did not accept the terms. Use the terms steps of the `open-e2ee-signal-relay-setup` skill. Then run the command in `data.retry`.           |
 | `FREE_PROJECT_LIMIT`          | The organization already has two Free Production projects. Tell the person to change a plan in the console, then run the push again. `next` is empty.       |
 | `CARD_REQUIRED`               | The organization has no card. Give `action.url` to the person. After the person adds a card, run `next`.                                                    |
 | `FREE_PAYMENT_METHOD_LIMIT`   | The default payment method of the organization already backs two Free Production projects. Give `action.url` to the person. Then run `next`.                |

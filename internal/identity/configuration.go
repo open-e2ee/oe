@@ -297,7 +297,7 @@ func (v Scope) MarshalJSON() ([]byte, error) {
 func (v *Scope) UnmarshalJSON(data []byte) error {
 	type wire Scope
 	var value wire
-	if decodeClosed(data, &value) != nil {
+	if decodeSignalRelayScope(data, &value) != nil {
 		return ErrIdentityValue
 	}
 	candidate := Scope(value)
@@ -477,7 +477,7 @@ func (v AdmissionReadiness) MarshalJSON() ([]byte, error) {
 func (v *AdmissionReadiness) UnmarshalJSON(data []byte) error {
 	type wire AdmissionReadiness
 	var value wire
-	if decodeClosed(data, &value) != nil {
+	if decodeSignalRelayScope(data, &value) != nil {
 		return ErrIdentityValue
 	}
 	candidate := AdmissionReadiness(value)

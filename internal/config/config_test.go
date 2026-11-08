@@ -18,13 +18,13 @@ const header = "// Public service policy. Do not put secrets in this file.\n" +
 const sample = header + `export default defineConfig({
   product: "signal-relay",
   project: "secure-chat",
-  relay: {
+  signalRelay: {
     deliveryRetention: "30d",
     attachmentRetention: "30d",
   },
   environments: {
     sandbox: {
-      relay: { deliveryRetention: "1d", attachmentRetention: "1d" },
+      signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },
     },
   },
 });
@@ -112,13 +112,13 @@ console.log("output from the config file does not reach stdout");
 export default defineConfig({
   product: "signal-relay",
   project: "secure-chat",
-  relay: {
+  signalRelay: {
     deliveryRetention: "30d",
     attachmentRetention: "7d" as const,
   },
   environments: {
     sandbox: {
-      relay: { deliveryRetention: sandboxRetention },
+      signalRelay: { deliveryRetention: sandboxRetention },
     },
     production: {},
   },
@@ -195,9 +195,9 @@ const name = (parts: string[]) => parts.join("-");
 export default defineConfig({
   product: "signal-relay",
   project: name(["secure", "chat"]),
-  relay: { ...shared },
+  signalRelay: { ...shared },
   environments: {
-    sandbox: { relay: { attachmentRetention: `+"`${days}d`"+` } },
+    sandbox: { signalRelay: { attachmentRetention: `+"`${days}d`"+` } },
     ...(days > 1 ? { production: {} } : {}),
   },
 });
@@ -265,13 +265,13 @@ func TestLoadRejectsNonJSONValue(t *testing.T) {
 		"no default export": {`export const config = {};`, "no default export"},
 		"undefined":         {`export default undefined;`, "undefined"},
 		"function":          {`export default defineConfig({ product: "signal-relay", project: () => "chat" });`, "project"},
-		"not finite":        {`export default { product: "signal-relay", project: "chat", relay: { deliveryRetention: NaN } };`, "relay.deliveryRetention"},
+		"not finite":        {`export default { product: "signal-relay", project: "chat", signalRelay: { deliveryRetention: NaN } };`, "signalRelay.deliveryRetention"},
 		"bigint":            {`export default { project: 1n };`, "project"},
 		"date":              {`export default { project: new Date(0) };`, "project"},
 		"map":               {`export default { environments: new Map() };`, "environments"},
 		"symbol":            {`export default { project: Symbol("chat") };`, "project"},
 		"sparse array":      {`export default { project: [1, , 3] };`, "project"},
-		"cycle":             {`const value: any = { product: "signal-relay" }; value.relay = value; export default value;`, "relay"},
+		"cycle":             {`const value: any = { product: "signal-relay" }; value.signalRelay = value; export default value;`, "signalRelay"},
 		"throws":            {`throw new Error("config exploded");`, "config exploded"},
 		"syntax":            {`export default {`, Filename},
 	} {
@@ -329,7 +329,7 @@ func TestProductionSectionIsOptional(t *testing.T) {
 	if err != nil || policy != value.SignalProtocolRelay {
 		t.Fatalf("an empty Production section takes the shared policy: %#v, %v", policy, err)
 	}
-	withoutSandbox := strings.Replace(sample, `      relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, "", 1)
+	withoutSandbox := strings.Replace(sample, `      signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, "", 1)
 	withoutSandbox = strings.Replace(withoutSandbox, "    sandbox: {\n\n    },\n", "", 1)
 	failure := requireCode(t, loadError(writeConfig(t, withoutSandbox)), "CONFIG_INVALID")
 	requireFieldError(t, failure, "environments.sandbox", "required")
@@ -337,7 +337,7 @@ func TestProductionSectionIsOptional(t *testing.T) {
 
 func TestSignalProtocolRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing.T) {
 	const shared = "    attachmentRetention: \"30d\",\n  },"
-	const sandbox = `relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`
+	const sandbox = `signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`
 	const production = "    production: {},\n"
 	for _, test := range []struct {
 		name                string
@@ -346,23 +346,23 @@ func TestSignalProtocolRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing
 		sandbox, production bool
 	}{
 		{"absent", nil, true, true, true},
-		{"shared on", [][2]string{{shared, "    attachmentRetention: \"30d\",\n    relayReceipts: true,\n  },"}}, true, true, true},
-		{"shared off", [][2]string{{shared, "    attachmentRetention: \"30d\",\n    relayReceipts: false,\n  },"}}, false, false, false},
+		{"shared on", [][2]string{{shared, "    attachmentRetention: \"30d\",\n    signalRelayReceipts: true,\n  },"}}, true, true, true},
+		{"shared off", [][2]string{{shared, "    attachmentRetention: \"30d\",\n    signalRelayReceipts: false,\n  },"}}, false, false, false},
 		{
 			"sandbox override off",
-			[][2]string{{sandbox, `relay: { deliveryRetention: "1d", attachmentRetention: "1d", relayReceipts: false },`}},
+			[][2]string{{sandbox, `signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d", signalRelayReceipts: false },`}},
 			true, false, true,
 		},
 		{
 			"production override off",
-			[][2]string{{production, "    production: { relay: { relayReceipts: false } },\n"}},
+			[][2]string{{production, "    production: { signalRelay: { signalRelayReceipts: false } },\n"}},
 			true, true, false,
 		},
 		{
 			"override on over shared off",
 			[][2]string{
-				{shared, "    attachmentRetention: \"30d\",\n    relayReceipts: false,\n  },"},
-				{sandbox, `relay: { deliveryRetention: "1d", attachmentRetention: "1d", relayReceipts: true },`},
+				{shared, "    attachmentRetention: \"30d\",\n    signalRelayReceipts: false,\n  },"},
+				{sandbox, `signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d", signalRelayReceipts: true },`},
 			},
 			false, true, false,
 		},
@@ -380,12 +380,12 @@ func TestSignalProtocolRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing
 				t.Fatal(err)
 			}
 			if value.SignalProtocolRelay.SignalProtocolRelayReceipts != test.shared {
-				t.Fatalf("the shared relayReceipts is %v, want %v", value.SignalProtocolRelay.SignalProtocolRelayReceipts, test.shared)
+				t.Fatalf("the shared signalRelayReceipts is %v, want %v", value.SignalProtocolRelay.SignalProtocolRelayReceipts, test.shared)
 			}
 			for environment, want := range map[string]bool{"sandbox": test.sandbox, "production": test.production} {
 				policy, err := value.SignalProtocolRelayPolicyFor(environment)
 				if err != nil || policy.SignalProtocolRelayReceipts != want {
-					t.Fatalf("the %s policy is %#v (%v), want relayReceipts %v", environment, policy, err, want)
+					t.Fatalf("the %s policy is %#v (%v), want signalRelayReceipts %v", environment, policy, err, want)
 				}
 			}
 		})
@@ -398,8 +398,8 @@ func TestSignalProtocolRelayReceiptsDefaultsOnAndMergesPerEnvironment(t *testing
 func TestSchemaErrorNamesThePropertyPath(t *testing.T) {
 	for name, test := range map[string]struct{ from, to, path, fragment string }{
 		"enum": {
-			`relay: { deliveryRetention: "1d"`, `relay: { deliveryRetention: "2d"`,
-			"environments.sandbox.relay.deliveryRetention", "1h",
+			`signalRelay: { deliveryRetention: "1d"`, `signalRelay: { deliveryRetention: "2d"`,
+			"environments.sandbox.signalRelay.deliveryRetention", "1h",
 		},
 		"unknown field": {
 			`project: "secure-chat",`, `project: "secure-chat", writer: "config",`,
@@ -411,19 +411,19 @@ func TestSchemaErrorNamesThePropertyPath(t *testing.T) {
 		},
 		"type": {
 			`deliveryRetention: "30d",`, `deliveryRetention: 30,`,
-			"relay.deliveryRetention", "",
+			"signalRelay.deliveryRetention", "",
 		},
-		"relayReceipts type": {
-			`attachmentRetention: "30d",`, `attachmentRetention: "30d", relayReceipts: "on",`,
-			"relay.relayReceipts", "",
+		"signalRelayReceipts type": {
+			`attachmentRetention: "30d",`, `attachmentRetention: "30d", signalRelayReceipts: "on",`,
+			"signalRelay.signalRelayReceipts", "",
 		},
-		"relayReceipts override type": {
-			`relay: { deliveryRetention: "1d"`, `relay: { relayReceipts: 0, deliveryRetention: "1d"`,
-			"environments.sandbox.relay.relayReceipts", "",
+		"signalRelayReceipts override type": {
+			`signalRelay: { deliveryRetention: "1d"`, `signalRelay: { signalRelayReceipts: 0, deliveryRetention: "1d"`,
+			"environments.sandbox.signalRelay.signalRelayReceipts", "",
 		},
 		"managed maximum": {
-			`relay: { deliveryRetention: "1d", attachmentRetention: "1d" }`, `relay: { attachmentRetention: "1d" }`,
-			"environments.sandbox.relay.deliveryRetention", "7d",
+			`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" }`, `signalRelay: { attachmentRetention: "1d" }`,
+			"environments.sandbox.signalRelay.deliveryRetention", "7d",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -449,7 +449,7 @@ const ordered = "// Public service policy. Do not put secrets in this file.\n" +
 	"  environments: {\n" +
 	"    sandbox: {}, // Sandbox uses the shared policy.\n" +
 	"  },\n" +
-	"  relay: {\n" +
+	"  signalRelay: {\n" +
 	"    attachmentRetention: \"7d\", // attachments\n" +
 	"    deliveryRetention: \"7d\",\n" +
 	"  },\n" +
@@ -479,16 +479,16 @@ func TestEditChangesOnlyTheNamedPath(t *testing.T) {
 	source := header + `export default defineConfig({
   product: 'signal-relay',
   project: 'secure-chat',
-  relay: { deliveryRetention: '1d', attachmentRetention: '1d' },
+  signalRelay: { deliveryRetention: '1d', attachmentRetention: '1d' },
   environments: {
     sandbox: {
-      relay: { deliveryRetention: '1d', attachmentRetention: '1d' },
+      signalRelay: { deliveryRetention: '1d', attachmentRetention: '1d' },
     },
   },
 });
 `
 	path := writeConfig(t, source)
-	if err := Edit(path, Change{Path: []string{"environments", "sandbox", "relay", "attachmentRetention"}, Value: "3d"}); err != nil {
+	if err := Edit(path, Change{Path: []string{"environments", "sandbox", "signalRelay", "attachmentRetention"}, Value: "3d"}); err != nil {
 		t.Fatal(err)
 	}
 	want := strings.Replace(source, `attachmentRetention: '1d' },
@@ -498,7 +498,7 @@ func TestEditChangesOnlyTheNamedPath(t *testing.T) {
 		t.Fatal("the expected file must differ from the source")
 	}
 	requireFile(t, path, want)
-	if err := Edit(path, Change{Path: []string{"environments", "sandbox", "relay", "attachmentRetention"}, Value: "3d"}); err != nil {
+	if err := Edit(path, Change{Path: []string{"environments", "sandbox", "signalRelay", "attachmentRetention"}, Value: "3d"}); err != nil {
 		t.Fatal(err)
 	}
 	requireFile(t, path, want)
@@ -517,24 +517,24 @@ func TestEditAddsAMissingSection(t *testing.T) {
 		},
 		"field in an empty section": {
 			source: ordered,
-			change: Change{Path: []string{"environments", "sandbox", "relay", "deliveryRetention"}, Value: "3d"},
+			change: Change{Path: []string{"environments", "sandbox", "signalRelay", "deliveryRetention"}, Value: "3d"},
 			want: strings.Replace(ordered, "    sandbox: {}, // Sandbox uses the shared policy.\n",
-				"    sandbox: {\n      relay: {\n        deliveryRetention: \"3d\",\n      },\n    }, // Sandbox uses the shared policy.\n", 1),
+				"    sandbox: {\n      signalRelay: {\n        deliveryRetention: \"3d\",\n      },\n    }, // Sandbox uses the shared policy.\n", 1),
 		},
 		"section with fields": {
 			source: sample,
-			change: Change{Path: []string{"environments", "production"}, Value: map[string]any{"relay": map[string]any{"deliveryRetention": "7d"}}},
-			want: strings.Replace(sample, "      relay: { deliveryRetention: \"1d\", attachmentRetention: \"1d\" },\n    },\n",
-				"      relay: { deliveryRetention: \"1d\", attachmentRetention: \"1d\" },\n    },\n    production: {\n      relay: {\n        deliveryRetention: \"7d\",\n      },\n    },\n", 1),
+			change: Change{Path: []string{"environments", "production"}, Value: map[string]any{"signalRelay": map[string]any{"deliveryRetention": "7d"}}},
+			want: strings.Replace(sample, "      signalRelay: { deliveryRetention: \"1d\", attachmentRetention: \"1d\" },\n    },\n",
+				"      signalRelay: { deliveryRetention: \"1d\", attachmentRetention: \"1d\" },\n    },\n    production: {\n      signalRelay: {\n        deliveryRetention: \"7d\",\n      },\n    },\n", 1),
 		},
 		"no trailing commas": {
-			source: header + "export default {\n  product: \"signal-relay\",\n  project: \"secure-chat\",\n  relay: { deliveryRetention: \"7d\", attachmentRetention: \"7d\" },\n  environments: {\n    sandbox: {} // note\n  }\n}\n",
+			source: header + "export default {\n  product: \"signal-relay\",\n  project: \"secure-chat\",\n  signalRelay: { deliveryRetention: \"7d\", attachmentRetention: \"7d\" },\n  environments: {\n    sandbox: {} // note\n  }\n}\n",
 			change: Change{Path: []string{"environments", "production"}, Value: map[string]any{}},
-			want:   header + "export default {\n  product: \"signal-relay\",\n  project: \"secure-chat\",\n  relay: { deliveryRetention: \"7d\", attachmentRetention: \"7d\" },\n  environments: {\n    sandbox: {}, // note\n    production: {}\n  }\n}\n",
+			want:   header + "export default {\n  product: \"signal-relay\",\n  project: \"secure-chat\",\n  signalRelay: { deliveryRetention: \"7d\", attachmentRetention: \"7d\" },\n  environments: {\n    sandbox: {}, // note\n    production: {}\n  }\n}\n",
 		},
 		"field in a one-line object": {
-			source: strings.Replace(sample, `relay: { deliveryRetention: "1d", attachmentRetention: "1d" }`, `relay: { deliveryRetention: "1d" }`, 1),
-			change: Change{Path: []string{"environments", "sandbox", "relay"}, Value: map[string]any{"deliveryRetention": "3d", "attachmentRetention": "1d"}},
+			source: strings.Replace(sample, `signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" }`, `signalRelay: { deliveryRetention: "1d" }`, 1),
+			change: Change{Path: []string{"environments", "sandbox", "signalRelay"}, Value: map[string]any{"deliveryRetention": "3d", "attachmentRetention": "1d"}},
 			want:   strings.Replace(sample, `deliveryRetention: "1d", attachmentRetention: "1d"`, `deliveryRetention: "3d", attachmentRetention: "1d"`, 1),
 		},
 	} {
@@ -561,27 +561,27 @@ func TestEditOfAComputedValueWritesNothingAndReturnsTheEdit(t *testing.T) {
 		},
 		"call": {
 			`attachmentRetention: "1d" }`, `attachmentRetention: pick("1d") }`, `pick("1d")`,
-			Change{Path: []string{"environments", "sandbox", "relay", "attachmentRetention"}, Value: "3d"},
+			Change{Path: []string{"environments", "sandbox", "signalRelay", "attachmentRetention"}, Value: "3d"},
 		},
 		"conditional": {
 			`project: "secure-chat",`, `project: process.env.CI ? "ci-chat" : "secure-chat",`, `process.env.CI ? "ci-chat" : "secure-chat"`,
 			Change{Path: []string{"project"}, Value: "renamed-chat"},
 		},
 		"spread": {
-			`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, `...base,`, "...base",
-			Change{Path: []string{"environments", "sandbox", "relay", "attachmentRetention"}, Value: "3d"},
+			`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, `...base,`, "...base",
+			Change{Path: []string{"environments", "sandbox", "signalRelay", "attachmentRetention"}, Value: "3d"},
 		},
 		"value before a spread": {
-			`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, `relay: { attachmentRetention: "1d", ...base.relay },`, "...base.relay",
-			Change{Path: []string{"environments", "sandbox", "relay", "attachmentRetention"}, Value: "3d"},
+			`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, `signalRelay: { attachmentRetention: "1d", ...base.signalRelay },`, "...base.signalRelay",
+			Change{Path: []string{"environments", "sandbox", "signalRelay", "attachmentRetention"}, Value: "3d"},
 		},
 		"template": {
 			`project: "secure-chat",`, "project: `${slug}`,", "`${slug}`",
 			Change{Path: []string{"project"}, Value: "renamed-chat"},
 		},
 		"variable section": {
-			"    sandbox: {\n      relay: { deliveryRetention: \"1d\", attachmentRetention: \"1d\" },\n    },", "    sandbox: base,", "base",
-			Change{Path: []string{"environments", "sandbox", "relay", "attachmentRetention"}, Value: "3d"},
+			"    sandbox: {\n      signalRelay: { deliveryRetention: \"1d\", attachmentRetention: \"1d\" },\n    },", "    sandbox: base,", "base",
+			Change{Path: []string{"environments", "sandbox", "signalRelay", "attachmentRetention"}, Value: "3d"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -590,7 +590,7 @@ func TestEditOfAComputedValueWritesNothingAndReturnsTheEdit(t *testing.T) {
 			}
 			source := strings.Replace(strings.Replace(sample, test.from, test.to, 1), "export default", `const slug = "secure-chat";
 const pick = (value: string) => value;
-const base = { relay: { deliveryRetention: "1d", attachmentRetention: "1d" } } as const;
+const base = { signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" } } as const;
 
 export default`, 1)
 			path := writeConfig(t, source)
@@ -617,19 +617,19 @@ export default`, 1)
 func TestEditReturnsEveryComputedValue(t *testing.T) {
 	source := strings.Replace(strings.Replace(sample,
 		`project: "secure-chat",`, `project: ["secure", "chat"].join("-"),`, 1),
-		`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`,
-		`relay: { deliveryRetention: short, attachmentRetention: short },`, 1)
+		`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`,
+		`signalRelay: { deliveryRetention: short, attachmentRetention: short },`, 1)
 	source = strings.Replace(source, "export default", "const short = \"1d\";\n\nexport default", 1)
 	path := writeConfig(t, source)
 	changes := []Change{
 		{Path: []string{"project"}, Value: "renamed-chat"},
-		{Path: []string{"relay", "deliveryRetention"}, Value: "7d"},
-		{Path: []string{"environments", "sandbox", "relay"}, Value: map[string]any{"deliveryRetention": "3d", "attachmentRetention": "12h"}},
+		{Path: []string{"signalRelay", "deliveryRetention"}, Value: "7d"},
+		{Path: []string{"environments", "sandbox", "signalRelay"}, Value: map[string]any{"deliveryRetention": "3d", "attachmentRetention": "12h"}},
 	}
 	want := []ManualEdit{
 		{File: path, Path: "project", CurrentExpression: `["secure", "chat"].join("-")`, NewValue: "renamed-chat"},
-		{File: path, Path: "environments.sandbox.relay.deliveryRetention", CurrentExpression: "short", NewValue: "3d"},
-		{File: path, Path: "environments.sandbox.relay.attachmentRetention", CurrentExpression: "short", NewValue: "12h"},
+		{File: path, Path: "environments.sandbox.signalRelay.deliveryRetention", CurrentExpression: "short", NewValue: "3d"},
+		{File: path, Path: "environments.sandbox.signalRelay.attachmentRetention", CurrentExpression: "short", NewValue: "12h"},
 	}
 	for name, check := range map[string]func(string, ...Change) error{"Edit": Edit, "CheckEdit": CheckEdit} {
 		failure := requireCode(t, check(path, changes...), "CONFIG_EDIT_REQUIRED")
@@ -656,7 +656,7 @@ func TestEditReturnsEveryComputedValue(t *testing.T) {
 
 func TestCheckEditWritesNothing(t *testing.T) {
 	path := writeConfig(t, sample)
-	if err := CheckEdit(path, Change{Path: []string{"relay", "deliveryRetention"}, Value: "7d"}); err != nil {
+	if err := CheckEdit(path, Change{Path: []string{"signalRelay", "deliveryRetention"}, Value: "7d"}); err != nil {
 		t.Fatal(err)
 	}
 	requireFile(t, path, sample)
@@ -673,10 +673,10 @@ func TestApplyGivesTheValueThatEditWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	changes := []Change{
-		{Path: []string{"environments", "sandbox", "relay", "deliveryRetention"}, Value: "3d"},
+		{Path: []string{"environments", "sandbox", "signalRelay", "deliveryRetention"}, Value: "3d"},
 		{Path: []string{"environments", "production"}, Value: map[string]any{}},
-		{Path: []string{"environments", "production", "relay", "attachmentRetention"}, Value: "7d"},
-		{Path: []string{"environments", "production", "relay", "relayReceipts"}, Value: false},
+		{Path: []string{"environments", "production", "signalRelay", "attachmentRetention"}, Value: "7d"},
+		{Path: []string{"environments", "production", "signalRelay", "signalRelayReceipts"}, Value: false},
 	}
 	applied, err := Apply(value, changes...)
 	if err != nil {

@@ -8,14 +8,14 @@ import test from "node:test";
 const root = path.resolve(import.meta.dirname, "..");
 const tsc = path.join(root, "node_modules/typescript/bin/tsc");
 
-function config(deliveryRetention) {
+function config(deliveryRetention, policy = "signalRelay", sandbox = "{}") {
   return `import { defineConfig } from "@open-e2ee/oe/config";
 
 export default defineConfig({
   product: "signal-relay",
   project: "typed-chat",
-  relay: { deliveryRetention: "${deliveryRetention}", attachmentRetention: "7d" },
-  environments: { sandbox: {} },
+  ${policy}: { deliveryRetention: "${deliveryRetention}", attachmentRetention: "7d" },
+  environments: { sandbox: ${sandbox} },
 });
 `;
 }
@@ -64,7 +64,7 @@ process.stdout.write(JSON.stringify({ defineConfig: typeof defineConfig, value }
     assert.equal(resolved.status, 0, resolved.stderr);
     const { defineConfig, value } = JSON.parse(resolved.stdout);
     assert.equal(defineConfig, "function");
-    assert.equal(value.relay.deliveryRetention, "7d");
+    assert.equal(value.signalRelay.deliveryRetention, "7d");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -97,6 +97,58 @@ test("a wrong enumerated value fails tsc --noEmit", async () => {
       wrong.stdout,
       /open-e2ee\.config\.ts\(6,\d+\): error TS2322: Type '"2d"' is not assignable to type 'Retention'/,
     );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the typings accept the deprecated relay key and refuse a mix of the keys", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "oe-config-names-"));
+  try {
+    await installPackedCLI(directory);
+    await writeFile(
+      path.join(directory, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { module: "nodenext", strict: true },
+        files: ["open-e2ee.config.ts"],
+      }),
+    );
+    const check = (source) =>
+      writeFile(path.join(directory, "open-e2ee.config.ts"), source).then(() =>
+        spawnSync(process.execPath, [tsc, "--noEmit", "-p", directory], {
+          encoding: "utf8",
+        }),
+      );
+
+    for (const source of [
+      config(
+        "7d",
+        "signalRelay",
+        "{ signalRelay: { signalRelayReceipts: false } }",
+      ),
+      config("7d", "relay", "{ relay: { relayReceipts: false } }"),
+    ]) {
+      const valid = await check(source);
+      assert.equal(valid.status, 0, valid.stdout + valid.stderr);
+    }
+    for (const source of [
+      config("7d", "signalRelay", '{ relay: { deliveryRetention: "1d" } }'),
+      config("7d", "relay", '{ signalRelay: { deliveryRetention: "1d" } }'),
+      config("7d", "signalRelay", "{ signalRelay: { relayReceipts: false } }"),
+      config("7d", "relay", "{ relay: { signalRelayReceipts: false } }"),
+      config("7d", "signalRelay").replace(
+        "  environments:",
+        '  relay: { deliveryRetention: "7d", attachmentRetention: "7d" },\n  environments:',
+      ),
+    ]) {
+      const wrong = await check(source);
+      assert.notEqual(
+        wrong.status,
+        0,
+        `tsc accepted a mix of the keys:\n${source}`,
+      );
+      assert.match(wrong.stdout, /error TS\d+:/);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -156,7 +208,7 @@ function identityConfig(identity) {
 export default defineConfig({
   product: "signal-relay",
   project: "typed-chat",
-  relay: { deliveryRetention: "7d", attachmentRetention: "7d" },
+  signalRelay: { deliveryRetention: "7d", attachmentRetention: "7d" },
   environments: { sandbox: { identity: ${JSON.stringify(identity)} } },
 });
 `;

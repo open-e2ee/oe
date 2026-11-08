@@ -1,8 +1,9 @@
 // Package config owns open-e2ee.config.ts, the public service policy of a
 // project. The file is TypeScript, so node evaluates it: Load runs the loader
 // script that the binary embeds and validates the JSON that it prints against
-// schema/config-v2.json. Edit changes the source text with the splicer script,
-// which parses the file and never evaluates it.
+// schema/config-v3.json, or against schema/config-v2.json when the file uses
+// the deprecated relay key. Edit changes the source text with the splicer
+// script, which parses the file and never evaluates it.
 package config
 
 import (
@@ -19,20 +20,24 @@ import (
 
 const Filename = "open-e2ee.config.ts"
 
+// Config is the value of the config file in the config-v3.json form. Load
+// gives a file in the config-v2.json form the same value, and Format records
+// the form of the file.
 type Config struct {
 	Product             string                    `json:"product"`
 	Project             string                    `json:"project"`
-	SignalProtocolRelay SignalProtocolRelayPolicy `json:"relay"`
+	SignalProtocolRelay SignalProtocolRelayPolicy `json:"signalRelay"`
 	Environments        Environments              `json:"environments"`
+	Format              Format                    `json:"-"`
 }
 
 // SignalProtocolRelayPolicy is the shared Relay policy. Each environment takes it unless
-// its own relay section overrides a field. SignalProtocolRelayReceipts turns Relay delivery
+// its own signalRelay section overrides a field. SignalProtocolRelayReceipts turns Relay delivery
 // receipts on or off. It is true when the file leaves it out.
 type SignalProtocolRelayPolicy struct {
 	DeliveryRetention           string `json:"deliveryRetention"`
 	AttachmentRetention         string `json:"attachmentRetention"`
-	SignalProtocolRelayReceipts bool   `json:"relayReceipts"`
+	SignalProtocolRelayReceipts bool   `json:"signalRelayReceipts"`
 }
 
 // Environments holds the Sandbox section and, once the project deploys to
@@ -44,7 +49,7 @@ type Environments struct {
 
 type Environment struct {
 	Identity            *identity.SelectionTarget    `json:"identity,omitempty"`
-	SignalProtocolRelay *SignalProtocolRelayOverride `json:"relay,omitempty"`
+	SignalProtocolRelay *SignalProtocolRelayOverride `json:"signalRelay,omitempty"`
 }
 
 // SignalProtocolRelayOverride holds the fields of the shared policy that one environment
@@ -52,7 +57,7 @@ type Environment struct {
 type SignalProtocolRelayOverride struct {
 	DeliveryRetention           string `json:"deliveryRetention,omitempty"`
 	AttachmentRetention         string `json:"attachmentRetention,omitempty"`
-	SignalProtocolRelayReceipts *bool  `json:"relayReceipts,omitempty"`
+	SignalProtocolRelayReceipts *bool  `json:"signalRelayReceipts,omitempty"`
 }
 
 // Error is a config failure with a stable code. Data holds the field errors
@@ -82,7 +87,8 @@ type ManualEdit struct {
 }
 
 // Change sets the value at a property path. A map value merges into the
-// section at the path, and a missing section is added.
+// section at the path, and a missing section is added. The path and the value
+// use the config-v3.json names. Edit writes them with the names of the file.
 type Change struct {
 	Path  []string `json:"path"`
 	Value any      `json:"value"`
@@ -239,8 +245,8 @@ func writeSource(source *strings.Builder, value any, indent string) {
 
 func sourceOrder(object map[string]any) []string {
 	order := []string{
-		"product", "project", "relay", "environments", "sandbox", "production",
-		"deliveryRetention", "attachmentRetention", "relayReceipts", "identity",
+		"product", "project", "signalRelay", "environments", "sandbox", "production",
+		"deliveryRetention", "attachmentRetention", "signalRelayReceipts", "identity",
 		"mode", "provider", "algorithms", "issuer", "audience", "subjectClaim",
 		"authorizedParties", "allowMissingAuthorizedParty", "keys",
 		"kid", "kty", "crv", "x", "y", "alg", "use", "key_ops", "ext",
@@ -310,6 +316,7 @@ func Apply(value Config, changes ...Change) (Config, error) {
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		return Config{}, err
 	}
+	result.Format = value.Format
 	return result, nil
 }
 
@@ -336,9 +343,13 @@ func splice(path string, changes []Change) (*splicedSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	format, err := formatOf(current)
+	if err != nil {
+		return nil, err
+	}
 	var pending []Change
 	for _, change := range changes {
-		change.Value = normalize(change.Value)
+		change = format.fileChange(change)
 		if !holds(current, change.Path, change.Value) {
 			pending = append(pending, change)
 		}

@@ -83,12 +83,15 @@ for (const [goos, goarch] of targets) {
   );
 }
 
-// The release serves the config schema at the $id in schema/config-v2.json.
-const schema = await readFile(path.join(root, "schema/config-v2.json"));
-await writeFile(path.join(output, "artifacts", "config-v2.json"), schema);
-checksums.push(
-  `${createHash("sha256").update(schema).digest("hex")}  config-v2.json`,
-);
+// The release serves each config schema at its $id. The $id names the latest
+// release, so every release carries config-v2.json while oe reads it.
+for (const name of ["config-v3.json", "config-v2.json"]) {
+  const schema = await readFile(path.join(root, "schema", name));
+  await writeFile(path.join(output, "artifacts", name), schema);
+  checksums.push(
+    `${createHash("sha256").update(schema).digest("hex")}  ${name}`,
+  );
+}
 
 await cp(path.join(root, "packages", "oe"), path.join(output, "npm", "oe"), {
   recursive: true,

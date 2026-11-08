@@ -28,8 +28,8 @@ import (
 
 // signalRelayTerms is the terms document list of the console route tests.
 var signalRelayTerms = []map[string]any{{
-	"name": "Relay service terms", "url": "https://open-e2ee.dev/legal/relay-terms/2026-08-26",
-	"version": "relay-2026-08-26",
+	"name": "Relay service terms", "url": "https://open-e2ee.dev/legal/signal-relay-terms/2026-11-05",
+	"version": "signal-relay-2026-11-05",
 }}
 
 // personSession is the session route answer for a person with a name.
@@ -410,7 +410,7 @@ func TestAuthLoginAsksAPersonAtATerminal(t *testing.T) {
 		dependencies.Interactive, dependencies.OpenURL = terminal, (&opener{}).open
 		dependencies.In = strings.NewReader(test.answer)
 		exit, stdout, stderr := run(t, dependencies, "--control-url", server.controlURL(), "auth", "login")
-		if exit != 0 || !strings.Contains(stderr, "Relay service terms: https://open-e2ee.dev/legal/relay-terms/2026-08-26") ||
+		if exit != 0 || !strings.Contains(stderr, "Relay service terms: https://open-e2ee.dev/legal/signal-relay-terms/2026-11-05") ||
 			!strings.Contains(stderr, "Accept these terms for Acme Inc.? [y/N]") {
 			t.Fatalf("a person was not asked once with the documents: exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
 		}
@@ -605,7 +605,7 @@ func TestTermsRefusalNamesTheCommandToRetry(t *testing.T) {
 	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
 		return control.Project{}, &control.APIError{
 			Status: 409, Code: "TERMS_REQUIRED", Message: "Accept the OpenE2EE terms first.", CanAccept: true,
-			Documents: []control.TermsDocument{{Name: "Relay service terms", URL: "https://open-e2ee.dev/legal/relay-terms/2026-08-26", Version: "relay-2026-08-26"}},
+			Documents: []control.TermsDocument{{Name: "Relay service terms", URL: "https://open-e2ee.dev/legal/signal-relay-terms/2026-11-05", Version: "signal-relay-2026-11-05"}},
 		}
 	}}
 	exit, stdout, _ := run(t, Dependencies{API: api, Store: store}, "--json", "project", "show", "any-chat")

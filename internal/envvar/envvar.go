@@ -14,7 +14,7 @@ import (
 )
 
 // RemovalRelease is the oe release that stops reading the deprecated names.
-const RemovalRelease = "v6.0.0"
+const RemovalRelease = "v7.0.0"
 
 // Name is the current name of one variable and the deprecated name that it
 // replaces.

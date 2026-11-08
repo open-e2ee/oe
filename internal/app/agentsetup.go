@@ -43,7 +43,7 @@ func (r *runner) agent(args []string) error {
 	if *check {
 		return r.agentCheck(root, *scope)
 	}
-	results, err := skills.Install(root, r.symlink)
+	results, retirements, err := skills.Install(root, r.symlink)
 	if err != nil {
 		return err
 	}
@@ -62,9 +62,26 @@ func (r *runner) agent(args []string) error {
 	if len(copies) > 0 {
 		message += fmt.Sprintf(" .claude/skills holds a copy of %s, not a symbolic link. Run oe agent setup again after you update oe.", strings.Join(copies, ", "))
 	}
-	return r.out.Success("agent setup", message, map[string]any{
-		"scope": *scope, "directory": root, "skills": results, "changed": changed,
-	})
+	var removed, kept []string
+	for _, retirement := range retirements {
+		if retirement.Change == skills.Removed {
+			changed = true
+			removed = append(removed, retirement.Name)
+		} else {
+			kept = append(kept, fmt.Sprintf("%s (replaced by %s)", retirement.Name, retirement.Skill))
+		}
+	}
+	if len(removed) > 0 {
+		message += fmt.Sprintf(" Removed the old copies of %s.", strings.Join(removed, ", "))
+	}
+	if len(kept) > 0 {
+		message += fmt.Sprintf(" Kept %s, because the files changed after oe wrote them. Delete each old skill after you move your changes.", strings.Join(kept, ", "))
+	}
+	data := map[string]any{"scope": *scope, "directory": root, "skills": results, "changed": changed}
+	if len(retirements) > 0 {
+		data["retired"] = retirements
+	}
+	return r.out.Success("agent setup", message, data)
 }
 
 // agentCheck reports each skill under root and writes nothing. A skill that

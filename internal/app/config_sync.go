@@ -20,7 +20,7 @@ import (
 )
 
 // signalRelayFields are the fields of a Relay policy, in the order of the file.
-var signalRelayFields = []string{"deliveryRetention", "attachmentRetention", "relayReceipts"}
+var signalRelayFields = []string{"deliveryRetention", "attachmentRetention", "signalRelayReceipts"}
 
 // A person's push waits this long for a card, and reads the project at this
 // interval while it waits.
@@ -155,7 +155,9 @@ type pullChange struct {
 // planPull compares the Relay policy of each named environment with the
 // file. A value that the shared policy already gives stays shared, and a
 // different value becomes an override in the environment section. The shared
-// policy never changes. An inactive environment keeps its section.
+// policy never changes. An inactive environment keeps its section. Each change
+// path uses the config-v3.json names, and each displayed path uses the key
+// names of the file.
 func planPull(value config.Config, project control.Project, names []string) (pullPlan, error) {
 	plan := pullPlan{names: names, environments: map[string]*pulledEnvironment{}}
 	for _, name := range names {
@@ -173,7 +175,7 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 			return pullPlan{}, fmt.Errorf("the %s attachment retention: %w", name, err)
 		}
 		if remote.SignalProtocolRelayReceipts == nil {
-			return pullPlan{}, fmt.Errorf("control API returned no relayReceipts for the %s environment", name)
+			return pullPlan{}, fmt.Errorf("control API returned no signalRelayReceipts for the %s environment", name)
 		}
 		server := policyFields(config.SignalProtocolRelayPolicy{
 			DeliveryRetention: delivery, AttachmentRetention: attachment, SignalProtocolRelayReceipts: *remote.SignalProtocolRelayReceipts,
@@ -189,8 +191,9 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 				if server[field] == shared[field] {
 					continue
 				}
-				entry.Changes = append(entry.Changes, pullChange{Path: section + ".relay." + field, Action: "add", To: server[field]})
-				plan.changes = append(plan.changes, config.Change{Path: []string{"environments", name, "relay", field}, Value: server[field]})
+				path := []string{"environments", name, "signalRelay", field}
+				entry.Changes = append(entry.Changes, pullChange{Path: value.Format.Path(path...), Action: "add", To: server[field]})
+				plan.changes = append(plan.changes, config.Change{Path: path, Value: server[field]})
 			}
 			if len(entry.Changes) == 0 {
 				entry.Changes = []pullChange{{Path: section, Action: "add", To: map[string]any{}}}
@@ -209,8 +212,9 @@ func planPull(value config.Config, project control.Project, names []string) (pul
 			if server[field] == effective[field] {
 				continue
 			}
-			entry.Changes = append(entry.Changes, pullChange{Path: section + ".relay." + field, Action: "replace", From: effective[field], To: server[field]})
-			plan.changes = append(plan.changes, config.Change{Path: []string{"environments", name, "relay", field}, Value: server[field]})
+			path := []string{"environments", name, "signalRelay", field}
+			entry.Changes = append(entry.Changes, pullChange{Path: value.Format.Path(path...), Action: "replace", From: effective[field], To: server[field]})
+			plan.changes = append(plan.changes, config.Change{Path: path, Value: server[field]})
 			plan.replaced++
 		}
 	}
@@ -221,7 +225,7 @@ func policyFields(policy config.SignalProtocolRelayPolicy) map[string]any {
 	return map[string]any{
 		"deliveryRetention":   policy.DeliveryRetention,
 		"attachmentRetention": policy.AttachmentRetention,
-		"relayReceipts":       policy.SignalProtocolRelayReceipts,
+		"signalRelayReceipts": policy.SignalProtocolRelayReceipts,
 	}
 }
 
