@@ -220,7 +220,9 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 // environment is the environment of the run, which some codes need for next.
 func fail(writer *output.Writer, command string, args []string, environment string, err error) int {
 	failure := classify(err, commandLine(args), environment)
-	_ = writer.Failure(command, failure.output())
+	if !failure.reported {
+		_ = writer.Failure(command, failure.output())
+	}
 	return failure.exit
 }
 

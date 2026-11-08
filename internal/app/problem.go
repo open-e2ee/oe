@@ -27,6 +27,11 @@ type problem struct {
 	// actionReason says why. A reason makes the action a browser step.
 	actionURL    string
 	actionReason string
+
+	// reported is true when the run already wrote its result, such as a
+	// pending step that a person must finish. Then fail writes nothing and
+	// only returns exit.
+	reported bool
 }
 
 func (p *problem) Error() string { return p.message }

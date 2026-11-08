@@ -24,11 +24,23 @@ type API interface {
 	AcceptTerms(context.Context, CredentialRequest, TermsAcceptanceRequest) (TermsAcceptance, error)
 	Session(context.Context, CredentialRequest) (Session, error)
 	ListOrganizations(context.Context, CredentialRequest) (OrganizationList, error)
+	ProjectPlans(context.Context, CredentialRequest, string) (ProjectPlans, error)
+	QuotePlan(context.Context, CredentialRequest, string, PlanQuoteRequest) (PlanQuote, error)
+	PurchasePlan(context.Context, CredentialRequest, string, PlanPurchaseRequest) (PlanPurchase, error)
+	PurchaseStatus(context.Context, CredentialRequest, string, string) (PlanPurchase, error)
 }
 
 type CredentialRequest struct {
 	AccessToken string
 	OperationID string
+	// CredentialSource is the source of the access token. The value
+	// environment, for OPEN_E2EE_ACCESS_TOKEN, is sent in
+	// OpenE2EE-CLI-Credential-Source, so the server can refuse a purchase.
+	CredentialSource string
+	// Replayable marks a POST that the server answers the same way when it is
+	// sent again, so a failed attempt is retried as it is without an
+	// OperationID.
+	Replayable bool
 }
 
 type AuthorizationRequest struct{}

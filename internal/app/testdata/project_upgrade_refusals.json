@@ -1,0 +1,406 @@
+{
+  "ACTIVATE_FREE_FIRST": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "activate",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "ACTIVATE_FREE_FIRST",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "Activate Production on Free first; activate Production on the plan page of project acme-chat in the console, or add production: {} under environments in the open-e2ee.config.ts of project acme-chat, then run oe config push in its directory",
+      "status": "error"
+    }
+  },
+  "AGENT_PURCHASE_NOT_ALLOWED environment": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "purchase",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "AGENT_PURCHASE_NOT_ALLOWED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "the credential comes from OPEN_E2EE_ACCESS_TOKEN, and only a signed-in person buys a paid plan; a person buys plan relay_starter_v1 at https://console.open-e2ee.dev/signal-relay. oe project upgrade acme-chat --plan relay_starter_v1 --dry-run shows the charge",
+      "status": "error"
+    }
+  },
+  "AGENT_PURCHASE_NOT_ALLOWED server": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "purchase",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "AGENT_PURCHASE_NOT_ALLOWED",
+      "command": "project upgrade",
+      "data": {
+        "detail": "credential:agent",
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "Only a person buys a paid plan.",
+      "status": "error"
+    }
+  },
+  "AUTHORITY_CHANGED": {
+    "exit": 1,
+    "output": {
+      "code": "AUTHORITY_CHANGED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The billing authority changed.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --dry-run",
+      "status": "error"
+    }
+  },
+  "BILLING_PERMISSION_REQUIRED": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "purchase",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "BILLING_PERMISSION_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "blockedBy": "billing_permission",
+        "project": "acme-chat"
+      },
+      "error": "this account cannot manage billing for project acme-chat; a person with the billing permission buys the plan at https://console.open-e2ee.dev/signal-relay",
+      "status": "error"
+    }
+  },
+  "CARD_REQUIRED": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "card",
+        "url": "https://console.open-e2ee.dev/billing/card"
+      },
+      "code": "CARD_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "Add a card.",
+      "status": "error"
+    }
+  },
+  "CHARGE_CONFIRMATION_MISMATCH local": {
+    "exit": 2,
+    "output": {
+      "code": "CHARGE_CONFIRMATION_MISMATCH",
+      "command": "project upgrade",
+      "data": {
+        "confirmed": "49.00",
+        "expected": {
+          "amount": 5390,
+          "currency": "usd",
+          "major": "53.90"
+        },
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "the quote total is 53.90 USD, not 49.00; nothing was charged. Ask the person to confirm the new total",
+      "status": "error"
+    }
+  },
+  "CHARGE_CONFIRMATION_MISMATCH server": {
+    "exit": 2,
+    "output": {
+      "code": "CHARGE_CONFIRMATION_MISMATCH",
+      "command": "project upgrade",
+      "data": {
+        "expected": {
+          "amount": 5390,
+          "currency": "usd",
+          "major": "53.90"
+        },
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The confirmed charge is not the quote total.",
+      "status": "error"
+    }
+  },
+  "CONFIRMATION_REQUIRED": {
+    "exit": 2,
+    "output": {
+      "code": "CONFIRMATION_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "buying plan relay_starter_v1 charges the payment method of the organization, so a person must confirm the charge; ask the person, run oe project upgrade acme-chat --plan relay_starter_v1 --dry-run to show the charge, then run oe project upgrade with --confirm-charge AMOUNT",
+      "status": "error"
+    }
+  },
+  "EU_UK_VAT_ID_REQUIRED missing": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "tax_id",
+        "url": "https://console.open-e2ee.dev/billing"
+      },
+      "code": "EU_UK_VAT_ID_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "detail": "vat_id:missing",
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "Add a VAT ID.",
+      "status": "error"
+    }
+  },
+  "EU_UK_VAT_ID_REQUIRED pending": {
+    "exit": 6,
+    "output": {
+      "code": "EU_UK_VAT_ID_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "detail": "vat_id:pending",
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The VAT ID check is pending.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90",
+      "status": "error"
+    }
+  },
+  "EU_UK_VAT_ID_REQUIRED unverified": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "tax_id",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "EU_UK_VAT_ID_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "detail": "vat_id:unverified",
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The VAT ID is not verified.",
+      "status": "error"
+    }
+  },
+  "METHOD_CHANGED": {
+    "exit": 1,
+    "output": {
+      "code": "METHOD_CHANGED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The payment method changed.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --dry-run",
+      "status": "error"
+    }
+  },
+  "PAID_PURCHASE_UNAVAILABLE": {
+    "exit": 6,
+    "output": {
+      "code": "PAID_PURCHASE_UNAVAILABLE",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "Paid plans are not on sale.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90",
+      "status": "error"
+    }
+  },
+  "PAYMENT_ACTION_REQUIRED": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "payment",
+        "url": "https://console.open-e2ee.dev/signal-relay/acme-chat/plan?purchase=purchase_co70BIYy6dvboIRyoATMjlWn_dbkNQ2MQUAEfR39y5E"
+      },
+      "code": "PAYMENT_ACTION_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat",
+        "purchaseId": "purchase_co70BIYy6dvboIRyoATMjlWn_dbkNQ2MQUAEfR39y5E"
+      },
+      "error": "Authenticate the payment.",
+      "status": "error"
+    }
+  },
+  "PAYMENT_FAILED": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "billing",
+        "url": "https://console.open-e2ee.dev/billing"
+      },
+      "code": "PAYMENT_FAILED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat",
+        "purchaseId": "purchase_co70BIYy6dvboIRyoATMjlWn_dbkNQ2MQUAEfR39y5E"
+      },
+      "error": "The card was declined.",
+      "status": "error"
+    }
+  },
+  "PLAN_NOT_AVAILABLE": {
+    "exit": 1,
+    "output": {
+      "code": "PLAN_NOT_AVAILABLE",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "plans": ["relay_hobby_v1"],
+        "project": "acme-chat"
+      },
+      "error": "project acme-chat cannot change to plan relay_starter_v1; the plans it can change to are relay_hobby_v1",
+      "status": "error"
+    }
+  },
+  "PRICE_CHANGED": {
+    "exit": 1,
+    "output": {
+      "code": "PRICE_CHANGED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The price changed.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --dry-run",
+      "status": "error"
+    }
+  },
+  "PURCHASE_NOT_IMMEDIATE": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "purchase",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "PURCHASE_NOT_IMMEDIATE",
+      "command": "project upgrade",
+      "data": {
+        "amountDue": 4900,
+        "currency": "usd",
+        "effectiveAt": "2026-09-21T14:13:20Z",
+        "paymentMethodRequired": false,
+        "plan": {
+          "id": "relay_starter_v1",
+          "name": "Starter"
+        },
+        "project": "acme-chat",
+        "quoteExpiresAt": "2026-09-21T14:23:20Z",
+        "renewsAt": "2026-10-21T14:13:20Z",
+        "tax": {
+          "amount": 490,
+          "automatic": true,
+          "subtotal": 4900,
+          "total": 5390
+        },
+        "timing": "period_end",
+        "total": 5390,
+        "totalMajor": "53.90"
+      },
+      "error": "the change to plan relay_starter_v1 does not take effect now, so oe cannot buy it; change the plan at https://console.open-e2ee.dev/signal-relay",
+      "status": "error"
+    }
+  },
+  "PURCHASE_OPEN": {
+    "exit": 6,
+    "output": {
+      "code": "PURCHASE_OPEN",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat",
+        "purchaseId": "purchase_2SmKENGwc1g33EvYXaxkGw887yekfl1TpU8vP1svz_o"
+      },
+      "error": "Another purchase is open.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90",
+      "status": "error"
+    }
+  },
+  "QUOTE_EXPIRED": {
+    "exit": 1,
+    "output": {
+      "code": "QUOTE_EXPIRED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "The quote expired.",
+      "next": "oe project upgrade acme-chat --plan relay_starter_v1 --dry-run",
+      "status": "error"
+    }
+  },
+  "SUPPORT_REQUIRED": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "support",
+        "url": "https://console.open-e2ee.dev/signal-relay"
+      },
+      "code": "SUPPORT_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat",
+        "purchaseId": "purchase_co70BIYy6dvboIRyoATMjlWn_dbkNQ2MQUAEfR39y5E"
+      },
+      "error": "Support reviews the purchase.",
+      "status": "error"
+    }
+  },
+  "TAX_LOCATION_REQUIRED": {
+    "exit": 5,
+    "output": {
+      "action": {
+        "kind": "browser",
+        "reason": "tax",
+        "url": "https://console.open-e2ee.dev/billing"
+      },
+      "code": "TAX_LOCATION_REQUIRED",
+      "command": "project upgrade",
+      "data": {
+        "plan": "relay_starter_v1",
+        "project": "acme-chat"
+      },
+      "error": "Add a billing address.",
+      "status": "error"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -451,7 +452,7 @@ func (p *pusher) environment(ctx context.Context, environment string, dryRun boo
 	}
 	deployment, err := p.apply(ctx, plan, environment)
 	if err != nil {
-		return entry.stop("failed", classify(err, p.command(p.yes), environment))
+		return entry.stop("failed", p.applyFailure(ctx, err, environment))
 	}
 	entry.Status, entry.Revision, entry.Activated = "applied", deployment.Revision, activation
 	return entry
@@ -551,20 +552,50 @@ func (p *pusher) gate(ctx context.Context, blockedBy string) (*problem, error) {
 		}
 		return blocked, nil
 	case control.BlockedByFreeProjectLimit:
-		return &problem{
-			code: "FREE_PROJECT_LIMIT", exit: exitPersonAction,
-			message: "the organization already has two Free Production projects; change a plan at " + p.consoleURL() + ", then run " + p.command(p.yes) + " again",
-		}, nil
+		upgrade := p.upgradeNext(ctx)
+		message := "the organization already has two Free Production projects; change a plan at " + p.consoleURL() + ", then run " + p.command(p.yes) + " again"
+		if upgrade != "" {
+			message = "the organization already has two Free Production projects; buy a paid plan with " + upgrade + ", or change a plan at " + p.consoleURL()
+		}
+		return &problem{code: "FREE_PROJECT_LIMIT", exit: exitPersonAction, next: upgrade, message: message}, nil
 	case control.BlockedByFreePaymentMethodLimit:
 		billing := p.billingURL()
+		choose := "Choose a paid plan at " + p.consoleURL()
+		upgrade := p.upgradeNext(ctx)
+		if upgrade != "" {
+			choose = "Buy a paid plan with " + upgrade
+		}
 		return &problem{
-			code: "FREE_PAYMENT_METHOD_LIMIT", exit: exitPersonAction, next: p.command(p.yes),
+			code: "FREE_PAYMENT_METHOD_LIMIT", exit: exitPersonAction, next: cmp.Or(upgrade, p.command(p.yes)),
 			actionURL: billing, actionReason: "billing",
-			message: "the default payment method of the organization already backs two Free Production projects. Choose a paid plan at " + p.consoleURL() +
+			message: "the default payment method of the organization already backs two Free Production projects. " + choose +
 				", or save another default payment method at " + billing + ", then run " + p.command(p.yes) + " again",
 		}, nil
 	}
 	return nil, nil
+}
+
+// upgradeNext is the oe project upgrade command for the first paid plan that
+// the project can buy. It is empty when the plans read fails or names no plan.
+func (p *pusher) upgradeNext(ctx context.Context) string {
+	plans, err := p.r.api.ProjectPlans(ctx, control.CredentialRequest{AccessToken: p.access.AccessToken, CredentialSource: p.r.credentialSource}, p.value.Project)
+	if err != nil || plans.BlockedBy != "" || len(plans.Plans) == 0 {
+		return ""
+	}
+	return commandLine([]string{"project", "upgrade", p.value.Project, "--plan", plans.Plans[0].ID})
+}
+
+// applyFailure classifies a refused apply. A Free limit refusal of Production
+// names the oe project upgrade command as next when the project can buy a
+// paid plan.
+func (p *pusher) applyFailure(ctx context.Context, err error, environment string) *problem {
+	failure := classify(err, p.command(p.yes), environment)
+	if environment == "production" && (failure.code == "FREE_PROJECT_LIMIT" || failure.code == "FREE_PAYMENT_METHOD_LIMIT") {
+		if upgrade := p.upgradeNext(ctx); upgrade != "" {
+			failure.next = upgrade
+		}
+	}
+	return failure
 }
 
 // waitForCard opens the card page for a person and reads the project until

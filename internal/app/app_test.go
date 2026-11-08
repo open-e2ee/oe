@@ -512,6 +512,10 @@ type fakeAPI struct {
 	acceptTerms            func(context.Context, control.CredentialRequest, control.TermsAcceptanceRequest) (control.TermsAcceptance, error)
 	session                func(context.Context, control.CredentialRequest) (control.Session, error)
 	listOrganizations      func(context.Context, control.CredentialRequest) (control.OrganizationList, error)
+	projectPlans           func(context.Context, control.CredentialRequest, string) (control.ProjectPlans, error)
+	quotePlan              func(context.Context, control.CredentialRequest, string, control.PlanQuoteRequest) (control.PlanQuote, error)
+	purchasePlan           func(context.Context, control.CredentialRequest, string, control.PlanPurchaseRequest) (control.PlanPurchase, error)
+	purchaseStatus         func(context.Context, control.CredentialRequest, string, string) (control.PlanPurchase, error)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -624,6 +628,30 @@ func (f *fakeAPI) ListOrganizations(ctx context.Context, credential control.Cred
 		return control.OrganizationList{}, errors.New("unexpected ListOrganizations")
 	}
 	return f.listOrganizations(ctx, credential)
+}
+func (f *fakeAPI) ProjectPlans(ctx context.Context, credential control.CredentialRequest, project string) (control.ProjectPlans, error) {
+	if f.projectPlans == nil {
+		return control.ProjectPlans{}, errors.New("unexpected ProjectPlans")
+	}
+	return f.projectPlans(ctx, credential, project)
+}
+func (f *fakeAPI) QuotePlan(ctx context.Context, credential control.CredentialRequest, project string, request control.PlanQuoteRequest) (control.PlanQuote, error) {
+	if f.quotePlan == nil {
+		return control.PlanQuote{}, errors.New("unexpected QuotePlan")
+	}
+	return f.quotePlan(ctx, credential, project, request)
+}
+func (f *fakeAPI) PurchasePlan(ctx context.Context, credential control.CredentialRequest, project string, request control.PlanPurchaseRequest) (control.PlanPurchase, error) {
+	if f.purchasePlan == nil {
+		return control.PlanPurchase{}, errors.New("unexpected PurchasePlan")
+	}
+	return f.purchasePlan(ctx, credential, project, request)
+}
+func (f *fakeAPI) PurchaseStatus(ctx context.Context, credential control.CredentialRequest, project, purchaseID string) (control.PlanPurchase, error) {
+	if f.purchaseStatus == nil {
+		return control.PlanPurchase{}, errors.New("unexpected PurchaseStatus")
+	}
+	return f.purchaseStatus(ctx, credential, project, purchaseID)
 }
 
 func TestLoginPromptMatchesTheVerificationPage(t *testing.T) {
