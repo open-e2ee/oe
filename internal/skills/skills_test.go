@@ -24,7 +24,7 @@ func repositorySkills(t *testing.T) string {
 }
 
 func TestEmbeddedSkillsMatchTheRepositoryFiles(t *testing.T) {
-	want := []string{"open-e2ee-relay-config", "open-e2ee-relay-notifications", "open-e2ee-relay-production", "open-e2ee-relay-setup"}
+	want := []string{"open-e2ee-signal-relay-config", "open-e2ee-signal-relay-notifications", "open-e2ee-signal-relay-production", "open-e2ee-signal-relay-setup"}
 	if names := Names(); !slices.Equal(names, want) {
 		t.Fatalf("embedded skills are %q, want %q", names, want)
 	}

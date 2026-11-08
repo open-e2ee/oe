@@ -57,8 +57,8 @@ func TestReaderWarnsOncePerVariable(t *testing.T) {
 		getenv("OPEN_E2EE_OPERATION_ID")
 	}
 	want := []string{
-		"warning: OE_ACCESS_TOKEN is deprecated. Set OPEN_E2EE_ACCESS_TOKEN instead. oe v6.0.0 stops reading OE_ACCESS_TOKEN.",
-		"warning: OE_OPERATION_ID is deprecated. Set OPEN_E2EE_OPERATION_ID instead. oe v6.0.0 stops reading OE_OPERATION_ID.",
+		"warning: OE_ACCESS_TOKEN is deprecated. Set OPEN_E2EE_ACCESS_TOKEN instead. oe v7.0.0 stops reading OE_ACCESS_TOKEN.",
+		"warning: OE_OPERATION_ID is deprecated. Set OPEN_E2EE_OPERATION_ID instead. oe v7.0.0 stops reading OE_OPERATION_ID.",
 	}
 	if strings.Join(warnings, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("warnings = %q; want %q", warnings, want)

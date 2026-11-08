@@ -29,13 +29,13 @@ import { defineConfig } from "@open-e2ee/oe/config";
 export default defineConfig({
   product: "signal-relay",
   project: "pull-chat",
-  relay: {
+  signalRelay: {
     deliveryRetention: "30d",
     attachmentRetention: "30d",
   },
   environments: {
     sandbox: {
-      relay: {
+      signalRelay: {
         deliveryRetention: "1d",
         attachmentRetention: "1d",
       },
@@ -132,7 +132,7 @@ func TestPullAddsWithoutConsent(t *testing.T) {
 	if production["status"] != "applied" || len(changes) != 1 {
 		t.Fatalf("production was not applied with one change: %s", stdout)
 	}
-	if change := changes[0].(map[string]any); change["action"] != "add" || change["path"] != "environments.production.relay.deliveryRetention" || change["to"] != "7d" {
+	if change := changes[0].(map[string]any); change["action"] != "add" || change["path"] != "environments.production.signalRelay.deliveryRetention" || change["to"] != "7d" {
 		t.Fatalf("the production change is not the delivery override: %#v", change)
 	}
 	// The shared policy already gives the attachment retention, so only the
@@ -158,9 +158,9 @@ func TestPullReplacingAValueNeedsYes(t *testing.T) {
 		from       string
 	}{
 		// Sandbox overrides 1d in the file.
-		{"an override", nil, "environments.sandbox.relay.deliveryRetention", "1d"},
+		{"an override", nil, "environments.sandbox.signalRelay.deliveryRetention", "1d"},
 		// Production takes the shared 30d; a new override replaces its value.
-		{"a shared value", retention(7*day, 30*day), "environments.production.relay.deliveryRetention", "30d"},
+		{"a shared value", retention(7*day, 30*day), "environments.production.signalRelay.deliveryRetention", "30d"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := initializedProject(t, "pull-chat")
@@ -229,14 +229,14 @@ import { defineConfig } from "@open-e2ee/oe/config";
 export default defineConfig({
   product: "signal-relay",
   project: "pull-chat", // the console slug
-  relay: {
+  signalRelay: {
     // Keep a month of history.
     deliveryRetention: "30d",
     attachmentRetention: "30d", /* attachments too */
   },
   environments: {
     sandbox: {
-      relay: {
+      signalRelay: {
         deliveryRetention: "1d", // short for tests
         attachmentRetention: "1d",
       },
@@ -256,7 +256,7 @@ export default defineConfig({
 	}
 	want := strings.Replace(source, `deliveryRetention: "1d", // short for tests`, `deliveryRetention: "3d", // short for tests`, 1)
 	want = strings.Replace(want, `production: {},`, `production: {
-      relay: {
+      signalRelay: {
         attachmentRetention: "14d",
       },
     },`, 1)
@@ -296,7 +296,7 @@ const short = ["1", "d"].join("");
 			got = append(got, edit["path"].(string)+"="+edit["newValue"].(string))
 		}
 		slices.Sort(got)
-		if want := []string{"environments.sandbox.relay.attachmentRetention=12h", "environments.sandbox.relay.deliveryRetention=3d"}; !slices.Equal(got, want) {
+		if want := []string{"environments.sandbox.signalRelay.attachmentRetention=12h", "environments.sandbox.signalRelay.deliveryRetention=3d"}; !slices.Equal(got, want) {
 			t.Fatalf("%v: edits = %v, want %v: %s", args, got, want, stdout)
 		}
 		if after := mustRead(t, path); string(after) != source {
@@ -414,6 +414,8 @@ type pushConsole struct {
 	fail     map[string]error
 	calls    []string
 	deployed map[string]control.DeployRequest
+	// prefix starts each policy change path. It is "relay." when empty.
+	prefix string
 }
 
 // newPushConsole answers a project whose active Sandbox keeps a 30d policy and
@@ -480,12 +482,17 @@ func (c *pushConsole) Plan(_ context.Context, request control.CredentialRequest,
 			result.BillingReady, result.BillingSetupURL = false, cardSetupURL
 		}
 	}
+	prefix := cmp.Or(c.prefix, "relay.")
+	receiptsPath := prefix + "relayReceipts"
+	if prefix == "signalRelay." {
+		receiptsPath = prefix + "signalRelayReceipts"
+	}
 	for _, field := range []struct {
 		path          string
 		before, after int
 	}{
-		{"relay.deliveryRetentionSeconds", current.DeliveryRetentionSeconds, plan.Policy.DeliveryRetentionSeconds},
-		{"relay.attachmentRetentionSeconds", current.AttachmentRetentionSeconds, plan.Policy.AttachmentRetentionSeconds},
+		{prefix + "deliveryRetentionSeconds", current.DeliveryRetentionSeconds, plan.Policy.DeliveryRetentionSeconds},
+		{prefix + "attachmentRetentionSeconds", current.AttachmentRetentionSeconds, plan.Policy.AttachmentRetentionSeconds},
 	} {
 		switch {
 		case !active:
@@ -496,11 +503,11 @@ func (c *pushConsole) Plan(_ context.Context, request control.CredentialRequest,
 	}
 	switch receipts := plan.Policy.SignalProtocolRelayReceipts; {
 	case !active:
-		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", After: receipts})
+		result.Changes = append(result.Changes, control.Change{Path: receiptsPath, After: receipts})
 	case current.SignalProtocolRelayReceipts == nil:
 		c.t.Fatalf("the active %s environment has no relayReceipts", plan.Environment)
 	case *current.SignalProtocolRelayReceipts != receipts:
-		result.Changes = append(result.Changes, control.Change{Path: "relay.relayReceipts", Before: *current.SignalProtocolRelayReceipts, After: receipts})
+		result.Changes = append(result.Changes, control.Change{Path: receiptsPath, Before: *current.SignalProtocolRelayReceipts, After: receipts})
 	}
 	return result, nil
 }
@@ -651,6 +658,44 @@ func TestPushProductionChangeWithoutYesIsConfirmationRequired(t *testing.T) {
 	}
 	if slices.Contains(console.calls, "deploy production") {
 		t.Fatalf("a Production change without consent reached the deploy: %v", console.calls)
+	}
+}
+
+// TestPushPassesEitherChangePathPrefix covers both prefixes of the Console
+// change paths. Console moves from relay. to signalRelay. only when this oe
+// major is the supported floor, so oe must count and report both.
+func TestPushPassesEitherChangePathPrefix(t *testing.T) {
+	for _, prefix := range []string{"relay.", "signalRelay."} {
+		t.Run(prefix, func(t *testing.T) {
+			directory := initializedProject(t, "prefix-chat")
+			console := newPushConsole(t, "prefix-chat")
+			console.prefix = prefix
+			exit, stdout, _ := run(t, pushDependencies(t, console, directory), "--json", "--env", "production", "config", "push", "--dry-run")
+			result := decodeEvent(t, []byte(stdout))
+			if exit != 0 || pushStatus(t, result, "production") != "planned" {
+				t.Fatalf("the dry run did not plan Production: exit=%d %s", exit, stdout)
+			}
+			changes, _ := environmentResult(t, result, "production")["changes"].([]any)
+			var paths []string
+			for _, change := range changes {
+				path, _ := change.(map[string]any)["path"].(string)
+				paths = append(paths, path)
+			}
+			receipts := prefix + "relayReceipts"
+			if prefix == "signalRelay." {
+				receipts = prefix + "signalRelayReceipts"
+			}
+			want := []string{"production.activation", prefix + "deliveryRetentionSeconds", prefix + "attachmentRetentionSeconds", receipts}
+			if !slices.Equal(paths, want) {
+				t.Fatalf("the dry run reported %q, want %q", paths, want)
+			}
+
+			exit, stdout, _ = run(t, pushDependencies(t, console, directory), "--json", "--env", "production", "config", "push")
+			refusal := decodeEvent(t, []byte(stdout))
+			if exit != exitUsage || refusal.Code != "CONFIRMATION_REQUIRED" || !strings.Contains(refusal.Error, "activation and 3 policy change(s) need --yes") {
+				t.Fatalf("the refusal did not count the %s changes: exit=%d %s", prefix, exit, stdout)
+			}
+		})
 	}
 }
 
@@ -970,7 +1015,7 @@ func TestPushAppliesAComputedValue(t *testing.T) {
 	directory := initializedProject(t, "computed-chat")
 	path := filepath.Join(directory, config.Filename)
 	source := string(mustRead(t, path))
-	computed := strings.Replace(source, "production: {}", `production: { relay: { deliveryRetention: ["3", "d"].join("") as "3d" } }`, 1)
+	computed := strings.Replace(source, "production: {}", `production: { signalRelay: { deliveryRetention: ["3", "d"].join("") as "3d" } }`, 1)
 	if computed == source {
 		t.Fatalf("the config has no Production section to compute: %s", source)
 	}
@@ -1053,20 +1098,20 @@ func TestPushCarriesSignalProtocolRelayReceipts(t *testing.T) {
 		{
 			"shared off",
 			"    attachmentRetention: \"30d\",\n  },",
-			"    attachmentRetention: \"30d\",\n    relayReceipts: false,\n  },",
+			"    attachmentRetention: \"30d\",\n    signalRelayReceipts: false,\n  },",
 			false, false,
 		},
 		{
 			"sandbox override off",
-			`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`,
-			`relay: { deliveryRetention: "1d", attachmentRetention: "1d", relayReceipts: false },`,
+			`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`,
+			`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d", signalRelayReceipts: false },`,
 			false, true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source := strings.Replace(sandboxOnly, "\n  },\n});", "\n    production: {},\n  },\n});", 1)
-			source = strings.Replace(source, "relay: {\n        deliveryRetention: \"1d\",\n        attachmentRetention: \"1d\",\n      },",
-				`relay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, 1)
+			source = strings.Replace(source, "signalRelay: {\n        deliveryRetention: \"1d\",\n        attachmentRetention: \"1d\",\n      },",
+				`signalRelay: { deliveryRetention: "1d", attachmentRetention: "1d" },`, 1)
 			if !strings.Contains(source, test.from) {
 				t.Fatalf("the source has no %q", test.from)
 			}
@@ -1129,13 +1174,13 @@ func TestPullWritesSignalProtocolRelayReceipts(t *testing.T) {
 		{
 			"sandbox off replaces the shared value",
 			off(retention(day, day)), nil,
-			"environments.sandbox.relay.relayReceipts", "replace", true,
+			"environments.sandbox.signalRelay.signalRelayReceipts", "replace", true,
 			map[string]bool{"sandbox": false},
 		},
 		{
 			"production off adds an override",
 			retention(day, day), off(retention(30*day, 30*day)),
-			"environments.production.relay.relayReceipts", "add", nil,
+			"environments.production.signalRelay.signalRelayReceipts", "add", nil,
 			map[string]bool{"sandbox": true, "production": false},
 		},
 	} {
@@ -1178,8 +1223,8 @@ func TestPullWritesSignalProtocolRelayReceipts(t *testing.T) {
 		dependencies, _ := pullServer(t, "pull-chat", sandbox, nil)
 		dependencies.WorkingDir = directory
 		exit, stdout, _ := run(t, dependencies, "--json", "config", "pull", "--yes")
-		if exit == 0 || !strings.Contains(stdout, "no relayReceipts for the sandbox environment") {
-			t.Fatalf("a pull guessed a missing relayReceipts: exit=%d %s", exit, stdout)
+		if exit == 0 || !strings.Contains(stdout, "no signalRelayReceipts for the sandbox environment") {
+			t.Fatalf("a pull guessed a missing signalRelayReceipts: exit=%d %s", exit, stdout)
 		}
 		if after := mustRead(t, path); string(after) != string(before) {
 			t.Fatalf("the refused pull changed the file:\n%s", after)

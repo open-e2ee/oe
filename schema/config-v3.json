@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/open-e2ee/oe/releases/latest/download/config-v3.json",
+  "title": "OpenE2EE project configuration",
+  "description": "The value that open-e2ee.config.ts exports as its default.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["product", "project", "signalRelay", "environments"],
+  "properties": {
+    "product": {
+      "enum": ["signal-relay"]
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "signalRelay": {
+      "$ref": "#/$defs/signalRelayPolicy"
+    },
+    "environments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sandbox"],
+      "properties": {
+        "sandbox": {
+          "$ref": "#/$defs/environment"
+        },
+        "production": {
+          "$ref": "#/$defs/environment"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "retention": {
+      "enum": ["1h", "6h", "12h", "1d", "3d", "7d", "14d", "30d"]
+    },
+    "signalRelayReceipts": {
+      "description": "Turns Signal Protocol Relay delivery receipts on or off. The shared policy is true when it leaves the field out.",
+      "type": "boolean"
+    },
+    "signalRelayPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deliveryRetention", "attachmentRetention"],
+      "properties": {
+        "deliveryRetention": {
+          "$ref": "#/$defs/retention"
+        },
+        "attachmentRetention": {
+          "$ref": "#/$defs/retention"
+        },
+        "signalRelayReceipts": {
+          "$ref": "#/$defs/signalRelayReceipts"
+        }
+      }
+    },
+    "signalRelayOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deliveryRetention": {
+          "$ref": "#/$defs/retention"
+        },
+        "attachmentRetention": {
+          "$ref": "#/$defs/retention"
+        },
+        "signalRelayReceipts": {
+          "$ref": "#/$defs/signalRelayReceipts"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "signalRelay": {
+          "$ref": "#/$defs/signalRelayOverride"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        }
+      }
+    },
+    "identityPublicKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kty", "crv", "x", "y", "kid"],
+      "properties": {
+        "kty": {
+          "const": "EC"
+        },
+        "crv": {
+          "const": "P-256"
+        },
+        "x": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "y": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "kid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "alg": {
+          "const": "ES256"
+        },
+        "use": {
+          "const": "sig"
+        },
+        "key_ops": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "verify"
+            }
+          ],
+          "minItems": 1,
+          "maxItems": 1,
+          "items": false
+        },
+        "ext": {
+          "const": true
+        }
+      }
+    },
+    "identity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": {
+              "const": "device-owned"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "algorithms",
+            "issuer",
+            "audience",
+            "subjectClaim",
+            "keys"
+          ],
+          "properties": {
+            "mode": {
+              "enum": ["custom-token", "provider-bound"]
+            },
+            "algorithms": {
+              "const": ["ES256"]
+            },
+            "issuer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "subjectClaim": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+            },
+            "keys": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/identityPublicKey"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "provider",
+            "algorithms",
+            "issuer",
+            "subjectClaim",
+            "authorizedParties"
+          ],
+          "properties": {
+            "mode": {
+              "const": "provider-bound"
+            },
+            "provider": {
+              "const": "clerk"
+            },
+            "algorithms": {
+              "const": ["RS256"]
+            },
+            "issuer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "subjectClaim": {
+              "const": "sub"
+            },
+            "authorizedParties": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "allowMissingAuthorizedParty": {
+              "type": "boolean"
+            }
+          },
+          "if": {
+            "required": ["allowMissingAuthorizedParty"],
+            "properties": {
+              "allowMissingAuthorizedParty": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": ["audience"]
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "provider",
+            "algorithms",
+            "issuer",
+            "audience",
+            "subjectClaim"
+          ],
+          "properties": {
+            "mode": {
+              "const": "provider-bound"
+            },
+            "provider": {
+              "const": "firebase"
+            },
+            "algorithms": {
+              "const": ["RS256"]
+            },
+            "issuer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "audience": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$"
+            },
+            "subjectClaim": {
+              "const": "sub"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

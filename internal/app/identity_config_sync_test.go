@@ -110,7 +110,7 @@ func TestPublicIdentityPullPreservesCommentsAndComputedRefusal(t *testing.T) {
 			source = `// KEEP_PUBLIC_COMMENT
 import { defineConfig } from "@open-e2ee/oe/config";
 const policy = { mode: "device-owned" };
-export default defineConfig({product:"signal-relay",project:"sample",relay:{deliveryRetention:"1d",attachmentRetention:"1d"},environments:{sandbox:{identity:policy}}});
+export default defineConfig({product:"signal-relay",project:"sample",signalRelay:{deliveryRetention:"1d",attachmentRetention:"1d"},environments:{sandbox:{identity:policy}}});
 `
 		}
 		if err := os.WriteFile(f.path, []byte(source), 0600); err != nil {

@@ -17,7 +17,7 @@ import (
 )
 
 // skillNames are the skills that oe agent setup installs.
-var skillNames = []string{"open-e2ee-relay-config", "open-e2ee-relay-notifications", "open-e2ee-relay-production", "open-e2ee-relay-setup"}
+var skillNames = []string{"open-e2ee-signal-relay-config", "open-e2ee-signal-relay-notifications", "open-e2ee-signal-relay-production", "open-e2ee-signal-relay-setup"}
 
 // repositorySkill reads skills/<name>/SKILL.md from this repository on disk,
 // so the test does not depend on the embed that it checks.
@@ -213,14 +213,14 @@ func TestAgentSetupIsIdempotent(t *testing.T) {
 	}
 	requireInstalled(t, project, second)
 
-	edited := filepath.Join(project, ".agents", "skills", "open-e2ee-relay-config", "SKILL.md")
+	edited := filepath.Join(project, ".agents", "skills", "open-e2ee-signal-relay-config", "SKILL.md")
 	if err := os.WriteFile(edited, []byte("an old skill\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	repaired := decodeEvent(t, []byte(mustSetup(t, dependencies)))
 	results := skillResults(t, repaired)
-	if repaired.Data["changed"] != true || results["open-e2ee-relay-config"]["change"] != skills.Updated ||
-		results["open-e2ee-relay-setup"]["change"] != skills.Current {
+	if repaired.Data["changed"] != true || results["open-e2ee-signal-relay-config"]["change"] != skills.Updated ||
+		results["open-e2ee-signal-relay-setup"]["change"] != skills.Current {
 		t.Fatalf("oe agent setup did not update only the changed skill: %s", repaired.Message)
 	}
 	requireInstalled(t, project, repaired)
@@ -278,18 +278,18 @@ func TestAgentSetupCheckWritesNothing(t *testing.T) {
 		t.Fatalf("oe agent setup --check after setup: exit=%d %s", exit, stdout)
 	}
 
-	edited := filepath.Join(project, ".agents", "skills", "open-e2ee-relay-production", "SKILL.md")
+	edited := filepath.Join(project, ".agents", "skills", "open-e2ee-signal-relay-production", "SKILL.md")
 	if err := os.WriteFile(edited, []byte("a local edit\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(filepath.Join(project, ".claude", "skills", "open-e2ee-relay-setup")); err != nil {
+	if err := os.RemoveAll(filepath.Join(project, ".claude", "skills", "open-e2ee-signal-relay-setup")); err != nil {
 		t.Fatal(err)
 	}
 	exit, stdout, _ = run(t, dependencies, "--json", "agent", "setup", "--check")
 	stale := decodeEvent(t, []byte(stdout))
 	want := []string{
-		"open-e2ee-relay-config current", "open-e2ee-relay-notifications current",
-		"open-e2ee-relay-production changed", "open-e2ee-relay-setup missing",
+		"open-e2ee-signal-relay-config current", "open-e2ee-signal-relay-notifications current",
+		"open-e2ee-signal-relay-production changed", "open-e2ee-signal-relay-setup missing",
 	}
 	if exit != exitFailure || stale.Code != "SKILLS_NOT_CURRENT" || !slices.Equal(skillStates(t, stale), want) {
 		t.Fatalf("oe agent setup --check after an edit: exit=%d %s", exit, stdout)
@@ -297,7 +297,7 @@ func TestAgentSetupCheckWritesNothing(t *testing.T) {
 	if got := string(mustRead(t, edited)); got != "a local edit\n" {
 		t.Fatalf("oe agent setup --check rewrote an edited skill: %q", got)
 	}
-	if _, err := os.Lstat(filepath.Join(project, ".claude", "skills", "open-e2ee-relay-setup")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(project, ".claude", "skills", "open-e2ee-signal-relay-setup")); !os.IsNotExist(err) {
 		t.Fatalf("oe agent setup --check restored a link: %v", err)
 	}
 
@@ -348,14 +348,14 @@ func TestNewAndLinkNameAgentSetupUnderAnAgent(t *testing.T) {
 	}
 
 	user := t.TempDir()
-	if _, err := skills.Install(user, os.Symlink); err != nil {
+	if _, _, err := skills.Install(user, os.Symlink); err != nil {
 		t.Fatal(err)
 	}
 	if result := newProject(t, agent(user)); strings.Contains(result.Message, hint) {
 		t.Errorf("oe new named %s with the user skills installed: %s", hint, result.Message)
 	}
 	project := t.TempDir()
-	if _, err := skills.Install(project, os.Symlink); err != nil {
+	if _, _, err := skills.Install(project, os.Symlink); err != nil {
 		t.Fatal(err)
 	}
 	if result := link(t, project, agent(t.TempDir())); strings.Contains(result.Message, hint) {
@@ -468,7 +468,7 @@ func TestSkillsNameOnlyCommandsInHelp(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(string(skills.Content("open-e2ee-relay-config")), config.Filename) {
+	if !strings.Contains(string(skills.Content("open-e2ee-signal-relay-config")), config.Filename) {
 		t.Errorf("the config skill does not name %s", config.Filename)
 	}
 }

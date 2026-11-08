@@ -62,7 +62,7 @@ func (r *runner) project(ctx context.Context, args []string) error {
 		// Text mode prints only the URL, so a shell can capture it.
 		return r.out.Success("project connection", signalRelayURL, map[string]any{
 			"project": project.Slug, "environment": r.environment,
-			"relayUrl": signalRelayURL, "variable": connection.Variable,
+			"signalRelayUrl": signalRelayURL, "relayUrl": signalRelayURL, "variable": connection.Variable,
 		})
 	default:
 		return usageError("project", fmt.Sprintf("unknown project command %q", args[0]))
@@ -172,6 +172,7 @@ func projectSummary(project control.Project, names []string) map[string]any {
 			"revision":                   environment.Revision,
 			"attachmentRetentionSeconds": environment.AttachmentRetentionSeconds,
 			"deliveryRetentionSeconds":   environment.DeliveryRetentionSeconds,
+			"signalRelayReceipts":        environment.SignalProtocolRelayReceipts,
 			"relayReceipts":              environment.SignalProtocolRelayReceipts,
 		}
 	}

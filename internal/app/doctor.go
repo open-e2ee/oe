@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
 	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
@@ -33,10 +34,15 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 		// The control API reports activation for Sandbox only.
 		return usageError("doctor", "--wait needs --env sandbox")
 	}
-	checks := map[string]any{"config": "ok", "control": "ok", "credential": "ok", "relay": "ok", "telemetry": "disabled"}
+	// The relay and relayOrigin keys are deprecated copies of signalRelay and
+	// signalRelayOrigin. v7.0.0 removes them.
+	checks := map[string]any{"config": "ok", "control": "ok", "credential": "ok", "signalRelay": "ok", "relay": "ok", "telemetry": "disabled"}
 	path, value, err := r.loadConfig()
 	if err != nil {
 		return fmt.Errorf("doctor found a problem: %w", err)
+	}
+	if value.Format == config.FormatV2 {
+		r.warn(configFormatWarning)
 	}
 	connection, err := envfile.Detect(filepath.Dir(path), "")
 	if err != nil {
@@ -87,7 +93,7 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	}
 	if expected != local {
 		return &problem{
-			code: "RELAY_CONNECTION_STALE", exit: exitFailure, next: "oe link",
+			code: "SIGNAL_RELAY_CONNECTION_STALE", exit: exitFailure, next: "oe link",
 			message: fmt.Sprintf("doctor found a problem: the local %s OpenE2EE Signal Protocol Relay connection is stale or belongs to another project", r.environment),
 		}
 	}
@@ -108,7 +114,8 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	checks["project"] = value.Project
 	checks["environment"] = r.environment
 	checks["configurationSource"] = environmentFile
-	checks["relayOrigin"] = origin.Scheme + "://" + origin.Host
+	checks["signalRelayOrigin"] = origin.Scheme + "://" + origin.Host
+	checks["relayOrigin"] = checks["signalRelayOrigin"]
 	if !*wait {
 		return r.out.Success("doctor", "All checks passed. CLI telemetry is disabled.", checks)
 	}
@@ -121,11 +128,16 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 	return r.out.Success("doctor", "All checks passed, and the first managed message was acknowledged.", checks)
 }
 
+// configFormatWarning tells a project whose config file uses the deprecated
+// relay key to rename it.
+const configFormatWarning = "warning: " + config.Filename + " uses the deprecated relay and relayReceipts keys; " +
+	"rename them to signalRelay and signalRelayReceipts. oe " + config.FormatV2RemovalRelease + " stops reading the old keys."
+
 // connectionMissing is a doctor run whose env file has no Relay connection
 // for environment. next is the command that writes the connection.
 func connectionMissing(environment, environmentFile, next string) *problem {
 	return &problem{
-		code: "RELAY_CONNECTION_MISSING", exit: exitFailure, next: next,
+		code: "SIGNAL_RELAY_CONNECTION_MISSING", exit: exitFailure, next: next,
 		message: fmt.Sprintf("doctor found a problem: the %s OpenE2EE Signal Protocol Relay connection is not in %s", environment, environmentFile),
 	}
 }

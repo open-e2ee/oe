@@ -14,7 +14,7 @@ import (
 	"github.com/open-e2ee/oe/internal/envvar"
 )
 
-// Until v6.0.0, oe reads each shell variable by its OE_ name when the
+// Until v7.0.0, oe reads each shell variable by its OE_ name when the
 // OPEN_E2EE_ name is empty, and warns once on stderr. The OPEN_E2EE_ name
 // wins when both are set.
 func TestDeprecatedEnvironmentNameSelectsTheEnvironment(t *testing.T) {
