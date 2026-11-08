@@ -441,6 +441,9 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 		return credential.Credential{}, err
 	}
 	r.credentialSource = value.Source
+	if client, ok := r.api.(*control.Client); ok {
+		client.SetCredentialSource(value.Source)
+	}
 	if value.Source != "environment" && value.RefreshToken != "" && credentialNeedsRefresh(value, r.now()) {
 		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken, "")
 		if refreshErr != nil {

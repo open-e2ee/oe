@@ -21,6 +21,9 @@ type Client struct {
 	http             *http.Client
 	protectionBypass string
 	cliVersion       string
+	// credentialSource is the source of the credential of the run. Each
+	// request names the environment source in OpenE2EE-CLI-Credential-Source.
+	credentialSource string
 }
 
 type apiError struct {
@@ -502,6 +505,14 @@ func (c *Client) SetCLIVersion(value string) {
 	c.cliVersion = strings.TrimSpace(value)
 }
 
+// SetCredentialSource sets the source of the credential of the run. When the
+// source is environment, for OPEN_E2EE_ACCESS_TOKEN, each control request
+// declares it in OpenE2EE-CLI-Credential-Source, so the server can refuse a
+// purchase. Any other source sends no header.
+func (c *Client) SetCredentialSource(value string) {
+	c.credentialSource = value
+}
+
 func (c *Client) do(ctx context.Context, method, endpoint string, credential CredentialRequest, body, output any) (err error) {
 	defer func() {
 		err = sanitizeCredentialError(err, credential.AccessToken, c.protectionBypass)
@@ -537,6 +548,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 		if c.cliVersion != "" {
 			request.Header.Set("OpenE2EE-CLI-Version", c.cliVersion)
 		}
+		if c.credentialSource == "environment" {
+			request.Header.Set("OpenE2EE-CLI-Credential-Source", "environment")
+		}
 		if c.protectionBypass != "" {
 			request.Header.Set("x-vercel-protection-bypass", c.protectionBypass)
 		}
@@ -548,9 +562,6 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 		}
 		if credential.OperationID != "" {
 			request.Header.Set("Idempotency-Key", credential.OperationID)
-		}
-		if credential.CredentialSource == "environment" {
-			request.Header.Set("OpenE2EE-CLI-Credential-Source", credential.CredentialSource)
 		}
 		response, err := httpClient.Do(request)
 		if err != nil {

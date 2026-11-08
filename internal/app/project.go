@@ -290,7 +290,7 @@ func (r *runner) listProjects(ctx context.Context) ([]control.ProjectSummary, er
 // when the read fails or the session cannot read plans, so oe project show
 // leaves the plan out. plan is nil for a project with no plan.
 func (r *runner) currentPlan(ctx context.Context, access credential.Credential, project string) (plan *control.PlanOffer, known bool) {
-	plans, err := r.api.ProjectPlans(ctx, control.CredentialRequest{AccessToken: access.AccessToken, CredentialSource: r.credentialSource}, project)
+	plans, err := r.api.ProjectPlans(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, project)
 	if err != nil || plans.BlockedBy != "" {
 		return nil, false
 	}

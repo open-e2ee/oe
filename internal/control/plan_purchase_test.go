@@ -13,7 +13,7 @@ import (
 )
 
 // planServer serves the plan routes of project chat. It records the method,
-// path, and credential source header of each request.
+// path, credential source header, and body of each request.
 type planServer struct {
 	mu       sync.Mutex
 	requests []string
@@ -100,23 +100,25 @@ func TestQuoteChargeIsTheTaxTotalWhenTaxIsPresent(t *testing.T) {
 	}
 }
 
-func TestPlanRoutesSendTheCredentialSourceOnlyForTheEnvironment(t *testing.T) {
+func TestEachRequestSendsTheCredentialSourceOnlyForTheEnvironment(t *testing.T) {
 	client, server := newPlanServer(t, func(response http.ResponseWriter, _ *http.Request, _ int) {
 		response.Write([]byte(`{}`))
 	})
-	ctx := context.Background()
-	for _, source := range []string{"", "store", "environment"} {
-		credential := CredentialRequest{AccessToken: "token", CredentialSource: source}
+	ctx, credential := context.Background(), CredentialRequest{AccessToken: "token"}
+	for _, source := range []string{"", "keychain", "environment"} {
+		client.SetCredentialSource(source)
+		// A project read and a plan read stand for every control request.
+		_, _ = client.GetProject(ctx, credential, "chat")
 		if _, err := client.ProjectPlans(ctx, credential, "chat"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := client.PurchasePlan(ctx, credential, "chat", PlanPurchaseRequest{ConfirmationToken: "quote"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	want := []string{"", "", "", "", "environment", "environment"}
 	if strings.Join(server.sources, ",") != strings.Join(want, ",") {
 		t.Fatalf("the credential sources were %q, want %q", server.sources, want)
+	}
+	if len(server.requests) != len(want) || server.requests[0] != "GET /v1/projects/chat" {
+		t.Fatalf("the requests were %q", server.requests)
 	}
 }
 

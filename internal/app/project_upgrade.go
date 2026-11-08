@@ -162,7 +162,7 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 	if _, err := r.getProject(ctx, access, options.project); err != nil {
 		return err
 	}
-	request := control.CredentialRequest{AccessToken: access.AccessToken, CredentialSource: r.credentialSource}
+	request := control.CredentialRequest{AccessToken: access.AccessToken}
 	plans, err := r.api.ProjectPlans(ctx, request, options.project)
 	if err != nil {
 		return r.upgradeFailure(err, options, r.planPage(control.ProjectPlans{}, options.plan))
@@ -172,7 +172,7 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 		return &problem{
 			code: "BILLING_PERMISSION_REQUIRED", exit: exitPersonAction, actionURL: page, actionReason: "purchase",
 			data:    map[string]any{"project": options.project, "blockedBy": plans.BlockedBy},
-			message: fmt.Sprintf("this account cannot manage billing for project %s; a person with the billing permission buys the plan at %s", options.project, page),
+			message: fmt.Sprintf("this account cannot manage billing for project %s; a person with the billing permission buys plan %s at %s", options.project, options.plan, page),
 		}
 	}
 	if plans.CurrentPlan != nil && plans.CurrentPlan.ID == options.plan {
@@ -204,7 +204,7 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 			code: "AGENT_PURCHASE_NOT_ALLOWED", exit: exitPersonAction, actionURL: page, actionReason: "purchase",
 			data: map[string]any{"project": options.project, "plan": options.plan},
 			message: fmt.Sprintf("the credential comes from OPEN_E2EE_ACCESS_TOKEN, and only a signed-in person buys a paid plan; "+
-				"a person buys plan %s at %s. %s shows the charge", target.ID, page, options.dryRunCommand()),
+				"a person buys plan %s for project %s at %s. %s shows the charge", target.ID, options.project, page, options.dryRunCommand()),
 		}
 	}
 	if r.underAgent {
@@ -282,7 +282,7 @@ func (r *runner) upgradePurchase(ctx context.Context, request control.Credential
 			return &problem{
 				code: "PURCHASE_NOT_IMMEDIATE", exit: exitPersonAction, actionURL: page, actionReason: "purchase",
 				data:    quoteData(options.project, target, quote),
-				message: fmt.Sprintf("the change to plan %s does not take effect now, so oe cannot buy it; change the plan at %s", target.ID, page),
+				message: fmt.Sprintf("the change to plan %s does not take effect now, so oe cannot buy it; change the plan of project %s at %s", target.ID, options.project, page),
 			}
 		}
 		token, charge = quote.ConfirmationToken, quote.Charge()
@@ -384,7 +384,7 @@ func (r *runner) waitForPurchase(ctx context.Context, access credential.Credenti
 		var err error
 		access, err = r.refreshedAccess(waitCtx, access)
 		if err == nil {
-			request := control.CredentialRequest{AccessToken: access.AccessToken, CredentialSource: r.credentialSource}
+			request := control.CredentialRequest{AccessToken: access.AccessToken}
 			purchase, err = r.api.PurchaseStatus(waitCtx, request, options.project, purchase.PurchaseID)
 		}
 		if err != nil {
@@ -432,7 +432,7 @@ func (r *runner) readPlanChange(ctx context.Context, access *credential.Credenti
 		return control.ProjectPlans{}, nil, err
 	}
 	*access = refreshed
-	request := control.CredentialRequest{AccessToken: access.AccessToken, CredentialSource: r.credentialSource}
+	request := control.CredentialRequest{AccessToken: access.AccessToken}
 	plans, err := r.api.ProjectPlans(ctx, request, options.project)
 	if err != nil || plans.OpenPurchase == nil || !purchaseIDPattern.MatchString(plans.OpenPurchase.ID) {
 		return plans, nil, err
@@ -548,6 +548,11 @@ func (r *runner) upgradeFailure(err error, options upgradeOptions, page string) 
 			var step string
 			failure.next, step = r.productionActivation(options.project, "")
 			failure.message = strings.TrimSuffix(failure.message, ".") + "; " + step
+		} else if failure.actionURL == r.fallbackPlanPage() {
+			// The fallback page lists every project, so the message names
+			// the project and the plan to choose there.
+			failure.message = fmt.Sprintf("%s; at %s, open project %s and choose plan %s",
+				strings.TrimSuffix(failure.message, "."), failure.actionURL, options.project, options.plan)
 		}
 	case slices.Contains(upgradeTemporaryCodes, code):
 		failure.exit, failure.next = exitTemporary, options.retryCommand()
@@ -568,11 +573,11 @@ func (r *runner) upgradeFailure(err error, options upgradeOptions, page string) 
 
 // planPage is the Console plan page of the project with the plan chosen. The
 // page that the control API names is used only on the host of the control
-// API. Without it, the page is the Console list of the signal-relay projects.
+// API. Without it, the page is the fallback plan page.
 func (r *runner) planPage(plans control.ProjectPlans, plan string) string {
 	controlURL, err := url.Parse(r.controlURL)
 	if err != nil {
-		return "the console"
+		return r.fallbackPlanPage()
 	}
 	if plans.PlanURL != "" {
 		page, err := url.Parse(plans.PlanURL)
@@ -582,6 +587,17 @@ func (r *runner) planPage(plans control.ProjectPlans, plan string) string {
 			page.RawQuery = query.Encode()
 			return page.String()
 		}
+	}
+	return r.fallbackPlanPage()
+}
+
+// fallbackPlanPage is the Console list of the Signal Protocol Relay projects.
+// A person chooses the project and the plan there when the control API names
+// no plan page.
+func (r *runner) fallbackPlanPage() string {
+	controlURL, err := url.Parse(r.controlURL)
+	if err != nil {
+		return "the console"
 	}
 	return controlURL.Scheme + "://" + controlURL.Host + "/signal-relay"
 }

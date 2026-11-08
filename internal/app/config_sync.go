@@ -578,7 +578,7 @@ func (p *pusher) gate(ctx context.Context, blockedBy string) (*problem, error) {
 // upgradeNext is the oe project upgrade command for the first paid plan that
 // the project can buy. It is empty when the plans read fails or names no plan.
 func (p *pusher) upgradeNext(ctx context.Context) string {
-	plans, err := p.r.api.ProjectPlans(ctx, control.CredentialRequest{AccessToken: p.access.AccessToken, CredentialSource: p.r.credentialSource}, p.value.Project)
+	plans, err := p.r.api.ProjectPlans(ctx, control.CredentialRequest{AccessToken: p.access.AccessToken}, p.value.Project)
 	if err != nil || plans.BlockedBy != "" || len(plans.Plans) == 0 {
 		return ""
 	}

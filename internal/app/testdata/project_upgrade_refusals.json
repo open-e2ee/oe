@@ -31,7 +31,7 @@
         "plan": "relay_starter_v1",
         "project": "acme-chat"
       },
-      "error": "the credential comes from OPEN_E2EE_ACCESS_TOKEN, and only a signed-in person buys a paid plan; a person buys plan relay_starter_v1 at https://console.open-e2ee.dev/signal-relay. oe project upgrade acme-chat --plan relay_starter_v1 --dry-run shows the charge",
+      "error": "the credential comes from OPEN_E2EE_ACCESS_TOKEN, and only a signed-in person buys a paid plan; a person buys plan relay_starter_v1 for project acme-chat at https://console.open-e2ee.dev/signal-relay. oe project upgrade acme-chat --plan relay_starter_v1 --dry-run shows the charge",
       "status": "error"
     }
   },
@@ -50,7 +50,7 @@
         "plan": "relay_starter_v1",
         "project": "acme-chat"
       },
-      "error": "Only a person buys a paid plan.",
+      "error": "Only a person buys a paid plan; at https://console.open-e2ee.dev/signal-relay, open project acme-chat and choose plan relay_starter_v1",
       "status": "error"
     }
   },
@@ -82,7 +82,7 @@
         "blockedBy": "billing_permission",
         "project": "acme-chat"
       },
-      "error": "this account cannot manage billing for project acme-chat; a person with the billing permission buys the plan at https://console.open-e2ee.dev/signal-relay",
+      "error": "this account cannot manage billing for project acme-chat; a person with the billing permission buys plan relay_starter_v1 at https://console.open-e2ee.dev/signal-relay",
       "status": "error"
     }
   },
@@ -203,7 +203,7 @@
         "plan": "relay_starter_v1",
         "project": "acme-chat"
       },
-      "error": "The VAT ID is not verified.",
+      "error": "The VAT ID is not verified; at https://console.open-e2ee.dev/signal-relay, open project acme-chat and choose plan relay_starter_v1",
       "status": "error"
     }
   },
@@ -333,7 +333,7 @@
         "total": 5390,
         "totalMajor": "53.90"
       },
-      "error": "the change to plan relay_starter_v1 does not take effect now, so oe cannot buy it; change the plan at https://console.open-e2ee.dev/signal-relay",
+      "error": "the change to plan relay_starter_v1 does not take effect now, so oe cannot buy it; change the plan of project acme-chat at https://console.open-e2ee.dev/signal-relay",
       "status": "error"
     }
   },
@@ -381,7 +381,7 @@
         "project": "acme-chat",
         "purchaseId": "purchase_co70BIYy6dvboIRyoATMjlWn_dbkNQ2MQUAEfR39y5E"
       },
-      "error": "Support reviews the purchase.",
+      "error": "Support reviews the purchase; at https://console.open-e2ee.dev/signal-relay, open project acme-chat and choose plan relay_starter_v1",
       "status": "error"
     }
   },

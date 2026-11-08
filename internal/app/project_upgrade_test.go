@@ -270,6 +270,37 @@ func TestProjectUpgradeUnderAnAgentQuotesForThePerson(t *testing.T) {
 	}
 }
 
+func TestProjectUpgradeNamesThePlanPageOfTheControlAPI(t *testing.T) {
+	const planURL = upgradePlanPage + "/acme-chat/plan"
+	for name, test := range map[string]struct {
+		planURL, page string
+		hint          bool
+	}{
+		"plan page":           {planURL: planURL, page: planURL + "?plan=" + upgradeTarget},
+		"no plan page":        {page: upgradePlanPage, hint: true},
+		"plan page elsewhere": {planURL: "https://elsewhere.example/signal-relay/acme-chat/plan", page: upgradePlanPage, hint: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			console.plans[0].PlanURL = test.planURL
+			_, stdout, _ := console.upgrade(t, map[string]string{"CLAUDECODE": "1"})
+			if handoff := decodeEvent(t, []byte(stdout)); handoff.Action.URL != test.page {
+				t.Fatalf("the handoff named the page %q, want %q", handoff.Action.URL, test.page)
+			}
+			console.refusals["quote"] = upgradeRefusal{status: 409, body: map[string]any{"code": "CARD_REQUIRED", "message": "Add a card."}}
+			exit, stdout, _ := console.upgrade(t, map[string]string{}, "--json", "--confirm-charge", "53.90")
+			refusal := decodeEvent(t, []byte(stdout))
+			want := "Add a card."
+			if test.hint {
+				want = "Add a card; at " + upgradePlanPage + ", open project acme-chat and choose plan relay_starter_v1"
+			}
+			if exit != exitPersonAction || refusal.Action.URL != test.page || refusal.Error != want {
+				t.Fatalf("the refusal named %q with %q, want %q with %q: exit=%d", refusal.Action.URL, refusal.Error, test.page, want, exit)
+			}
+		})
+	}
+}
+
 func TestProjectUpgradeUnderAnAgentWaitsForThePersonPurchase(t *testing.T) {
 	console := newUpgradeConsole(t)
 	open := console.plans[0]
