@@ -90,6 +90,7 @@ oe project list         list the projects of the organization of the session, wi
 oe project show         read a project and the state of each environment
 oe project usage        show the current billing-period Relay usage of one environment
 oe project connection   print the Relay connection URL of one environment
+oe project upgrade      quote a paid plan for a project, or buy it for a person; --dry-run buys nothing
 oe config push          apply the Sandbox section, then the Production section when the config has one; --dry-run changes nothing
 oe config pull          write the Relay policy of each active environment into open-e2ee.config.ts
 oe notifications        stage and verify best-effort notification profiles
@@ -418,7 +419,9 @@ output is JSON, and `oe` never prompts and never opens a browser. Pass
 `--agent yes` for an agent that `oe` does not detect. `--agent no` restores
 text output. In JSON mode, each run writes one JSON document to stdout for the
 result, for success and for failure. `oe auth login` also writes one pending
-event before the result (see below).
+event before the result (see below). Under an agent, `oe project upgrade`
+writes a pending event, and with `--wait` the result follows it. See
+[Buy a paid plan](#buy-a-paid-plan).
 
 ```json
 {"status":"ok","command":"project show","message":"...","data":{}}
@@ -636,6 +639,64 @@ A person at a terminal waits on the card page instead, and `oe` opens it in a
 browser. For `FREE_PAYMENT_METHOD_LIMIT`, `action.url` is the billing page of
 the organization. After the card, the person can still get
 `FREE_PAYMENT_METHOD_LIMIT`.
+When the project can buy a paid plan, `next` for `FREE_PROJECT_LIMIT` and
+`FREE_PAYMENT_METHOD_LIMIT` is `oe project upgrade PROJECT --plan PLAN`. `PLAN`
+is the first plan that the control API offers to the project. When the project
+cannot buy a plan, `FREE_PROJECT_LIMIT` has no `next`, and
+`FREE_PAYMENT_METHOD_LIMIT` names the push again.
+
+### Buy a paid plan
+
+`oe project upgrade [PROJECT] --plan PLAN` buys a paid plan for a project, for
+example `--plan relay_starter_v1`. Without `PROJECT`, the project is the one in
+`open-e2ee.config.ts`. `oe project show` names the current plan in
+`data.project.plan`, which is `null` for a project with no plan. It leaves out
+`plan` when the session cannot read the plans of the project.
+
+A purchase charges the payment method of the organization. So a person must
+confirm the charge:
+
+1. `oe project upgrade --plan PLAN --dry-run` quotes the plan and buys nothing.
+   `data.total` and `data.currency` are the charge in minor units, and
+   `data.totalMajor` is the same charge in major units. `next` is the purchase
+   command with `--confirm-charge` set to that total.
+2. Show the quote to the person.
+3. When the person agrees, the person runs `next`.
+
+A person at a terminal can also run the command without `--confirm-charge`.
+`oe` shows the quote and asks once. Any other run without `--confirm-charge`
+fails with `CONFIRMATION_REQUIRED`, exit 2, and buys nothing. `--yes` alone
+never buys. When `--confirm-charge` is not the total of a new quote, the run
+fails with `CHARGE_CONFIRMATION_MISMATCH`, exit 2, and buys nothing.
+`data.expected` is the total of the quote. `--quote TOKEN` buys at the quote
+of a dry run, and needs `--confirm-charge` with the currency, such as
+`--confirm-charge 53.90usd`. `data.quote` of the dry run is that token. Keep it
+private, because it confirms the purchase. The control API compares the charge
+with the quote, and the same token always names the same purchase. After a
+purchase, `oe` waits for the plan change for at most `--timeout`, 5 minutes by
+default. At the end of the wait, the run fails with `PURCHASE_PENDING`, exit 6,
+and the purchase goes on.
+
+An agent cannot buy a plan. Under an agent, `oe project upgrade` without
+`--dry-run` never sends a purchase. It writes one pending event and exits 5.
+Without `--quote`, the event holds the quote. `action.url` is the plan page
+where the person buys, and `next` adds `--wait`. With `--wait`, the run waits
+for the purchase of the person, for at most `--timeout`. With a credential from
+`OPEN_E2EE_ACCESS_TOKEN`, a run without `--dry-run` fails with
+`AGENT_PURCHASE_NOT_ALLOWED`, exit 5, before a quote.
+
+| `code`                                                                                                                                                    | Exit | What to do                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | --------------------------------------------------------------------------------- |
+| `QUOTE_EXPIRED`, `PRICE_CHANGED`, `AUTHORITY_CHANGED`, `METHOD_CHANGED`                                                                                   | 1    | Quote again with `next`, and show the new total to the person.                    |
+| `CARD_REQUIRED`, `TAX_LOCATION_REQUIRED`, `EU_UK_VAT_ID_REQUIRED`, `PAYMENT_ACTION_REQUIRED`, `SUPPORT_REQUIRED`, `ACTIVATE_FREE_FIRST`, `PAYMENT_FAILED` | 5    | Give `action.url` to the person.                                                  |
+| `PURCHASE_OPEN`, `PAID_PURCHASE_UNAVAILABLE`, and `EU_UK_VAT_ID_REQUIRED` with `data.detail` `vat_id:pending`                                             | 6    | Run `next` again later.                                                           |
+| `CHARGE_CONFIRMATION_MISMATCH`, `CONFIRMATION_REQUIRED`                                                                                                   | 2    | Ask the person to confirm the total of a new quote.                               |
+| `BILLING_PERMISSION_REQUIRED`                                                                                                                             | 5    | A person with the billing permission buys the plan at `action.url`.               |
+| `PLAN_NOT_AVAILABLE`                                                                                                                                      | 1    | Choose a plan from `data.plans`.                                                  |
+| `PURCHASE_NOT_IMMEDIATE`                                                                                                                                  | 5    | The change does not take effect now. The person changes the plan at `action.url`. |
+
+For `ACTIVATE_FREE_FIRST`, `next` is `oe config push` when the config has a
+Production section.
 
 ## Configuration ownership
 

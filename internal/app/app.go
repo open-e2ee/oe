@@ -220,7 +220,9 @@ func Run(ctx context.Context, args []string, dependencies Dependencies) int {
 // environment is the environment of the run, which some codes need for next.
 func fail(writer *output.Writer, command string, args []string, environment string, err error) int {
 	failure := classify(err, commandLine(args), environment)
-	_ = writer.Failure(command, failure.output())
+	if !failure.reported {
+		_ = writer.Failure(command, failure.output())
+	}
 	return failure.exit
 }
 
@@ -439,6 +441,9 @@ func (r *runner) access(ctx context.Context, scope string, loginWhenMissing bool
 		return credential.Credential{}, err
 	}
 	r.credentialSource = value.Source
+	if client, ok := r.api.(*control.Client); ok {
+		client.SetCredentialSource(value.Source)
+	}
 	if value.Source != "environment" && value.RefreshToken != "" && credentialNeedsRefresh(value, r.now()) {
 		refreshed, refreshErr := r.api.RefreshAuthorization(ctx, value.RefreshToken, "")
 		if refreshErr != nil {

@@ -10,12 +10,13 @@ import (
 
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
+	"github.com/open-e2ee/oe/internal/credential"
 	"github.com/open-e2ee/oe/internal/envfile"
 )
 
 func (r *runner) project(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usageError("project", "name a project command: list, show, usage, or connection")
+		return usageError("project", "name a project command: list, show, usage, connection, or upgrade")
 	}
 	switch args[0] {
 	case "list":
@@ -28,11 +29,21 @@ func (r *runner) project(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		project, err := r.readProject(ctx, slug)
+		access, err := r.access(ctx, "project:read", false)
 		if err != nil {
 			return err
 		}
-		return r.out.Success("project show", projectText(project, r.shownEnvironments()), map[string]any{"project": projectSummary(project, r.shownEnvironments())})
+		project, err := r.getProject(ctx, access, slug)
+		if err != nil {
+			return err
+		}
+		summary, text := projectSummary(project, r.shownEnvironments()), projectText(project, r.shownEnvironments())
+		if plan, known := r.currentPlan(ctx, access, project.Slug); known {
+			summary["plan"] = planData(plan)
+			// The plan line follows the first line, before the environments.
+			text = strings.Replace(text, "\n", "\n  plan: "+currentPlanText(plan)+"\n", 1)
+		}
+		return r.out.Success("project show", text, map[string]any{"project": summary})
 	case "usage":
 		slug, err := r.projectArgument("project usage", args[1:])
 		if err != nil {
@@ -64,6 +75,8 @@ func (r *runner) project(ctx context.Context, args []string) error {
 			"project": project.Slug, "environment": r.environment,
 			"signalRelayUrl": signalRelayURL, "relayUrl": signalRelayURL, "variable": connection.Variable,
 		})
+	case "upgrade":
+		return r.projectUpgrade(ctx, args[1:])
 	default:
 		return usageError("project", fmt.Sprintf("unknown project command %q", args[0]))
 	}
@@ -271,4 +284,22 @@ func (r *runner) listProjects(ctx context.Context) ([]control.ProjectSummary, er
 		return nil, err
 	}
 	return r.api.ListProjects(ctx, control.CredentialRequest{AccessToken: access.AccessToken})
+}
+
+// currentPlan reads the plan of the Production of project. known is false
+// when the read fails or the session cannot read plans, so oe project show
+// leaves the plan out. plan is nil for a project with no plan.
+func (r *runner) currentPlan(ctx context.Context, access credential.Credential, project string) (plan *control.PlanOffer, known bool) {
+	plans, err := r.api.ProjectPlans(ctx, control.CredentialRequest{AccessToken: access.AccessToken}, project)
+	if err != nil || plans.BlockedBy != "" {
+		return nil, false
+	}
+	return plans.CurrentPlan, true
+}
+
+func currentPlanText(plan *control.PlanOffer) string {
+	if plan == nil {
+		return "none"
+	}
+	return planLabel(*plan)
 }

@@ -21,6 +21,9 @@ type Client struct {
 	http             *http.Client
 	protectionBypass string
 	cliVersion       string
+	// credentialSource is the source of the credential of the run. Each
+	// request names the environment source in OpenE2EE-CLI-Credential-Source.
+	credentialSource string
 }
 
 type apiError struct {
@@ -31,6 +34,9 @@ type apiError struct {
 	CanAccept       bool            `json:"canAccept"`
 	Documents       []TermsDocument `json:"documents"`
 	BillingSetupURL string          `json:"billingSetupUrl"`
+	Detail          string          `json:"detail"`
+	PurchaseID      string          `json:"purchaseId"`
+	Expected        *ChargeAmount   `json:"expected"`
 }
 
 type authConfiguration struct {
@@ -499,6 +505,14 @@ func (c *Client) SetCLIVersion(value string) {
 	c.cliVersion = strings.TrimSpace(value)
 }
 
+// SetCredentialSource sets the source of the credential of the run. When the
+// source is environment, for OPEN_E2EE_ACCESS_TOKEN, each control request
+// declares it in OpenE2EE-CLI-Credential-Source, so the server can refuse a
+// purchase. Any other source sends no header.
+func (c *Client) SetCredentialSource(value string) {
+	c.credentialSource = value
+}
+
 func (c *Client) do(ctx context.Context, method, endpoint string, credential CredentialRequest, body, output any) (err error) {
 	defer func() {
 		err = sanitizeCredentialError(err, credential.AccessToken, c.protectionBypass)
@@ -520,7 +534,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 	if err != nil {
 		return err
 	}
-	retryable := method != http.MethodPost || credential.OperationID != ""
+	retryable := method != http.MethodPost || credential.OperationID != "" || credential.Replayable
 	for attempt := 0; attempt < 3; attempt++ {
 		requestURL := *c.baseURL
 		endpointPath, rawQuery, _ := strings.Cut(endpoint, "?")
@@ -533,6 +547,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, credential Cre
 		request.Header.Set("Accept", "application/json")
 		if c.cliVersion != "" {
 			request.Header.Set("OpenE2EE-CLI-Version", c.cliVersion)
+		}
+		if c.credentialSource == "environment" {
+			request.Header.Set("OpenE2EE-CLI-Credential-Source", "environment")
 		}
 		if c.protectionBypass != "" {
 			request.Header.Set("x-vercel-protection-bypass", c.protectionBypass)
@@ -584,6 +601,8 @@ func sanitizeCredentialError(err error, secrets ...string) error {
 		copy.Code = redact(copy.Code)
 		copy.Message = redact(copy.Message)
 		copy.BillingSetupURL = redact(copy.BillingSetupURL)
+		copy.Detail = redact(copy.Detail)
+		copy.PurchaseID = redact(copy.PurchaseID)
 		copy.Documents = append([]TermsDocument(nil), copy.Documents...)
 		for i := range copy.Documents {
 			copy.Documents[i].Name = redact(copy.Documents[i].Name)
@@ -608,7 +627,9 @@ func (e *sanitizedError) Unwrap() error { return e.cause }
 // refusal also carries CanAccept and the Documents to accept. A CARD_REQUIRED
 // refusal carries the BillingSetupURL where a person adds the card, and a
 // FREE_PAYMENT_METHOD_LIMIT refusal carries the billing page of the
-// organization in it.
+// organization in it. A plan purchase refusal can carry the Detail of the
+// refused check, the PurchaseID of an open purchase, and the Expected charge
+// of the quote.
 type APIError struct {
 	Status          int
 	Code            string
@@ -616,6 +637,9 @@ type APIError struct {
 	CanAccept       bool
 	Documents       []TermsDocument
 	BillingSetupURL string
+	Detail          string
+	PurchaseID      string
+	Expected        *ChargeAmount
 }
 
 func (e *APIError) Error() string { return e.Message }
@@ -667,6 +691,9 @@ func decodeResponse(response *http.Response, output any) error {
 			Status: response.StatusCode, Code: problem.Code, Message: message,
 			CanAccept: problem.CanAccept, Documents: problem.Documents,
 			BillingSetupURL: problem.BillingSetupURL,
+			Detail:          problem.Detail,
+			PurchaseID:      problem.PurchaseID,
+			Expected:        problem.Expected,
 		}
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {

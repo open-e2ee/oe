@@ -80,6 +80,28 @@ func (w *Writer) Pending(command, message string, action Action, data map[string
 	return w.writeJSON(Event{Status: "pending", Command: command, Message: message, Data: data, Action: action})
 }
 
+// PendingNext writes a pending step that is the result of the run: a person
+// must act, and next is the command that continues after the person acts.
+// Text mode prints the message, the action URL, and next.
+func (w *Writer) PendingNext(command, message, next string, action Action, data map[string]any) error {
+	if w.mode == Text {
+		if _, err := fmt.Fprintln(w.out, message); err != nil {
+			return err
+		}
+		if action.URL != "" {
+			if _, err := fmt.Fprintf(w.out, "action: open %s\n", action.URL); err != nil {
+				return err
+			}
+		}
+		if next != "" {
+			_, err := fmt.Fprintf(w.out, "next: %s\n", next)
+			return err
+		}
+		return nil
+	}
+	return w.writeJSON(Event{Status: "pending", Command: command, Message: message, Data: data, Next: next, Action: action})
+}
+
 func (w *Writer) Success(command, message string, data map[string]any) error {
 	return w.SuccessNext(command, message, "", data)
 }
