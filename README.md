@@ -289,11 +289,13 @@ Until version 7.0, `oe` does these things:
   skill directory that holds only an unchanged copy that `oe` wrote. It keeps
   an old directory that you changed, and names it in the result.
 - It accepts the old names and the new names in OpenE2EE Console responses.
+- `oe doctor` returns each new error code in `code` and the old code in
+  `data.legacyCode`.
 - It reads the old environment variable names of
   [Upgrade to 5.0](#upgrade-to-50).
 
-The old `oe doctor` error codes are deprecated. Version 6.0 returns only the
-new codes.
+The old `oe doctor` error codes are deprecated. Version 7.0 removes
+`data.legacyCode`.
 
 Do these steps in each project.
 
@@ -306,7 +308,7 @@ Do these steps in each project.
 5. Move your changes from each old skill directory that `oe agent setup` keeps
    to the new skill. Then delete the old directory.
 6. Change scripts that switch on `RELAY_CONNECTION_STALE` or
-   `RELAY_CONNECTION_MISSING` to the new codes.
+   `RELAY_CONNECTION_MISSING` to read `code` and use the new codes.
 7. Change scripts that read an old JSON key to the new key.
 8. Complete the steps of [Upgrade to 5.0](#upgrade-to-50) before version 7.0.
 

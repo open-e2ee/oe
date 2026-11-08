@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/open-e2ee/oe/internal/config"
 	"github.com/open-e2ee/oe/internal/control"
+	"github.com/open-e2ee/oe/internal/credential"
+	"github.com/open-e2ee/oe/internal/envfile"
 	"github.com/open-e2ee/oe/internal/identity"
 	"github.com/open-e2ee/oe/internal/skills"
 )
@@ -90,6 +93,44 @@ func TestEveryDualNameReaderStaysUntilTheContractRelease(t *testing.T) {
 		if !reader.read(renamed) {
 			t.Errorf("%s: oe does not read the new name %s", reader.item, reader.new)
 		}
+	}
+	for _, failure := range []struct {
+		problem      *problem
+		code, legacy string
+	}{
+		{connectionStale("sandbox"), "SIGNAL_RELAY_CONNECTION_STALE", "RELAY_CONNECTION_STALE"},
+		{connectionMissing("sandbox", ".env.local", "oe link"), "SIGNAL_RELAY_CONNECTION_MISSING", "RELAY_CONNECTION_MISSING"},
+	} {
+		if failure.problem.code != failure.code || failure.problem.data["legacyCode"] != failure.legacy {
+			t.Errorf("oe-06 doctor code %s: oe no longer gives the old code %s in data.legacyCode", failure.code, failure.legacy)
+		}
+	}
+}
+
+// TestDoctorKeepsTheOldCodeInLegacyCode proves that the JSON output of each
+// renamed doctor diagnostic gives the oe 5 code in data.legacyCode.
+func TestDoctorKeepsTheOldCodeInLegacyCode(t *testing.T) {
+	directory := initializedProject(t, "legacy-chat")
+	exit, stdout, _ := run(t, Dependencies{WorkingDir: directory}, "--json", "--env", "sandbox", "doctor")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "SIGNAL_RELAY_CONNECTION_MISSING" ||
+		failure.Data["legacyCode"] != "RELAY_CONNECTION_MISSING" {
+		t.Fatalf("doctor of a missing connection gave exit=%d %s", exit, stdout)
+	}
+
+	t.Setenv("OPEN_E2EE_ACCESS_TOKEN", "")
+	const stale = "https://signal-relay.example/signal/v1/connection/pk_sandbox_old"
+	if err := writeSignalProtocolRelayEnvironment(directory, ".env.local", envfile.Default, stale, noWarning(t)); err != nil {
+		t.Fatal(err)
+	}
+	store := credential.NewMemory()
+	storeCredential(t, store, "project:read")
+	api := &fakeAPI{getProject: func(context.Context, control.CredentialRequest, string) (control.Project, error) {
+		return control.Project{Slug: "legacy-chat", Writer: "config", Sandbox: projectEnvironment(sandboxSignalProtocolRelayURL, "1")}, nil
+	}}
+	exit, stdout, _ = run(t, Dependencies{API: api, Store: store, WorkingDir: directory}, "--json", "--env", "sandbox", "doctor")
+	if failure := decodeEvent(t, []byte(stdout)); exit != exitFailure || failure.Code != "SIGNAL_RELAY_CONNECTION_STALE" ||
+		failure.Data["legacyCode"] != "RELAY_CONNECTION_STALE" {
+		t.Fatalf("doctor of a stale connection gave exit=%d %s", exit, stdout)
 	}
 }
 

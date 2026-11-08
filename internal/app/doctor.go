@@ -92,10 +92,7 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 		return r.environmentNotActive(value.Project, project.Writer, r.environment)
 	}
 	if expected != local {
-		return &problem{
-			code: "SIGNAL_RELAY_CONNECTION_STALE", exit: exitFailure, next: "oe link",
-			message: fmt.Sprintf("doctor found a problem: the local %s OpenE2EE Signal Protocol Relay connection is stale or belongs to another project", r.environment),
-		}
+		return connectionStale(r.environment)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, local, nil)
 	if err != nil {
@@ -133,12 +130,31 @@ func (r *runner) doctor(ctx context.Context, args []string) error {
 const configFormatWarning = "warning: " + config.Filename + " uses the deprecated relay and relayReceipts keys; " +
 	"rename them to signalRelay and signalRelayReceipts. oe " + config.FormatV2RemovalRelease + " stops reading the old keys."
 
+// The doctor codes of oe 5 stay in data.legacyCode until oe v7.0.0, so a
+// script that switches on an old code has the upgrade window to move to the
+// new code.
+const (
+	legacyConnectionStale   = "RELAY_CONNECTION_STALE"
+	legacyConnectionMissing = "RELAY_CONNECTION_MISSING"
+)
+
+// connectionStale is a doctor run whose env file has a Relay connection for
+// environment that is not the connection of the project.
+func connectionStale(environment string) *problem {
+	return &problem{
+		code: "SIGNAL_RELAY_CONNECTION_STALE", exit: exitFailure, next: "oe link",
+		message: fmt.Sprintf("doctor found a problem: the local %s OpenE2EE Signal Protocol Relay connection is stale or belongs to another project", environment),
+		data:    map[string]any{"legacyCode": legacyConnectionStale},
+	}
+}
+
 // connectionMissing is a doctor run whose env file has no Relay connection
 // for environment. next is the command that writes the connection.
 func connectionMissing(environment, environmentFile, next string) *problem {
 	return &problem{
 		code: "SIGNAL_RELAY_CONNECTION_MISSING", exit: exitFailure, next: next,
 		message: fmt.Sprintf("doctor found a problem: the %s OpenE2EE Signal Protocol Relay connection is not in %s", environment, environmentFile),
+		data:    map[string]any{"legacyCode": legacyConnectionMissing},
 	}
 }
 
