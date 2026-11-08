@@ -66,7 +66,7 @@ func (r *runner) planIdentityPull(ctx context.Context, value config.Config, plan
 // account history. The docs section names the paths that remain.
 const inUseIdentityDetail = "This environment is in use because it has account history. " +
 	"An in-use environment keeps its identity profile. " +
-	"See https://docs.open-e2ee.dev/relay/identity#in-use-environments for the paths that remain."
+	"See https://docs.open-e2ee.dev/signal-relay/identity#in-use-environments for the paths that remain."
 
 // pendingIdentityDetail refuses a profile change while an identity
 // operation for the environment has no final result.

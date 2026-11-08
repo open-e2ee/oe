@@ -48,7 +48,7 @@ const identityLifecycleHelp = "For normal key rotation, add the new public key w
 	"Use oe identity operation resume --operation-id ID to continue the same lifecycle change. Permanently revoked devices stay revoked.\n\n" +
 	"Previously issued anonymous capabilities, attachment URLs, sender certificates and group tokens keep their independent expiry and policy. " +
 	"OpenE2EE Signal Protocol Relay cannot recall downloaded or decrypted content. Provider sign-in cannot recover a lost device-owned account key. " +
-	"See https://docs.open-e2ee.dev/relay for the key rotation and account lifecycle procedures."
+	"See https://docs.open-e2ee.dev/signal-relay for the key rotation and account lifecycle procedures."
 
 var commandSurface = []commandSpec{
 	{"new", "Create a project and its Sandbox environment, then write open-e2ee.config.ts, the OpenE2EE Signal Protocol Relay connection in .env.local, and the @open-e2ee/oe devDependency.", []string{
