@@ -387,7 +387,7 @@ func TestPublicIdentityPushDryRunShowsIdentityChange(t *testing.T) {
 }
 
 func TestPublicIdentityPushRefusesProfileChangeForInUseEnvironment(t *testing.T) {
-	const anchor = "https://docs.open-e2ee.dev/relay/identity#in-use-environments"
+	const anchor = "https://docs.open-e2ee.dev/signal-relay/identity#in-use-environments"
 	pending, err := identity.Text("oe_pending_selection")
 	if err != nil {
 		t.Fatal(err)

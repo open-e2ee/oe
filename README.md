@@ -176,7 +176,7 @@ oe identity check --profile public-profile.json --assertion-stdin --env producti
 This command sends the transient assertion once to the authenticated Console verifier.
 Supply it through a protected stdin pipe from your backend or test harness.
 Do not put assertions in command arguments, repository files, or support messages.
-The assertion must follow the [Relay identity contract](https://docs.open-e2ee.dev/relay/identity).
+The assertion must follow the [Relay identity contract](https://docs.open-e2ee.dev/signal-relay/identity).
 
 For device-owned identity, use `{"mode":"device-owned"}` as the profile.
 Omit `--assertion-stdin`. The command forbids that flag and reads no assertion.
@@ -215,8 +215,8 @@ Previously issued anonymous capabilities, attachment URLs, sender certificates
 and group tokens keep their independent expiry and policy.
 Relay cannot recall downloaded or decrypted content.
 Provider sign-in cannot recover a lost device-owned account key.
-Read the [key rotation limits](https://docs.open-e2ee.dev/relay/custom-token#key-rotation-and-revocation-limits)
-and [account lifecycle procedure](https://docs.open-e2ee.dev/relay/device-lifecycle-and-recovery#suspend-and-continue-an-account-change)
+Read the [key rotation limits](https://docs.open-e2ee.dev/signal-relay/custom-token#key-rotation-and-revocation-limits)
+and [account lifecycle procedure](https://docs.open-e2ee.dev/signal-relay/device-lifecycle-and-recovery#suspend-and-continue-an-account-change)
 before a change.
 
 ## Identity operations
