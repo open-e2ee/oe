@@ -57,6 +57,9 @@ type upgradeConsole struct {
 	// plans are the answers of the plan reads in order. The last one repeats.
 	plans []control.ProjectPlans
 	quote control.PlanQuote
+	// quoteBody, when set, is the exact quote answer in place of quote, so a
+	// test can send the Console wire shape that oe must decode.
+	quoteBody string
 	// purchase is the answer of a purchase POST, without its purchase ID.
 	purchase control.PlanPurchase
 	// statuses are the answers of the purchase reads in order. The last one
@@ -110,6 +113,10 @@ func newUpgradeConsole(t *testing.T) *upgradeConsole {
 		}
 		console.quotes++
 		console.quoteTargets = append(console.quoteTargets, body.TargetPlanID)
+		if console.quoteBody != "" {
+			_, _ = response.Write([]byte(console.quoteBody))
+			return
+		}
 		_ = json.NewEncoder(response).Encode(console.quote)
 	}))
 	mux.HandleFunc("POST "+base+"/plan/purchases", console.handle("purchase", func(response http.ResponseWriter, request *http.Request) {
@@ -267,6 +274,25 @@ func TestProjectUpgradeUnderAnAgentQuotesForThePerson(t *testing.T) {
 	if exit != exitPersonAction || result.Data["total"] != 5390.0 || !strings.Contains(result.Message, "53.90 USD") || console.quotes != 1 {
 		t.Fatalf("an agent run did not show the quote total: exit=%d quotes=%d %s", exit, console.quotes, stdout)
 	}
+}
+
+func TestProjectUpgradeUnderAnAgentDecodesTheConsoleTaxedQuote(t *testing.T) {
+	console := newUpgradeConsole(t)
+	// The Console sends tax as the exclusive tax amount and total as the
+	// tax-inclusive charge.
+	console.quoteBody = `{"amountDue":4900,"tax":490,"total":5390,"currency":"usd","timing":"immediate",` +
+		`"effectiveAtMilliseconds":1790000000000,"renewsAtMilliseconds":1792592000000,"paymentMethodRequired":false,` +
+		`"pricePreviewId":"preview_1","confirmationToken":"` + upgradeQuoteToken + `","quoteExpiresAtMilliseconds":1790000600000}`
+	exit, stdout, stderr := console.upgrade(t, map[string]string{"CLAUDECODE": "1"})
+	result := decodeEvent(t, []byte(stdout))
+	if exit != exitPersonAction || result.Status != "pending" || console.quotes != 1 || console.purchases != 0 {
+		t.Fatalf("an agent run did not hand the taxed quote to a person: exit=%d quotes=%d purchases=%d %s %s",
+			exit, console.quotes, console.purchases, stdout, stderr)
+	}
+	if result.Data["tax"] != 490.0 || result.Data["total"] != 5390.0 || !strings.Contains(result.Message, "the quote total is 53.90 USD") {
+		t.Fatalf("an agent run did not show the taxed quote: %s", stdout)
+	}
+	noTokenIn(t, stdout, stderr)
 }
 
 func TestProjectUpgradeNamesThePlanPageOfTheControlAPI(t *testing.T) {
