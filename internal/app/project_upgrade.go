@@ -621,7 +621,7 @@ func quoteData(project string, target control.PlanOffer, quote control.PlanQuote
 	charge := quote.Charge()
 	var tax any
 	if quote.Tax != nil {
-		tax = map[string]any{"automatic": quote.Tax.Automatic, "subtotal": quote.Tax.Subtotal, "amount": quote.Tax.Amount, "total": quote.Tax.Total}
+		tax = *quote.Tax
 	}
 	var renewsAt any
 	if quote.RenewsAtMilliseconds != nil {
@@ -644,7 +644,7 @@ func quoteText(project string, target control.PlanOffer, quote control.PlanQuote
 	fmt.Fprintf(&text, "Quote for plan %s on project %s:", planLabel(target), project)
 	fmt.Fprintf(&text, "\n  amount due: %s", formatCharge(quote.AmountDue, quote.Currency))
 	if quote.Tax != nil {
-		fmt.Fprintf(&text, "\n  tax: %s", formatCharge(quote.Tax.Amount, quote.Currency))
+		fmt.Fprintf(&text, "\n  tax: %s", formatCharge(*quote.Tax, quote.Currency))
 	}
 	fmt.Fprintf(&text, "\n  total: %s", formatCharge(charge.Amount, charge.Currency))
 	fmt.Fprintf(&text, "\n  timing: %s, effective %s", quote.Timing, milliseconds(quote.EffectiveAtMilliseconds))

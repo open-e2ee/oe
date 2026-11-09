@@ -83,8 +83,7 @@ func newUpgradeConsole(t *testing.T) *upgradeConsole {
 		t:     t,
 		plans: []control.ProjectPlans{{Project: upgradeSlug, CurrentPlan: &freePlan, Plans: []control.PlanOffer{hobbyPlan, starterPlan}}},
 		quote: control.PlanQuote{
-			AmountDue: 4900, Tax: &control.PlanQuoteTax{Automatic: true, Subtotal: 4900, Amount: 490, Total: 5390},
-			Total: 4900, Currency: "usd", Timing: control.TimingImmediate,
+			AmountDue: 4900, Tax: new(int64(490)), Total: 5390, Currency: "usd", Timing: control.TimingImmediate,
 			EffectiveAtMilliseconds: 1_790_000_000_000, RenewsAtMilliseconds: &renews,
 			PricePreviewID: "preview_1", ConfirmationToken: upgradeQuoteToken, QuoteExpiresAtMilliseconds: 1_790_000_600_000,
 		},
@@ -200,7 +199,7 @@ func TestProjectUpgradeDryRunNamesTheTokenOnlyInJSONData(t *testing.T) {
 		t.Fatalf("the dry run did not name the confirmed purchase as next: exit=%d %s %s", exit, stdout, stderr)
 	}
 	if result.Data["quote"] != upgradeQuoteToken || result.Data["total"] != 5390.0 || result.Data["totalMajor"] != "53.90" ||
-		result.Data["currency"] != "usd" || result.Data["amountDue"] != 4900.0 {
+		result.Data["currency"] != "usd" || result.Data["amountDue"] != 4900.0 || result.Data["tax"] != 490.0 {
 		t.Fatalf("the dry run data is not the quote: %s", stdout)
 	}
 	if current, _ := result.Data["currentPlan"].(map[string]any); current["id"] != freePlan.ID {

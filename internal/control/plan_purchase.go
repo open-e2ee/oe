@@ -40,41 +40,31 @@ type PlanQuoteRequest struct {
 }
 
 // PlanQuote is the price of a plan change. Amounts are in the minor units of
-// Currency. ConfirmationToken binds a purchase to this quote until
+// Currency. Tax is the exclusive tax amount of a taxed quote, and nil for an
+// untaxed quote. Total is the tax-inclusive charge of a taxed quote, else the
+// amount due. ConfirmationToken binds a purchase to this quote until
 // QuoteExpiresAtMilliseconds. It is a secret of the person who quoted.
 type PlanQuote struct {
-	AmountDue                  int64         `json:"amountDue"`
-	Tax                        *PlanQuoteTax `json:"tax"`
-	Total                      int64         `json:"total"`
-	Currency                   string        `json:"currency"`
-	Timing                     string        `json:"timing"`
-	EffectiveAtMilliseconds    int64         `json:"effectiveAtMilliseconds"`
-	RenewsAtMilliseconds       *int64        `json:"renewsAtMilliseconds"`
-	PaymentMethodRequired      bool          `json:"paymentMethodRequired"`
-	PricePreviewID             string        `json:"pricePreviewId"`
-	ConfirmationToken          string        `json:"confirmationToken"`
-	QuoteExpiresAtMilliseconds int64         `json:"quoteExpiresAtMilliseconds"`
-}
-
-// PlanQuoteTax is the automatic tax of a quote.
-type PlanQuoteTax struct {
-	Automatic bool  `json:"automatic"`
-	Subtotal  int64 `json:"subtotal"`
-	Amount    int64 `json:"amount"`
-	Total     int64 `json:"total"`
+	AmountDue                  int64  `json:"amountDue"`
+	Tax                        *int64 `json:"tax"`
+	Total                      int64  `json:"total"`
+	Currency                   string `json:"currency"`
+	Timing                     string `json:"timing"`
+	EffectiveAtMilliseconds    int64  `json:"effectiveAtMilliseconds"`
+	RenewsAtMilliseconds       *int64 `json:"renewsAtMilliseconds"`
+	PaymentMethodRequired      bool   `json:"paymentMethodRequired"`
+	PricePreviewID             string `json:"pricePreviewId"`
+	ConfirmationToken          string `json:"confirmationToken"`
+	QuoteExpiresAtMilliseconds int64  `json:"quoteExpiresAtMilliseconds"`
 }
 
 // TimingImmediate is the timing of a quote that a purchase can buy now.
 const TimingImmediate = "immediate"
 
-// Charge is the charge that a purchase confirms: the tax total of a taxed
-// quote, else its amount due. The server refuses a purchase whose confirmed
-// charge is not this charge.
+// Charge is the charge that a purchase confirms: the total of the quote. The
+// server refuses a purchase whose confirmed charge is not this charge.
 func (q PlanQuote) Charge() ChargeAmount {
-	if q.Tax != nil {
-		return ChargeAmount{Amount: q.Tax.Total, Currency: q.Currency}
-	}
-	return ChargeAmount{Amount: q.AmountDue, Currency: q.Currency}
+	return ChargeAmount{Amount: q.Total, Currency: q.Currency}
 }
 
 // ChargeAmount is an exact amount in the minor units of a lowercase ISO 4217

@@ -323,12 +323,7 @@
         "project": "acme-chat",
         "quoteExpiresAt": "2026-09-21T14:23:20Z",
         "renewsAt": "2026-10-21T14:13:20Z",
-        "tax": {
-          "amount": 490,
-          "automatic": true,
-          "subtotal": 4900,
-          "total": 5390
-        },
+        "tax": 490,
         "timing": "period_end",
         "total": 5390,
         "totalMajor": "53.90"
