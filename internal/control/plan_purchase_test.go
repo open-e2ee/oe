@@ -55,7 +55,7 @@ func TestPlanRoutesUseTheConsoleShapes(t *testing.T) {
 			response.Write([]byte(`{"project":"chat","blockedBy":"","currentPlan":{"id":"relay_free_v1","name":"Free"},` +
 				`"plans":[{"id":"relay_hobby_v1","name":"Hobby"}],"openPurchase":null}`))
 		case "POST /v1/projects/chat/plan/quote":
-			response.Write([]byte(`{"amountDue":4900,"tax":{"automatic":true,"subtotal":4900,"amount":490,"total":5390},"total":4900,` +
+			response.Write([]byte(`{"amountDue":4900,"tax":490,"total":5390,` +
 				`"currency":"usd","timing":"immediate","effectiveAtMilliseconds":1,"renewsAtMilliseconds":2,"paymentMethodRequired":false,` +
 				`"pricePreviewId":"preview","confirmationToken":"token","quoteExpiresAtMilliseconds":3}`))
 		case "POST /v1/projects/chat/plan/purchases":
@@ -90,13 +90,30 @@ func TestPlanRoutesUseTheConsoleShapes(t *testing.T) {
 	}
 }
 
-func TestQuoteChargeIsTheTaxTotalWhenTaxIsPresent(t *testing.T) {
-	if got := (PlanQuote{AmountDue: 4900, Currency: "usd"}).Charge(); got != (ChargeAmount{Amount: 4900, Currency: "usd"}) {
-		t.Fatalf("an untaxed quote charged %+v", got)
-	}
-	taxed := PlanQuote{AmountDue: 4900, Currency: "eur", Tax: &PlanQuoteTax{Subtotal: 4900, Amount: 931, Total: 5831}}
-	if got := taxed.Charge(); got != (ChargeAmount{Amount: 5831, Currency: "eur"}) {
-		t.Fatalf("a taxed quote charged %+v", got)
+func TestQuoteChargeIsTheTotalOfTheConsoleQuote(t *testing.T) {
+	// The Console answers tax as the exclusive tax amount or null, and total
+	// as the tax-inclusive charge or the amount due.
+	for _, test := range []struct {
+		name   string
+		body   string
+		tax    *int64
+		charge ChargeAmount
+	}{
+		{name: "untaxed", body: `{"amountDue":4900,"tax":null,"total":4900,"currency":"usd"}`, charge: ChargeAmount{Amount: 4900, Currency: "usd"}},
+		{name: "taxed", body: `{"amountDue":4900,"tax":931,"total":5831,"currency":"eur"}`, tax: new(int64(931)), charge: ChargeAmount{Amount: 5831, Currency: "eur"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var quote PlanQuote
+			if err := json.Unmarshal([]byte(test.body), &quote); err != nil {
+				t.Fatalf("decode the quote: %v", err)
+			}
+			if (quote.Tax == nil) != (test.tax == nil) || (quote.Tax != nil && *quote.Tax != *test.tax) {
+				t.Fatalf("the quote tax became %v", quote.Tax)
+			}
+			if got := quote.Charge(); got != test.charge {
+				t.Fatalf("the quote charged %+v", got)
+			}
+		})
 	}
 }
 
