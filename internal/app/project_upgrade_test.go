@@ -581,6 +581,83 @@ func TestProjectUpgradeChecksThePlanBeforeAQuote(t *testing.T) {
 	})
 }
 
+// signalRelaySpelling is the signal_relay_ spelling of a relay_ plan.
+func signalRelaySpelling(plan control.PlanOffer) control.PlanOffer {
+	plan.ID = "signal_" + plan.ID
+	return plan
+}
+
+// TestProjectUpgradeSelectsThePlanByItsMeaning proves that the relay_ and
+// signal_relay_ spellings of a plan ID select the same plan, and that oe
+// sends the control API the ID of its offer.
+func TestProjectUpgradeSelectsThePlanByItsMeaning(t *testing.T) {
+	const planURL = upgradePlanPage + "/acme-chat/plan"
+	for _, test := range []struct {
+		name, plan string
+		// offered is true when the control API offers the signal_relay_
+		// spelling. It offers the relay_ spelling otherwise.
+		offered bool
+		want    string
+	}{
+		{"new spelling of an old offer", "signal_relay_starter_v1", false, "relay_starter_v1"},
+		{"old spelling of a new offer", "relay_starter_v1", true, "signal_relay_starter_v1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			console.plans[0].PlanURL = planURL
+			if test.offered {
+				free := signalRelaySpelling(freePlan)
+				console.plans[0].CurrentPlan = &free
+				console.plans[0].Plans = []control.PlanOffer{signalRelaySpelling(hobbyPlan), signalRelaySpelling(starterPlan)}
+			}
+			exit, stdout, stderr := run(t, console.dependencies(nil), "--json", "project", "upgrade", upgradeSlug, "--plan", test.plan, "--dry-run")
+			if result := decodeEvent(t, []byte(stdout)); exit != 0 || result.Status != "ok" || !slices.Equal(console.quoteTargets, []string{test.want}) {
+				t.Fatalf("--plan %s quoted %v, want %s: exit=%d %s %s", test.plan, console.quoteTargets, test.want, exit, stdout, stderr)
+			}
+			exit, stdout, _ = run(t, console.dependencies(map[string]string{"CLAUDECODE": "1"}), "--json", "project", "upgrade", upgradeSlug, "--plan", test.plan)
+			if handoff := decodeEvent(t, []byte(stdout)); exit != exitPersonAction || handoff.Action.URL != planURL+"?plan="+test.want {
+				t.Fatalf("--plan %s handed off at %q, want the page of plan %s: exit=%d %s", test.plan, handoff.Action.URL, test.want, exit, stdout)
+			}
+		})
+	}
+	for _, test := range []struct{ current, plan string }{
+		{"signal_relay_starter_v1", "relay_starter_v1"},
+		{"relay_starter_v1", "signal_relay_starter_v1"},
+	} {
+		t.Run("already on plan "+test.current+" as "+test.plan, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			console.plans[0].CurrentPlan = &control.PlanOffer{ID: test.current, Name: "Starter"}
+			exit, stdout, _ := run(t, console.dependencies(nil), "--json", "project", "upgrade", upgradeSlug, "--plan", test.plan, "--confirm-charge", "53.90")
+			result := decodeEvent(t, []byte(stdout))
+			if current, _ := result.Data["plan"].(map[string]any); exit != 0 || result.Data["changed"] != false || current["id"] != test.current ||
+				console.quotes != 0 || console.purchases != 0 {
+				t.Fatalf("--plan %s on plan %s became exit=%d quotes=%d %s", test.plan, test.current, exit, console.quotes, stdout)
+			}
+		})
+	}
+	t.Run("wait ends on the other spelling", func(t *testing.T) {
+		console := newUpgradeConsole(t)
+		changed := signalRelaySpelling(starterPlan)
+		console.plans = append(console.plans, control.ProjectPlans{Project: upgradeSlug, CurrentPlan: &changed, Plans: []control.PlanOffer{}})
+		exit, stdout, stderr := console.upgrade(t, map[string]string{"CLAUDECODE": "1"}, "--wait", "--timeout", "2s")
+		events := decodeEvents(t, stdout)
+		if last := events[len(events)-1]; exit != 0 || len(events) != 2 || last.Status != "ok" || last.Data["changed"] != true || console.purchases != 0 {
+			t.Fatalf("the wait for %s did not end on plan %s: exit=%d %s %s", upgradeTarget, changed.ID, exit, stdout, stderr)
+		}
+	})
+	for _, plan := range []string{"signal_relay_business_v1", "starter_v1", "signal_starter_v1"} {
+		t.Run("not available "+plan, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			exit, stdout, _ := run(t, console.dependencies(nil), "--json", "project", "upgrade", upgradeSlug, "--plan", plan, "--dry-run")
+			result := decodeEvent(t, []byte(stdout))
+			if exit != exitFailure || result.Code != "PLAN_NOT_AVAILABLE" || result.Data["plan"] != plan ||
+				!reflect.DeepEqual(result.Data["plans"], []any{hobbyPlan.ID, starterPlan.ID}) || console.quotes != 0 {
+				t.Fatalf("--plan %s became exit=%d quotes=%d %s", plan, exit, console.quotes, stdout)
+			}
+		})
+	}
+}
+
 func TestProjectUpgradeUsageErrors(t *testing.T) {
 	for name, extra := range map[string][]string{
 		"dry run with quote":  {"--dry-run", "--quote", upgradeQuoteToken},
