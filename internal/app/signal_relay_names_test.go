@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -104,6 +106,24 @@ func TestEveryDualNameReaderStaysUntilTheContractRelease(t *testing.T) {
 		if failure.problem.code != failure.code || failure.problem.data["legacyCode"] != failure.legacy {
 			t.Errorf("oe-06 doctor code %s: oe no longer gives the old code %s in data.legacyCode", failure.code, failure.legacy)
 		}
+	}
+}
+
+// TestPlanMeaningStaysUntilTheContractRelease fails when planMeaning stops
+// reading the two spellings of a plan ID as one plan before v7.0.0, and when
+// oe v7.0.0 ships with planMeaning. The Homebrew formula names the latest oe
+// release. The v7.0.0 contract release removes planMeaning and this test.
+func TestPlanMeaningStaysUntilTheContractRelease(t *testing.T) {
+	if planMeaning("signal_relay_starter_v1") != planMeaning("relay_starter_v1") {
+		t.Errorf("oe no longer reads signal_relay_starter_v1 and relay_starter_v1 as one plan")
+	}
+	formula := string(mustRead(t, filepath.Join("..", "..", "Formula", "oe.rb")))
+	release := regexp.MustCompile(`refs/tags/v([0-9]+)\.[0-9]+\.[0-9]+`).FindStringSubmatch(formula)
+	if release == nil {
+		t.Fatalf("the Homebrew formula names no oe release:\n%s", formula)
+	}
+	if major, err := strconv.Atoi(release[1]); err != nil || major >= 7 {
+		t.Errorf("oe %s shipped with planMeaning; the v7.0.0 contract release removes it", strings.TrimPrefix(release[0], "refs/tags/"))
 	}
 }
 

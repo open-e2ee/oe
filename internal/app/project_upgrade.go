@@ -609,7 +609,8 @@ func (r *runner) fallbackPlanPage() string {
 // ID has two spellings, relay_<rest> and signal_relay_<rest>, and both name
 // the same plan. planMeaning gives the relay_<rest> spelling of either one,
 // and any other ID as it is. Compare plan IDs by their meaning, and send the
-// control API the ID of its own offer.
+// control API the ID of its own offer. The v7.0.0 contract release removes
+// planMeaning, and plan IDs then compare as they are.
 func planMeaning(id string) string {
 	if rest, ok := strings.CutPrefix(id, "signal_relay_"); ok {
 		return "relay_" + rest
