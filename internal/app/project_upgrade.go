@@ -175,12 +175,12 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 			message: fmt.Sprintf("this account cannot manage billing for project %s; a person with the billing permission buys plan %s at %s", options.project, options.plan, page),
 		}
 	}
-	if plans.CurrentPlan != nil && plans.CurrentPlan.ID == options.plan {
+	if plans.CurrentPlan != nil && planMeaning(plans.CurrentPlan.ID) == planMeaning(options.plan) {
 		return r.out.Success("project upgrade",
 			fmt.Sprintf("Project %s is already on plan %s.", options.project, planLabel(*plans.CurrentPlan)),
 			map[string]any{"project": options.project, "plan": planData(plans.CurrentPlan), "changed": false})
 	}
-	index := slices.IndexFunc(plans.Plans, func(offer control.PlanOffer) bool { return offer.ID == options.plan })
+	index := slices.IndexFunc(plans.Plans, func(offer control.PlanOffer) bool { return planMeaning(offer.ID) == planMeaning(options.plan) })
 	if index < 0 {
 		available := make([]string, 0, len(plans.Plans))
 		for _, offer := range plans.Plans {
@@ -195,7 +195,10 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 			data: map[string]any{"project": options.project, "plan": options.plan, "plans": available},
 		}
 	}
+	// From here on, oe names the plan to the control API by the ID of its
+	// offer, which can be the other spelling of options.plan.
 	target := plans.Plans[index]
+	page = r.planPage(plans, target.ID)
 	if options.dryRun {
 		return r.upgradeDryRun(ctx, request, options, plans, target, page)
 	}
@@ -413,7 +416,7 @@ func (r *runner) waitForPlan(ctx context.Context, access credential.Credential, 
 			}
 			return r.upgradeFailure(err, options, page)
 		}
-		if plans.CurrentPlan != nil && plans.CurrentPlan.ID == target.ID {
+		if plans.CurrentPlan != nil && planMeaning(plans.CurrentPlan.ID) == planMeaning(target.ID) {
 			return r.out.Success("project upgrade",
 				fmt.Sprintf("Project %s is on plan %s.", options.project, planLabel(target)),
 				map[string]any{"project": options.project, "plan": planData(&target), "changed": true})
@@ -600,6 +603,19 @@ func (r *runner) fallbackPlanPage() string {
 		return "the console"
 	}
 	return controlURL.Scheme + "://" + controlURL.Host + "/signal-relay"
+}
+
+// planMeaning is the plan that a plan ID names. A Signal Protocol Relay plan
+// ID has two spellings, relay_<rest> and signal_relay_<rest>, and both name
+// the same plan. planMeaning gives the relay_<rest> spelling of either one,
+// and any other ID as it is. Compare plan IDs by their meaning, and send the
+// control API the ID of its own offer. The v7.0.0 contract release removes
+// planMeaning, and plan IDs then compare as they are.
+func planMeaning(id string) string {
+	if rest, ok := strings.CutPrefix(id, "signal_relay_"); ok {
+		return "relay_" + rest
+	}
+	return id
 }
 
 func planLabel(plan control.PlanOffer) string {

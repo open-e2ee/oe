@@ -648,8 +648,10 @@ cannot buy a plan, `FREE_PROJECT_LIMIT` has no `next`, and
 ### Buy a paid plan
 
 `oe project upgrade [PROJECT] --plan PLAN` buys a paid plan for a project, for
-example `--plan relay_starter_v1`. Without `PROJECT`, the project is the one in
-`open-e2ee.config.ts`. `oe project show` names the current plan in
+example `--plan signal_relay_starter_v1`. A plan ID has two spellings,
+`signal_relay_<rest>` and `relay_<rest>`, and both select the same plan. So
+`--plan relay_starter_v1` buys the same plan. Without `PROJECT`, the project is
+the one in `open-e2ee.config.ts`. `oe project show` names the current plan in
 `data.project.plan`, which is `null` for a project with no plan. It leaves out
 `plan` when the session cannot read the plans of the project.
 
