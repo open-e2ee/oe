@@ -16,7 +16,7 @@ import (
 
 func (r *runner) project(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usageError("project", "name a project command: list, show, usage, connection, or upgrade")
+		return usageError("project", "name a project command: list, show, usage, capacity, connection, or upgrade")
 	}
 	switch args[0] {
 	case "list":
@@ -50,6 +50,12 @@ func (r *runner) project(ctx context.Context, args []string) error {
 			return err
 		}
 		return r.projectUsage(ctx, slug)
+	case "capacity":
+		slug, err := r.projectArgument("project capacity", args[1:])
+		if err != nil {
+			return err
+		}
+		return r.projectCapacity(ctx, slug)
 	case "connection":
 		slug, err := r.projectArgument("project connection", args[1:])
 		if err != nil {
