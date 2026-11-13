@@ -89,6 +89,7 @@ oe link [PROJECT]       link the directory to a project and write the env file o
 oe project list         list the projects of the organization of the session, with the state of Production
 oe project show         read a project and the state of each environment
 oe project usage        show the current billing-period Relay usage of one environment
+oe project capacity     show current registered Sandbox accounts and reserved slots
 oe project connection   print the Relay connection URL of one environment
 oe project upgrade      quote a paid plan for a project, or buy it for a person; --dry-run buys nothing
 oe config push          apply the Sandbox section, then the Production section when the config has one; --dry-run changes nothing
@@ -594,6 +595,29 @@ oe project usage my-chat --env production --json
 `no_usage` means Relay verified zero activity. Missing or untrusted reporting
 fails with `USAGE_UNAVAILABLE`, exit 6, instead of presenting zero usage.
 `partial` and `stale` results include their status with the reported figures.
+
+Read Sandbox account capacity with the same project and authentication:
+
+```bash
+oe project capacity
+oe project capacity my-chat --env sandbox --json
+```
+
+This command reads the separate registered-account contract. It shows registered
+accounts, reservations, available slots, readiness, and a pending account limit.
+Unknown or expired availability stays unknown. Counts remain exact decimal
+strings in JSON. Production refuses this command before a capacity request.
+Use `oe project usage --env production` for Production usage.
+
+A registered Sandbox account keeps its slot across calendar periods. Linked
+devices use the same account slot. A slot is free only after hosted deletion
+confirms capacity release. Removing a device or clearing local storage does not release
+it.
+
+The supported SDK methods are
+`deleteHostedSignalProtocolRelayAccount` and
+`readHostedSignalProtocolRelayAccountDeletion`. Keep their persistent storage
+and require `capacityRelease: 'released'` before expecting a free slot.
 
 In JSON, `data.variable` names the variable that the application reads (see
 [Configuration ownership](#configuration-ownership)). A project with no active

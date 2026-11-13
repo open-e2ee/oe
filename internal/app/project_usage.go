@@ -72,9 +72,11 @@ func usageText(usage control.Usage) string {
 		text.WriteString("Stale report; figures may have changed.\n")
 	}
 	if usage.Reported != nil {
-		fmt.Fprintf(&text, "Delivery units: %s\nAttachment operations: %s\nRelay MAU: %s\nLive bytes: %s",
-			usageFigure(usage.Reported.DeliveryUnits), usageFigure(usage.Reported.AttachmentOperations),
-			usageFigure(usage.Reported.SignalProtocolRelayMAU), usage.Reported.LiveBytes)
+		fmt.Fprintf(&text, "Delivery units: %s\nAttachment operations: %s\n", usageFigure(usage.Reported.DeliveryUnits), usageFigure(usage.Reported.AttachmentOperations))
+		if usage.Environment == "production" {
+			fmt.Fprintf(&text, "Relay MAU: %s\n", usageFigure(usage.Reported.SignalProtocolRelayMAU))
+		}
+		fmt.Fprintf(&text, "Live bytes: %s", usage.Reported.LiveBytes)
 	}
 	return text.String()
 }
