@@ -661,7 +661,8 @@ confirm the charge:
 1. `oe project upgrade --plan PLAN --dry-run` quotes the plan and buys nothing.
    `data.total` and `data.currency` are the charge in minor units, and
    `data.totalMajor` is the same charge in major units. `next` is the purchase
-   command with `--confirm-charge` set to that total.
+   command with `--confirm-charge` set to that total and its currency, such as
+   `--confirm-charge 53.90usd`.
 2. Show the quote to the person.
 3. When the person agrees, the person runs `next`.
 
