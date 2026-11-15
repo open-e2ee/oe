@@ -684,9 +684,7 @@ An agent cannot buy a plan. Under an agent, `oe project upgrade` without
 `--dry-run` never sends a purchase. It writes one pending event and exits 5.
 Without `--quote`, the event holds the quote. `action.url` is the plan page
 where the person buys, and `next` adds `--wait`. With `--wait`, the run waits
-for the purchase of the person, for at most `--timeout`. When the project has
-an open purchase, a run with `--wait` sends no quote and waits for that
-purchase. With a credential from
+for the purchase of the person, for at most `--timeout`. With a credential from
 `OPEN_E2EE_ACCESS_TOKEN`, a run without `--dry-run` fails with
 `AGENT_PURCHASE_NOT_ALLOWED`, exit 5, before a quote.
 

@@ -69,11 +69,8 @@ type upgradeConsole struct {
 	refusals map[string]upgradeRefusal
 
 	planReads, quotes, purchases, statusReads int
-	// requests counts the requests of each plan route by name, refused or
-	// served.
-	requests     map[string]int
-	quoteTargets []string
-	bodies       []control.PlanPurchaseRequest
+	quoteTargets                              []string
+	bodies                                    []control.PlanPurchaseRequest
 	// sources are the OpenE2EE-CLI-Credential-Source headers of the plan
 	// route requests.
 	sources []string
@@ -96,7 +93,6 @@ func newUpgradeConsole(t *testing.T) *upgradeConsole {
 		purchase: control.PlanPurchase{State: "accepted", Status: control.PurchaseInProgress, Message: "The purchase is in progress."},
 		statuses: []control.PlanPurchase{{State: "fulfilled", Status: control.PurchaseFulfilled, PlanID: upgradeTarget, Message: "The plan changed."}},
 		refusals: map[string]upgradeRefusal{},
-		requests: map[string]int{},
 	}
 	base := "/v1/projects/" + upgradeSlug
 	mux := http.NewServeMux()
@@ -161,7 +157,6 @@ func (c *upgradeConsole) handle(route string, serve http.HandlerFunc) http.Handl
 			return
 		}
 		c.sources = append(c.sources, request.Header.Get("OpenE2EE-CLI-Credential-Source"))
-		c.requests[route]++
 		if refusal, ok := c.refusals[route]; ok {
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(refusal.status)
@@ -371,30 +366,6 @@ func TestProjectUpgradeUnderAnAgentWaitsForThePersonPurchase(t *testing.T) {
 	if events[1].Status != "ok" || events[1].Data["changed"] != true || console.purchases != 0 || console.statusReads != 1 {
 		t.Fatalf("an agent wait did not end on the plan change: purchases=%d reads=%d %s", console.purchases, console.statusReads, stdout)
 	}
-}
-
-func TestProjectUpgradeUnderAnAgentWithAnOpenPurchaseWaitsWithoutAQuote(t *testing.T) {
-	console := newUpgradeConsole(t)
-	open := console.plans[0]
-	open.OpenPurchase = &control.OpenPurchase{ID: purchaseIDFor("person"), State: "accepted"}
-	changed := control.ProjectPlans{Project: upgradeSlug, CurrentPlan: &starterPlan, Plans: []control.PlanOffer{}}
-	console.plans = []control.ProjectPlans{open, open, changed}
-	console.statuses = []control.PlanPurchase{{Status: control.PurchaseInProgress}}
-	// The control API refuses a quote while a purchase is open.
-	console.refusals["quote"] = upgradeRefusal{status: 409, body: map[string]any{"code": "PURCHASE_OPEN", "message": "Another purchase is open."}}
-	exit, stdout, stderr := console.upgrade(t, map[string]string{"CLAUDECODE": "1"}, "--wait")
-	events := decodeEvents(t, stdout)
-	if exit != 0 || len(events) != 2 || events[0].Status != "pending" || events[0].Action.URL != upgradePlanPage {
-		t.Fatalf("an agent wait with an open purchase did not write the handoff first: exit=%d %s %s", exit, stdout, stderr)
-	}
-	if events[1].Status != "ok" || events[1].Data["changed"] != true {
-		t.Fatalf("an agent wait with an open purchase did not end on the plan change: %s", stdout)
-	}
-	if console.requests["quote"] != 0 || console.purchases != 0 || console.statusReads != 1 {
-		t.Fatalf("an agent wait with an open purchase made %d quote requests, %d purchases, and %d status reads",
-			console.requests["quote"], console.purchases, console.statusReads)
-	}
-	noTokenIn(t, stdout, stderr)
 }
 
 func TestProjectUpgradeUnderAnAgentStopsWhenThePersonPurchaseFails(t *testing.T) {

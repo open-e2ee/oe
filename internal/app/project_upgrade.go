@@ -211,7 +211,7 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 		}
 	}
 	if r.underAgent {
-		return r.upgradeHandoff(ctx, request, access, options, plans, target, page)
+		return r.upgradeHandoff(ctx, request, access, options, target, page)
 	}
 	return r.upgradePurchase(ctx, request, access, options, target, page)
 }
@@ -240,12 +240,11 @@ func (r *runner) upgradeDryRun(ctx context.Context, request control.CredentialRe
 
 // upgradeHandoff hands the purchase to a person on the Console plan page. It
 // quotes first, so the person and the agent see the charge. With --wait, it
-// then waits until the project is on the plan. A purchase that is open has no
-// new quote, so a run with --wait waits for it without a quote.
-func (r *runner) upgradeHandoff(ctx context.Context, request control.CredentialRequest, access credential.Credential, options upgradeOptions, plans control.ProjectPlans, target control.PlanOffer, page string) error {
+// then waits until the project is on the plan.
+func (r *runner) upgradeHandoff(ctx context.Context, request control.CredentialRequest, access credential.Credential, options upgradeOptions, target control.PlanOffer, page string) error {
 	data := map[string]any{"project": options.project, "plan": planData(&target)}
 	message := fmt.Sprintf("An agent cannot buy a paid plan. A person buys plan %s for project %s at %s.", planLabel(target), options.project, page)
-	if options.quote == "" && !(options.wait && plans.OpenPurchase != nil) {
+	if options.quote == "" {
 		quote, err := r.quote(ctx, request, options, target)
 		if err != nil {
 			return r.upgradeFailure(err, options, page)
