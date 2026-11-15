@@ -232,7 +232,9 @@ func (r *runner) upgradeDryRun(ctx context.Context, request control.CredentialRe
 		text += "\nThis change does not take effect now, so oe cannot buy it. Change the plan at " + page + "."
 		return r.out.Success("project upgrade", text, data)
 	}
-	next := options.command("--confirm-charge", formatMajor(charge.Amount, charge.Currency))
+	// The charge names its currency, so next also buys with --quote and the
+	// token in data.
+	next := options.command("--confirm-charge", formatMajor(charge.Amount, charge.Currency)+charge.Currency)
 	return r.out.SuccessNext("project upgrade", text, next, data)
 }
 

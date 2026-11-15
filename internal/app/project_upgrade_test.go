@@ -202,7 +202,7 @@ func TestProjectUpgradeDryRunNamesTheTokenOnlyInJSONData(t *testing.T) {
 	console := newUpgradeConsole(t)
 	exit, stdout, stderr := console.upgrade(t, nil, "--json", "--dry-run")
 	result := decodeEvent(t, []byte(stdout))
-	if exit != 0 || result.Status != "ok" || result.Next != "oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90" {
+	if exit != 0 || result.Status != "ok" || result.Next != "oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90usd" {
 		t.Fatalf("the dry run did not name the confirmed purchase as next: exit=%d %s %s", exit, stdout, stderr)
 	}
 	if result.Data["quote"] != upgradeQuoteToken || result.Data["total"] != 5390.0 || result.Data["totalMajor"] != "53.90" ||
@@ -221,13 +221,37 @@ func TestProjectUpgradeDryRunNamesTheTokenOnlyInJSONData(t *testing.T) {
 
 	exit, stdout, stderr = console.upgrade(t, nil, "--dry-run")
 	if exit != 0 || !strings.Contains(stdout, "total: 53.90 USD") || !strings.Contains(stdout, "tax: 4.90 USD") ||
-		!strings.Contains(stdout, "next: oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90") {
+		!strings.Contains(stdout, "next: oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90usd") {
 		t.Fatalf("the text dry run did not show the quote and next: exit=%d %s %s", exit, stdout, stderr)
 	}
 	noTokenIn(t, stdout, stderr)
 	if console.purchases != 0 {
 		t.Fatalf("a dry run made %d purchases", console.purchases)
 	}
+}
+
+func TestProjectUpgradeDryRunNextWithItsQuoteTokenBuysThePlan(t *testing.T) {
+	console := newUpgradeConsole(t)
+	console.purchase = control.PlanPurchase{Status: control.PurchaseFulfilled}
+	exit, stdout, stderr := console.upgrade(t, nil, "--json", "--dry-run")
+	dryRun := decodeEvent(t, []byte(stdout))
+	token, _ := dryRun.Data["quote"].(string)
+	command, ok := strings.CutPrefix(dryRun.Next, "oe ")
+	if exit != 0 || token == "" || !ok {
+		t.Fatalf("the dry run named no next and token: exit=%d %s %s", exit, stdout, stderr)
+	}
+	// An agent pairs the printed next with the token from data.
+	args := append([]string{"--json"}, strings.Fields(command)...)
+	exit, stdout, stderr = run(t, console.dependencies(nil), append(args, "--quote", token)...)
+	result := decodeEvent(t, []byte(stdout))
+	if exit != 0 || result.Status != "ok" || result.Data["changed"] != true {
+		t.Fatalf("the dry run next with its quote token did not buy the plan: exit=%d %s %s", exit, stdout, stderr)
+	}
+	want := []control.PlanPurchaseRequest{{ConfirmationToken: upgradeQuoteToken, ConfirmedCharge: control.ChargeAmount{Amount: 5390, Currency: "usd"}}}
+	if console.quotes != 1 || !reflect.DeepEqual(console.bodies, want) {
+		t.Fatalf("the purchase made %d quotes and sent %+v", console.quotes, console.bodies)
+	}
+	noTokenIn(t, stderr)
 }
 
 func TestProjectUpgradeDryRunOfALaterChangeNamesNoPurchase(t *testing.T) {
