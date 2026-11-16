@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -47,24 +48,40 @@ type ProjectCapacity struct {
 	Capacity    SandboxCapacity `json:"capacity"`
 }
 
-var errSandboxCapacity = errors.New("the Sandbox account capacity response is invalid")
+// ErrSandboxCapacity is a Sandbox account capacity response that is not
+// valid JSON, does not match the v1 contract, or names another project or
+// environment.
+var ErrSandboxCapacity = errors.New("the Sandbox account capacity response is invalid")
+
+// ErrSandboxCapacityNotServed is a Console that answers 404 for the capacity
+// route, because it is older than the capacity reader.
+var ErrSandboxCapacityNotServed = errors.New("the control API does not serve Sandbox account capacity")
+
 var capacityDecimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // ProjectCapacity reads the separate account contract without a monthly usage fallback.
+// A 404 gives ErrSandboxCapacityNotServed, and an invalid response gives ErrSandboxCapacity.
 func (c *Client) ProjectCapacity(ctx context.Context, credential CredentialRequest, project, environment string) (ProjectCapacity, error) {
 	if environment != "sandbox" {
 		return ProjectCapacity{}, errors.New("account capacity is available only in Sandbox")
 	}
 	var raw json.RawMessage
-	if err := c.do(ctx, http.MethodGet, projectPath(project, "sandbox-account-capacity")+"?environment=sandbox", credential, nil, &raw); err != nil {
+	err := c.do(ctx, http.MethodGet, projectPath(project, "sandbox-account-capacity")+"?environment=sandbox", credential, nil, &raw)
+	if refusal, ok := errors.AsType[*APIError](err); ok && refusal.Status == http.StatusNotFound {
+		return ProjectCapacity{}, fmt.Errorf("%w: %w", ErrSandboxCapacityNotServed, err)
+	}
+	if errors.Is(err, errDecodeResponse) {
+		return ProjectCapacity{}, ErrSandboxCapacity
+	}
+	if err != nil {
 		return ProjectCapacity{}, err
 	}
 	var result ProjectCapacity
 	if err := capacityObject(raw, &result, "project", "environment", "capacity"); err != nil {
-		return ProjectCapacity{}, errSandboxCapacity
+		return ProjectCapacity{}, ErrSandboxCapacity
 	}
 	if result.Project != project || result.Environment != "sandbox" {
-		return ProjectCapacity{}, errSandboxCapacity
+		return ProjectCapacity{}, ErrSandboxCapacity
 	}
 	return result, nil
 }
@@ -73,11 +90,11 @@ func (value *SandboxCapacity) UnmarshalJSON(data []byte) error {
 	type wire SandboxCapacity
 	var decoded wire
 	if err := capacityObject(data, &decoded, "schemaVersion", "contractVersion", "environment", "billingProjectHandle", "signalRelayScopeId", "recoveryGeneration", "activationRevision", "capacityRevision", "state", "basis", "limit", "limitSource", "registeredAccounts", "reservedAccounts", "availableSlots", "overCapacity", "observedAtMilliseconds", "pendingLimit"); err != nil {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	candidate := SandboxCapacity(decoded)
 	if !candidate.valid() {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	*value = candidate
 	return nil
@@ -88,11 +105,11 @@ func (value *SandboxCapacityPendingLimit) UnmarshalJSON(data []byte) error {
 	var decoded wire
 	if err := capacityObject(data, &decoded, "registeredTestAccounts", "appliesAtMilliseconds", "controlOperationId"); err != nil ||
 		!capacityInteger(decoded.RegisteredTestAccounts) || !capacityInteger(decoded.AppliesAtMilliseconds) || !capacityIdentifier(decoded.ControlOperationID) {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(data, &fields) != nil || bytes.Equal(fields["registeredTestAccounts"], []byte("null")) || bytes.Equal(fields["appliesAtMilliseconds"], []byte("null")) {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	*value = SandboxCapacityPendingLimit(decoded)
 	return nil
@@ -103,26 +120,26 @@ func capacityObject(data []byte, target any, fields ...string) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	seen := make(map[string]bool, len(fields))
 	for decoder.More() {
 		token, err = decoder.Token()
 		field, ok := token.(string)
 		if err != nil || !ok || seen[field] || !slices.Contains(fields, field) {
-			return errSandboxCapacity
+			return ErrSandboxCapacity
 		}
 		seen[field] = true
 		var raw json.RawMessage
 		if decoder.Decode(&raw) != nil {
-			return errSandboxCapacity
+			return ErrSandboxCapacity
 		}
 	}
 	if _, err = decoder.Token(); err != nil || len(seen) != len(fields) {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	if decoder.Decode(new(any)) != io.EOF {
-		return errSandboxCapacity
+		return ErrSandboxCapacity
 	}
 	return json.Unmarshal(data, target)
 }
@@ -172,9 +189,15 @@ func (value SandboxCapacity) valid() bool {
 // At retains known counts but removes availability when the observation expires.
 func (value SandboxCapacity) At(now time.Time) SandboxCapacity {
 	if value.State == "active" || value.State == "ready" {
-		if value.ObservedAtMilliseconds == nil || *value.ObservedAtMilliseconds > now.UnixMilli()+30_000 || *value.ObservedAtMilliseconds < now.UnixMilli()-60_000 {
+		if value.ObservedAtMilliseconds == nil || *value.ObservedAtMilliseconds > now.UnixMilli()+30_000 || value.Stale(now) {
 			value.State, value.AvailableSlots, value.OverCapacity = "unknown", nil, nil
 		}
 	}
 	return value
+}
+
+// Stale reports an observation older than one minute at now. The Console
+// expires such an observation to unknown before the CLI reads it.
+func (value SandboxCapacity) Stale(now time.Time) bool {
+	return value.ObservedAtMilliseconds != nil && *value.ObservedAtMilliseconds < now.UnixMilli()-60_000
 }

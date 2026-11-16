@@ -605,9 +605,13 @@ oe project capacity my-chat --env sandbox --json
 
 This command reads the separate registered-account contract. It shows registered
 accounts, reservations, available slots, readiness, and a pending account limit.
-Unknown or expired availability stays unknown. Counts remain exact decimal
-strings in JSON. Production refuses this command before a capacity request.
-Use `oe project usage --env production` for Production usage.
+Unknown or expired availability stays unknown, and the text marks an expired
+observation as stale. Counts remain exact decimal strings in JSON. Production
+refuses this command before a capacity request. Use
+`oe project usage --env production` for Production usage. A Console that does
+not serve the capacity route, or a response outside the contract, fails with
+`CAPACITY_UNAVAILABLE`, exit 6. A project without an active Sandbox fails with
+`ENVIRONMENT_NOT_ACTIVE`.
 
 A registered Sandbox account keeps its slot across calendar periods. Linked
 devices use the same account slot. A slot is free only after hosted deletion

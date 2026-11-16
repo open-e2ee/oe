@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,14 +61,16 @@ func TestProjectCapacityRefusesUnsupportedMalformedAndCrossedResponses(t *testin
 		"wrong project":        strings.Replace(fixture, `"project":"local-chat"`, `"project":"other"`, 1),
 		"production":           strings.Replace(fixture, `"environment":"sandbox"`, `"environment":"production"`, 1),
 		"unsafe integer":       strings.Replace(fixture, `"capacityRevision":2`, `"capacityRevision":9007199254740992`, 1),
+		"not JSON":             `<!DOCTYPE html><html><body>Not JSON</body></html>`,
+		"truncated":            fixture[:len(fixture)/2],
 		"pending null integer": strings.Replace(fixture, `"pendingLimit":null`, `"pendingLimit":{"registeredTestAccounts":null,"appliesAtMilliseconds":1,"controlOperationId":"pending"}`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) }))
 			t.Cleanup(server.Close)
 			client, _ := New(server.URL, server.Client())
-			if _, err := client.ProjectCapacity(t.Context(), CredentialRequest{}, "local-chat", "sandbox"); err == nil {
-				t.Fatal("invalid capacity accepted")
+			if _, err := client.ProjectCapacity(t.Context(), CredentialRequest{}, "local-chat", "sandbox"); !errors.Is(err, ErrSandboxCapacity) {
+				t.Fatalf("invalid capacity was not ErrSandboxCapacity: %v", err)
 			}
 		})
 	}
@@ -104,5 +107,36 @@ func TestCapacityUnknownExactCountsAndExpiration(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &value); err != nil || value.Capacity.ReservedAccounts != nil || value.Capacity.AvailableSlots != nil {
 			t.Fatalf("unknown observation: %s %v", body, err)
 		}
+	}
+}
+
+func TestProjectCapacityNamesAConsoleWithoutTheRoute(t *testing.T) {
+	for name, body := range map[string]string{
+		"HTML": `<!DOCTYPE html><html><head><title>404: This page could not be found.</title></head></html>`,
+		"JSON": `{"code":"NOT_FOUND","message":"Not Found"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			client, _ := New(server.URL, server.Client())
+			_, err := client.ProjectCapacity(t.Context(), CredentialRequest{}, "local-chat", "sandbox")
+			refusal, ok := errors.AsType[*APIError](err)
+			if !errors.Is(err, ErrSandboxCapacityNotServed) || !ok || refusal.Status != http.StatusNotFound {
+				t.Fatalf("missing route: %v", err)
+			}
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"code":"CAPACITY_UNAVAILABLE","message":"Capacity unavailable"}`))
+	}))
+	t.Cleanup(server.Close)
+	client, _ := New(server.URL, server.Client())
+	_, err := client.ProjectCapacity(t.Context(), CredentialRequest{}, "local-chat", "sandbox")
+	if refusal, ok := errors.AsType[*APIError](err); !ok || refusal.Code != "CAPACITY_UNAVAILABLE" || errors.Is(err, ErrSandboxCapacityNotServed) || errors.Is(err, ErrSandboxCapacity) {
+		t.Fatalf("server refusal lost its code: %v", err)
 	}
 }

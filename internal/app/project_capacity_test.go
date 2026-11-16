@@ -14,7 +14,16 @@ import (
 	"github.com/open-e2ee/oe/internal/credential"
 )
 
+const capacityProjectBody = `{"slug":"local-chat","writer":"config","sandbox":{"relayUrl":"` + sandboxSignalProtocolRelayURL + `","revision":"1"}}`
+
 func capacityDependencies(t *testing.T, body string, status int) (Dependencies, *int) {
+	t.Helper()
+	return capacityRoutes(t, http.StatusOK, capacityProjectBody, status, body)
+}
+
+// capacityRoutes serves the project read and the capacity read with the
+// given statuses and bodies, and counts the requests.
+func capacityRoutes(t *testing.T, projectStatus int, projectBody string, status int, body string) (Dependencies, *int) {
 	t.Helper()
 	calls := new(int)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,13 +33,17 @@ func capacityDependencies(t *testing.T, body string, status int) (Dependencies, 
 		}
 		switch r.URL.Path {
 		case "/api/cli/v1/projects/local-chat":
-			w.Write([]byte(`{"slug":"local-chat","writer":"config"}`))
+			w.WriteHeader(projectStatus)
+			w.Write([]byte(projectBody))
 		case "/api/cli/v1/projects/local-chat/sandbox-account-capacity":
 			if r.URL.RawQuery != "environment=sandbox" {
 				t.Error("wrong capacity environment")
 			}
 			w.WriteHeader(status)
 			w.Write([]byte(body))
+		case "/api/cli/v1/auth/session":
+			// A project refusal reads the session to name other organizations.
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("capacity command reached unrelated route %s", r.URL)
 			w.WriteHeader(500)
@@ -124,5 +137,110 @@ func TestCapacityReadyDoesNotClaimAdmissionIsActive(t *testing.T) {
 	exit, text, _ := run(t, dependencies, "project", "capacity")
 	if exit != 0 || !strings.Contains(text, "Account admission has not been activated") {
 		t.Fatalf("ready implied activation: %d %s", exit, text)
+	}
+}
+
+const nextNotFoundPage = `<!DOCTYPE html><html><head><title>404: This page could not be found.</title></head><body><h1>404</h1><h2>This page could not be found.</h2></body></html>`
+
+func TestCapacityCommandReportsAConsoleWithoutTheCapacityRoute(t *testing.T) {
+	for name, body := range map[string]string{
+		"HTML": nextNotFoundPage,
+		"JSON": `{"code":"NOT_FOUND","message":"Not Found"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dependencies, calls := capacityDependencies(t, body, http.StatusNotFound)
+			exit, stdout, _ := run(t, dependencies, "--json", "project", "capacity", "local-chat")
+			failure := decodeEvent(t, []byte(stdout))
+			if exit != exitTemporary || failure.Code != "CAPACITY_UNAVAILABLE" || *calls != 2 ||
+				!strings.Contains(failure.Error, "does not serve Sandbox account capacity yet") ||
+				failure.Next != "oe project capacity local-chat --env sandbox" {
+				t.Fatalf("missing route was not reported as unavailable capacity: exit=%d calls=%d %s", exit, *calls, stdout)
+			}
+		})
+	}
+}
+
+func TestCapacityCommandKeepsAProjectReadRefusal(t *testing.T) {
+	dependencies, calls := capacityRoutes(t, http.StatusNotFound, `{"code":"PROJECT_NOT_FOUND","message":"The project was not found, or this account has no access to it."}`, http.StatusOK, capacityBody(t))
+	exit, stdout, _ := run(t, dependencies, "--json", "project", "capacity", "local-chat")
+	failure := decodeEvent(t, []byte(stdout))
+	// The project read and its session read run; the capacity read does not.
+	if exit != exitFailure || failure.Code != "PROJECT_NOT_FOUND" || failure.Next != "oe project list" || *calls != 2 {
+		t.Fatalf("project refusal changed: exit=%d calls=%d %s", exit, *calls, stdout)
+	}
+}
+
+func TestCapacityCommandReportsAnInvalidResponseAsUnavailable(t *testing.T) {
+	fixture := capacityBody(t)
+	for name, body := range map[string]string{
+		"malformed":     `{"capacity":{}}`,
+		"crossed":       strings.Replace(fixture, `"project":"local-chat"`, `"project":"other-chat"`, 1),
+		"production":    strings.Replace(fixture, `"environment":"sandbox"`, `"environment":"production"`, 1),
+		"not JSON":      nextNotFoundPage,
+		"unknown field": strings.Replace(fixture, `"schemaVersion":1`, `"monthlyActiveUsers":5,"schemaVersion":1`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dependencies, _ := capacityDependencies(t, body, http.StatusOK)
+			exit, stdout, _ := run(t, dependencies, "--json", "project", "capacity", "local-chat")
+			failure := decodeEvent(t, []byte(stdout))
+			if exit != exitTemporary || failure.Code != "CAPACITY_UNAVAILABLE" || failure.Next != "oe project capacity local-chat --env sandbox" ||
+				strings.Contains(stdout, `"registeredAccounts"`) {
+				t.Fatalf("invalid capacity was not unavailable: exit=%d %s", exit, stdout)
+			}
+		})
+	}
+}
+
+func TestCapacityCommandRequiresAnActiveSandbox(t *testing.T) {
+	dependencies, calls := capacityRoutes(t, http.StatusOK, `{"slug":"local-chat","writer":"config"}`, http.StatusOK, capacityBody(t))
+	exit, stdout, _ := run(t, dependencies, "--json", "project", "capacity", "local-chat")
+	failure := decodeEvent(t, []byte(stdout))
+	if exit != exitFailure || failure.Code != "ENVIRONMENT_NOT_ACTIVE" || failure.Next != "oe new" || *calls != 1 {
+		t.Fatalf("inactive Sandbox reached capacity: exit=%d calls=%d %s", exit, *calls, stdout)
+	}
+}
+
+func TestCapacityTextContract(t *testing.T) {
+	dependencies, _ := capacityDependencies(t, capacityBody(t), http.StatusOK)
+	exit, text, _ := run(t, dependencies, "project", "capacity")
+	want := "local-chat Sandbox account capacity\nReadiness: active\nRegistered test accounts: 5\nReserved accounts: 1\nAvailable slots: 2\nAccount limit: 8\n" +
+		"Activation revision: 1\nCapacity revision: 2\nObserved at: 2027-01-15T08:00:00Z\n" +
+		"A slot is free only after deletion confirms capacity release. Removing a device or clearing local storage does not free a slot.\n"
+	if exit != 0 || text != want {
+		t.Fatalf("capacity text changed:\n got %q\nwant %q", text, want)
+	}
+}
+
+func TestCapacityTextNamesStaleObservations(t *testing.T) {
+	// The Console and the CLI both expire an old active observation to unknown.
+	for name, state := range map[string]string{"expired by the CLI": "active", "expired by the Console": "unknown"} {
+		t.Run(name, func(t *testing.T) {
+			body := strings.NewReplacer(`"observedAtMilliseconds":1800000000000`, `"observedAtMilliseconds":1799999900000`, `"state":"active"`, `"state":"`+state+`"`).Replace(capacityBody(t))
+			if state == "unknown" {
+				body = strings.NewReplacer(`"availableSlots":"2"`, `"availableSlots":null`, `"overCapacity":false`, `"overCapacity":null`).Replace(body)
+			}
+			dependencies, _ := capacityDependencies(t, body, http.StatusOK)
+			exit, text, _ := run(t, dependencies, "project", "capacity")
+			if exit != 0 || !strings.Contains(text, "Readiness: stale\n") || !strings.Contains(text, "Observed at: 2027-01-15T07:58:20Z (stale)\n") ||
+				!strings.Contains(text, "Available slots: unknown\n") || !strings.Contains(text, "This observation is stale. Available slots stay unknown until Relay reports a current observation.\n") {
+				t.Fatalf("stale capacity was not named stale: %d %s", exit, text)
+			}
+			exit, data, _ := run(t, dependencies, "--json", "project", "capacity")
+			if exit != 0 || !strings.Contains(data, `"state":"unknown"`) || !strings.Contains(data, `"availableSlots":null`) {
+				t.Fatalf("stale JSON changed: %d %s", exit, data)
+			}
+		})
+	}
+}
+
+func TestCapacityTextNamesAnInactiveSandboxAsNotActivated(t *testing.T) {
+	body := strings.NewReplacer(`"state":"active"`, `"state":"inactive"`, `"activationRevision":1`, `"activationRevision":null`, `"capacityRevision":2`, `"capacityRevision":null`,
+		`"registeredAccounts":"5"`, `"registeredAccounts":null`, `"reservedAccounts":"1"`, `"reservedAccounts":null`, `"availableSlots":"2"`, `"availableSlots":null`,
+		`"overCapacity":false`, `"overCapacity":null`, `"observedAtMilliseconds":1800000000000`, `"observedAtMilliseconds":null`).Replace(capacityBody(t))
+	dependencies, _ := capacityDependencies(t, body, http.StatusOK)
+	exit, text, _ := run(t, dependencies, "project", "capacity")
+	if exit != 0 || !strings.Contains(text, "Readiness: inactive\n") || !strings.Contains(text, "Activation revision: not activated\n") ||
+		!strings.Contains(text, "Account capacity is not activated for this Sandbox. Account admission does not use it yet.\n") || strings.Contains(text, "unknown\nCapacity") {
+		t.Fatalf("inactive Sandbox was not named not activated: %d %s", exit, text)
 	}
 }
