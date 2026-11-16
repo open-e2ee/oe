@@ -60,3 +60,27 @@ func TestProjectUsageFailsWhenReportingCannotConfirmZero(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectUsageSandboxContract pins the Sandbox usage text and JSON. MAU is
+// the enforced Sandbox limit until account capacity activates, so the Relay MAU
+// line stays in Sandbox usage.
+func TestProjectUsageSandboxContract(t *testing.T) {
+	delivery, attachments, mau := "12", "3", "4"
+	dependencies := usageDependencies(t, func(slug string) control.Usage {
+		return control.Usage{
+			Project: slug, Environment: "sandbox", Period: "2026-11", Status: "reported",
+			Reported: &control.UsageReported{DeliveryUnits: &delivery, AttachmentOperations: &attachments, SignalProtocolRelayMAU: &mau, LiveBytes: "2048"},
+		}
+	})
+	exit, stdout, stderr := run(t, dependencies, "project", "usage")
+	if want := "local-chat sandbox usage, 2026-11 UTC\nDelivery units: 12\nAttachment operations: 3\nRelay MAU: 4\nLive bytes: 2048\n"; exit != 0 || stdout != want || stderr != "" {
+		t.Fatalf("Sandbox usage text changed: exit=%d\n got %q\nwant %q\nstderr %q", exit, stdout, want, stderr)
+	}
+	exit, stdout, stderr = run(t, dependencies, "--json", "project", "usage")
+	want := `{"status":"ok","command":"project usage","message":"local-chat sandbox usage, 2026-11 UTC\nDelivery units: 12\nAttachment operations: 3\nRelay MAU: 4\nLive bytes: 2048",` +
+		`"data":{"usage":{"project":"local-chat","environment":"sandbox","period":"2026-11","status":"reported",` +
+		`"reported":{"deliveryUnits":"12","attachmentOperations":"3","relayMau":"4","liveBytes":"2048","signalRelayMau":"4"},"coverage":null,"limits":null}}}` + "\n"
+	if exit != 0 || stdout != want || stderr != "" {
+		t.Fatalf("Sandbox usage JSON changed: exit=%d\n got %q\nwant %q\nstderr %q", exit, stdout, want, stderr)
+	}
+}

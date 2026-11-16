@@ -106,16 +106,15 @@ func TestCapacityCommandRefusesUnsupportedAndUnauthenticatedResponses(t *testing
 		t.Fatalf("malformed became capacity: %d %s", exit, text)
 	}
 }
-func TestUsageTextKeepsProductionMAUAndHidesSandboxMAU(t *testing.T) {
+func TestUsageTextKeepsMAUInBothEnvironments(t *testing.T) {
 	zero := "0"
 	usage := control.Usage{Project: "local-chat", Environment: "production", Period: "2026-11", Status: "reported", Reported: &control.UsageReported{DeliveryUnits: &zero, AttachmentOperations: &zero, SignalProtocolRelayMAU: &zero, LiveBytes: "0"}}
-	want := "local-chat production usage, 2026-11 UTC\nDelivery units: 0\nAttachment operations: 0\nRelay MAU: 0\nLive bytes: 0"
-	if value := usageText(usage); value != want {
+	if value, want := usageText(usage), "local-chat production usage, 2026-11 UTC\nDelivery units: 0\nAttachment operations: 0\nRelay MAU: 0\nLive bytes: 0"; value != want {
 		t.Fatalf("Production changed: %q", value)
 	}
 	usage.Environment = "sandbox"
-	if value := usageText(usage); strings.Contains(value, "MAU") || !strings.Contains(value, "Live bytes: 0") {
-		t.Fatalf("Sandbox meter remained: %q", value)
+	if value, want := usageText(usage), "local-chat sandbox usage, 2026-11 UTC\nDelivery units: 0\nAttachment operations: 0\nRelay MAU: 0\nLive bytes: 0"; value != want {
+		t.Fatalf("Sandbox lost its enforced MAU meter: %q", value)
 	}
 }
 
