@@ -45,6 +45,7 @@ var humanShort = map[string]string{
 	"project":                               "Show projects, usage, connections, and plans.",
 	"project list":                          "List projects in the current Organization.",
 	"project show":                          "Show a project.",
+	"project capacity":                      "Show Sandbox account capacity.",
 	"project usage":                         "Show a project's usage.",
 	"project connection":                    "Print a project's connection URL.",
 	"project upgrade":                       "Quote or buy a paid plan for a project.",

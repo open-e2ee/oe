@@ -17,6 +17,7 @@ type API interface {
 	Deploy(context.Context, CredentialRequest, DeployRequest) (Deployment, error)
 	GetProject(context.Context, CredentialRequest, string) (Project, error)
 	ProjectUsage(context.Context, CredentialRequest, string, string) (Usage, error)
+	ProjectCapacity(context.Context, CredentialRequest, string, string) (ProjectCapacity, error)
 	ListProjects(context.Context, CredentialRequest) ([]ProjectSummary, error)
 	Notifications(context.Context, CredentialRequest, string, string) (NotificationConfiguration, error)
 	ConfigureNotifications(context.Context, CredentialRequest, string, NotificationConfigurationRequest) (NotificationConfiguration, error)

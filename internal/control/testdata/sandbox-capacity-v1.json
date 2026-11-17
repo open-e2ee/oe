@@ -1,0 +1,24 @@
+{
+  "project": "local-chat",
+  "environment": "sandbox",
+  "capacity": {
+    "schemaVersion": 1,
+    "contractVersion": "sandbox_registered_accounts_v1",
+    "environment": "sandbox",
+    "billingProjectHandle": "project_capacity",
+    "signalRelayScopeId": "scope_capacity",
+    "recoveryGeneration": 1,
+    "activationRevision": 1,
+    "capacityRevision": 2,
+    "state": "active",
+    "basis": "currently_registered_canonical_accounts",
+    "limit": 8,
+    "limitSource": "sandbox_default",
+    "registeredAccounts": "5",
+    "reservedAccounts": "1",
+    "availableSlots": "2",
+    "overCapacity": false,
+    "observedAtMilliseconds": 1800000000000,
+    "pendingLimit": null
+  }
+}

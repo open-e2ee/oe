@@ -670,6 +670,9 @@ func (e apiError) deploymentProtection(status int) bool {
 		(legacyError || e.vercelProtectionEnvelope())
 }
 
+// errDecodeResponse is a successful response whose body does not decode.
+var errDecodeResponse = errors.New("decode control response")
+
 func decodeResponse(response *http.Response, output any) error {
 	limited := io.LimitReader(response.Body, 1<<20)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -701,7 +704,7 @@ func decodeResponse(response *http.Response, output any) error {
 		return nil
 	}
 	if err := json.NewDecoder(limited).Decode(output); err != nil {
-		return fmt.Errorf("decode control response: %w", err)
+		return fmt.Errorf("%w: %w", errDecodeResponse, err)
 	}
 	return nil
 }

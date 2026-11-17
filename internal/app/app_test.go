@@ -495,6 +495,7 @@ func storeCredential(t *testing.T, store credential.Store, scopes ...string) {
 }
 
 type fakeAPI struct {
+	projectCapacity        func(context.Context, control.CredentialRequest, string, string) (control.ProjectCapacity, error)
 	checkIdentity          func(context.Context, control.CredentialRequest, string, string, identity.Draft) (identity.Check, error)
 	startAuthorization     func(context.Context, control.AuthorizationRequest) (control.Authorization, error)
 	pollAuthorization      func(context.Context, control.Authorization) (control.Token, error)
@@ -578,6 +579,12 @@ func (f *fakeAPI) GetProject(ctx context.Context, credential control.CredentialR
 		return control.Project{}, errors.New("unexpected GetProject")
 	}
 	return f.getProject(ctx, credential, project)
+}
+func (f *fakeAPI) ProjectCapacity(ctx context.Context, credential control.CredentialRequest, project, environment string) (control.ProjectCapacity, error) {
+	if f.projectCapacity == nil {
+		return control.ProjectCapacity{}, errors.New("unexpected ProjectCapacity")
+	}
+	return f.projectCapacity(ctx, credential, project, environment)
 }
 func (f *fakeAPI) ProjectUsage(ctx context.Context, credential control.CredentialRequest, project, environment string) (control.Usage, error) {
 	if f.projectUsage == nil {

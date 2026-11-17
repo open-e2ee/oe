@@ -82,10 +82,11 @@ var commandSurface = []commandSpec{
 	{"link", "Link this directory to an OpenE2EE Signal Protocol Relay project that exists and write the Relay connection of each active environment to its env file. With no config, write open-e2ee.config.ts from the server policy. Without PROJECT, rewrite only the env files.", []string{
 		"oe link [PROJECT] [--env-var NAME] [--yes] [--dry-run]",
 	}},
-	{"project", "Show the linked OpenE2EE Signal Protocol Relay project, list the projects of the organization of the session, show usage, print a Relay connection URL, or buy a paid plan. upgrade --dry-run quotes the plan and buys nothing. A person buys after one prompt, or with --confirm-charge set to the quote total in major units. Under an agent or with OPEN_E2EE_ACCESS_TOKEN, upgrade never buys: it names the Console page where a person buys, and --wait waits for the plan change.", []string{
+	{"project", "Show the linked OpenE2EE Signal Protocol Relay project, list the projects of the organization of the session, show usage and Sandbox account capacity, print a Relay connection URL, or buy a paid plan. upgrade --dry-run quotes the plan and buys nothing. A person buys after one prompt, or with --confirm-charge set to the quote total in major units. Under an agent or with OPEN_E2EE_ACCESS_TOKEN, upgrade never buys: it names the Console page where a person buys, and --wait waits for the plan change.", []string{
 		"oe project list",
 		"oe project show [PROJECT] [--env sandbox|production]",
 		"oe project usage [PROJECT] [--env sandbox|production]",
+		"oe project capacity [PROJECT] [--env sandbox]",
 		"oe project connection [PROJECT] [--env sandbox|production]",
 		"oe project upgrade [PROJECT] --plan PLAN [--dry-run] [--quote TOKEN] [--yes] [--confirm-charge AMOUNT] [--wait] [--timeout DURATION]",
 	}},
