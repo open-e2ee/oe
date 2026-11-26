@@ -199,6 +199,9 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 	// offer, which can be the other spelling of options.plan.
 	target := plans.Plans[index]
 	page = r.planPage(plans, target.ID)
+	if purchaseID := openPurchaseOf(plans, target); purchaseID != "" {
+		return r.upgradeOpenPurchase(ctx, access, options, target, page, purchaseID)
+	}
 	if options.dryRun {
 		return r.upgradeDryRun(ctx, request, options, plans, target, page)
 	}
@@ -214,6 +217,39 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 		return r.upgradeHandoff(ctx, request, access, options, target, page)
 	}
 	return r.upgradePurchase(ctx, request, access, options, target, page)
+}
+
+// openPurchaseOf is the ID of the open purchase of the project when that
+// purchase buys target. It is empty when no purchase is open, when the open
+// purchase buys another plan, and when the control API does not name the plan
+// of the open purchase. The control API refuses a quote while a purchase is
+// open, so then the quote answers PURCHASE_OPEN.
+func openPurchaseOf(plans control.ProjectPlans, target control.PlanOffer) string {
+	open := plans.OpenPurchase
+	if open == nil || open.TargetPlanID == "" || !purchaseIDPattern.MatchString(open.ID) ||
+		planMeaning(open.TargetPlanID) != planMeaning(target.ID) {
+		return ""
+	}
+	return open.ID
+}
+
+// upgradeOpenPurchase follows an open purchase of the plan. It sends no quote
+// and no purchase, for any caller and any credential. With --wait, it waits
+// until the project is on the plan. A run without --wait, and a dry run, end
+// at once.
+func (r *runner) upgradeOpenPurchase(ctx context.Context, access credential.Credential, options upgradeOptions, target control.PlanOffer, page, purchaseID string) error {
+	if !options.wait {
+		next := options.command("--wait")
+		return &problem{
+			code: "PURCHASE_PENDING", exit: exitTemporary, next: next,
+			data: map[string]any{"project": options.project, "plan": options.plan, "purchaseId": purchaseID},
+			message: fmt.Sprintf("a purchase of plan %s for project %s is open, so oe sends no quote; the purchase goes on, and %s waits for the plan change",
+				target.ID, options.project, next),
+		}
+	}
+	_ = r.out.Progress("project upgrade", fmt.Sprintf("A purchase of plan %s is open. Waiting for the plan change...", planLabel(target)),
+		map[string]any{"purchaseId": purchaseID})
+	return r.waitForPlan(ctx, access, options, target, page, purchaseID)
 }
 
 // upgradeDryRun quotes the plan and buys nothing. Only the JSON data names the
@@ -260,7 +296,7 @@ func (r *runner) upgradeHandoff(ctx context.Context, request control.CredentialR
 		return &problem{code: "PURCHASE_HANDOFF", exit: exitPersonAction, message: message, reported: true}
 	}
 	_ = r.out.PendingNext("project upgrade", message+" Waiting for the plan change... (press Ctrl-C to stop)", "", action, data)
-	return r.waitForPlan(ctx, access, options, target, page)
+	return r.waitForPlan(ctx, access, options, target, page, "")
 }
 
 // upgradePurchase buys the plan for a person. A person at a terminal confirms
@@ -403,18 +439,20 @@ func (r *runner) waitForPurchase(ctx context.Context, access credential.Credenti
 
 // waitForPlan reads the plans of the project until it is on target. A
 // purchase that a person opened in the Console and that ends with no plan
-// change ends the wait.
-func (r *runner) waitForPlan(ctx context.Context, access credential.Credential, options upgradeOptions, target control.PlanOffer, page string) error {
+// change ends the wait. With purchaseID, the wait follows that purchase. A
+// purchase that ended is no longer the open purchase of a plans read, so the
+// wait reads that purchase by its ID.
+func (r *runner) waitForPlan(ctx context.Context, access credential.Credential, options upgradeOptions, target control.PlanOffer, page, purchaseID string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	for {
 		if err := r.sleep(waitCtx, upgradePollInterval); err != nil {
-			return purchasePending(ctx, err, options, "")
+			return purchasePending(ctx, err, options, purchaseID)
 		}
-		plans, purchase, err := r.readPlanChange(waitCtx, &access, options)
+		plans, purchase, err := r.readPlanChange(waitCtx, &access, options, purchaseID)
 		if err != nil {
 			if waitCtx.Err() != nil && ctx.Err() == nil {
-				return purchasePending(ctx, err, options, "")
+				return purchasePending(ctx, err, options, purchaseID)
 			}
 			return r.upgradeFailure(err, options, page)
 		}
@@ -429,9 +467,10 @@ func (r *runner) waitForPlan(ctx context.Context, access credential.Credential, 
 	}
 }
 
-// readPlanChange reads the plans of the project and the status of its open
-// purchase, when it has one.
-func (r *runner) readPlanChange(ctx context.Context, access *credential.Credential, options upgradeOptions) (control.ProjectPlans, *control.PlanPurchase, error) {
+// readPlanChange reads the plans of the project and the status of one
+// purchase: the purchase of purchaseID, or else the open purchase of the
+// project, when it has one.
+func (r *runner) readPlanChange(ctx context.Context, access *credential.Credential, options upgradeOptions, purchaseID string) (control.ProjectPlans, *control.PlanPurchase, error) {
 	refreshed, err := r.refreshedAccess(ctx, *access)
 	if err != nil {
 		return control.ProjectPlans{}, nil, err
@@ -439,10 +478,16 @@ func (r *runner) readPlanChange(ctx context.Context, access *credential.Credenti
 	*access = refreshed
 	request := control.CredentialRequest{AccessToken: access.AccessToken}
 	plans, err := r.api.ProjectPlans(ctx, request, options.project)
-	if err != nil || plans.OpenPurchase == nil || !purchaseIDPattern.MatchString(plans.OpenPurchase.ID) {
+	if err != nil {
 		return plans, nil, err
 	}
-	purchase, err := r.api.PurchaseStatus(ctx, request, options.project, plans.OpenPurchase.ID)
+	if purchaseID == "" && plans.OpenPurchase != nil && purchaseIDPattern.MatchString(plans.OpenPurchase.ID) {
+		purchaseID = plans.OpenPurchase.ID
+	}
+	if purchaseID == "" {
+		return plans, nil, nil
+	}
+	purchase, err := r.api.PurchaseStatus(ctx, request, options.project, purchaseID)
 	if err != nil {
 		return plans, nil, err
 	}

@@ -83,6 +83,10 @@ the current plan in `data.project.plan`.
 4. To wait for the purchase, run `next`, which adds `--wait`. `PURCHASE_PENDING`,
    exit 6, means that the wait ended before the plan changed.
 
+When a purchase of the plan is already open, a run without `--wait` sends no
+quote. It exits 6 with `PURCHASE_PENDING`, and `data.purchaseId` names the
+open purchase. Run `next`, which adds `--wait`.
+
 `AGENT_PURCHASE_NOT_ALLOWED` means that the credential comes from
 `OPEN_E2EE_ACCESS_TOKEN`. Give `action.url` to the person.
 

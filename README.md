@@ -716,6 +716,17 @@ for the purchase of the person, for at most `--timeout`. With a credential from
 `OPEN_E2EE_ACCESS_TOKEN`, a run without `--dry-run` fails with
 `AGENT_PURCHASE_NOT_ALLOWED`, exit 5, before a quote.
 
+When the project has an open purchase of the plan, `oe project upgrade` sends
+no quote and no purchase. This rule applies to each caller and each
+credential, before the rules above. Without `--wait`, and with `--dry-run`, the
+run exits 6 at once with `PURCHASE_PENDING`. `data.purchaseId` names the open
+purchase, and `next` adds `--wait`.
+
+With `--wait`, the run waits for the plan change for at most `--timeout`. When
+that purchase fails or needs support, the wait ends with the code of that
+purchase. When the open purchase is for another plan, the run exits 6 with
+`PURCHASE_OPEN` from the quote.
+
 | `code`                                                                                                                                                    | Exit | What to do                                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | --------------------------------------------------------------------------------- |
 | `QUOTE_EXPIRED`, `PRICE_CHANGED`, `AUTHORITY_CHANGED`, `METHOD_CHANGED`                                                                                   | 1    | Quote again with `next`, and show the new total to the person.                    |

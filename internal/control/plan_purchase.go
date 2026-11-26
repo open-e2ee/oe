@@ -28,10 +28,13 @@ type PlanOffer struct {
 	Name string `json:"name"`
 }
 
-// OpenPurchase is a purchase of the project that has not ended.
+// OpenPurchase is a purchase of the project that has not ended. TargetPlanID
+// is the plan that the purchase buys, in the spelling of PlanOffer.ID. It is
+// empty when the control API does not name it.
 type OpenPurchase struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	TargetPlanID string `json:"targetPlanId"`
 }
 
 // PlanQuoteRequest asks for the price of a change to one plan.

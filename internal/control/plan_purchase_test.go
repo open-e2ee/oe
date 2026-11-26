@@ -90,6 +90,28 @@ func TestPlanRoutesUseTheConsoleShapes(t *testing.T) {
 	}
 }
 
+func TestProjectPlansReadsThePlanOfTheOpenPurchase(t *testing.T) {
+	for _, test := range []struct {
+		name, purchase, want string
+	}{
+		{"target plan", `{"id":"purchase_1","state":"in_progress","targetPlanId":"relay_growth_v1"}`, "relay_growth_v1"},
+		// An older control API names no target plan.
+		{"no target plan", `{"id":"purchase_1","state":"in_progress"}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, _ := newPlanServer(t, func(response http.ResponseWriter, _ *http.Request, _ int) {
+				response.Write([]byte(`{"project":"chat","blockedBy":null,"currentPlan":{"id":"relay_free_v1","name":"Free"},` +
+					`"plans":[{"id":"relay_growth_v1","name":"Growth"}],"openPurchase":` + test.purchase + `}`))
+			})
+			plans, err := client.ProjectPlans(context.Background(), CredentialRequest{AccessToken: "session"}, "chat")
+			want := OpenPurchase{ID: "purchase_1", State: PurchaseInProgress, TargetPlanID: test.want}
+			if err != nil || plans.OpenPurchase == nil || *plans.OpenPurchase != want {
+				t.Fatalf("the open purchase became %+v, %v; want %+v", plans.OpenPurchase, err, want)
+			}
+		})
+	}
+}
+
 func TestQuoteChargeIsTheTotalOfTheConsoleQuote(t *testing.T) {
 	// The Console answers tax as the exclusive tax amount or null, and total
 	// as the tax-inclusive charge or the amount due.
