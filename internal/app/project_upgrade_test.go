@@ -561,6 +561,28 @@ func TestProjectUpgradeStopsWhenTheOpenPurchaseEndsWithNoPlanChange(t *testing.T
 	}
 }
 
+// TestProjectUpgradeWaitsPastAFulfilledOpenPurchaseForThePlanChange proves
+// that a fulfilled purchase does not end the wait while a plans read still
+// names the old plan.
+func TestProjectUpgradeWaitsPastAFulfilledOpenPurchaseForThePlanChange(t *testing.T) {
+	console := newUpgradeConsole(t)
+	open := console.openPurchaseOf(upgradeTarget)
+	lagging := open
+	lagging.OpenPurchase = nil
+	changed := control.ProjectPlans{Project: upgradeSlug, CurrentPlan: &starterPlan, Plans: []control.PlanOffer{}}
+	console.plans = []control.ProjectPlans{open, lagging, changed}
+	console.statuses = []control.PlanPurchase{{Status: control.PurchaseFulfilled}}
+	exit, stdout, stderr := console.upgrade(t, map[string]string{"CLAUDECODE": "1"}, "--wait", "--timeout", "2s")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != 0 || result.Status != "ok" || result.Data["changed"] != true {
+		t.Fatalf("the wait past a fulfilled purchase became exit=%d %s %s", exit, stdout, stderr)
+	}
+	if console.quotes != 0 || console.purchases != 0 || console.planReads != 3 || console.statusReads != 2 {
+		t.Fatalf("the wait made %d quotes, %d purchases, %d plan reads, and %d status reads",
+			console.quotes, console.purchases, console.planReads, console.statusReads)
+	}
+}
+
 func TestProjectUpgradeTimesOutWhileTheOpenPurchaseIsPending(t *testing.T) {
 	console := newUpgradeConsole(t)
 	console.plans = []control.ProjectPlans{console.openPurchaseOf(upgradeTarget)}
