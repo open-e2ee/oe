@@ -387,6 +387,282 @@ func TestProjectUpgradeUnderAnAgentStopsWhenThePersonPurchaseFails(t *testing.T)
 	}
 }
 
+// openPurchaseOf is the first plans answer of the console with an open
+// purchase of targetPlanID.
+func (c *upgradeConsole) openPurchaseOf(targetPlanID string) control.ProjectPlans {
+	open := c.plans[0]
+	open.OpenPurchase = &control.OpenPurchase{ID: purchaseIDFor("person"), State: control.PurchaseInProgress, TargetPlanID: targetPlanID}
+	return open
+}
+
+// upgradeCallers are the callers of oe project upgrade by their environment
+// and their flags for a purchase.
+var upgradeCallers = []struct {
+	name  string
+	env   map[string]string
+	extra []string
+}{
+	{"person", nil, []string{"--json", "--confirm-charge", "53.90"}},
+	{"person with a quote token", nil, []string{"--json", "--quote", upgradeQuoteToken, "--confirm-charge", "53.90usd"}},
+	{"agent", map[string]string{"CLAUDECODE": "1"}, nil},
+	{"environment credential", environmentCredential, []string{"--json"}},
+}
+
+func TestProjectUpgradeWaitsForAnOpenPurchaseOfThePlan(t *testing.T) {
+	for _, caller := range upgradeCallers {
+		t.Run(caller.name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			open := console.openPurchaseOf(upgradeTarget)
+			changed := control.ProjectPlans{Project: upgradeSlug, CurrentPlan: &starterPlan, Plans: []control.PlanOffer{}}
+			console.plans = []control.ProjectPlans{open, open, changed}
+			console.statuses = []control.PlanPurchase{{Status: control.PurchaseInProgress}}
+			exit, stdout, stderr := console.upgrade(t, caller.env, append(caller.extra, "--wait", "--timeout", "2s")...)
+			events := decodeEvents(t, stdout)
+			if result := events[len(events)-1]; exit != 0 || len(events) != 1 || result.Status != "ok" || result.Data["changed"] != true {
+				t.Fatalf("the wait for the open purchase did not end on the plan: exit=%d %s %s", exit, stdout, stderr)
+			}
+			if console.quotes != 0 || console.purchases != 0 || console.planReads != 3 || console.statusReads != 2 {
+				t.Fatalf("the wait made %d quotes, %d purchases, %d plan reads, and %d status reads",
+					console.quotes, console.purchases, console.planReads, console.statusReads)
+			}
+			noTokenIn(t, stdout, stderr)
+		})
+	}
+}
+
+func TestProjectUpgradeWithoutWaitNamesTheOpenPurchaseOfThePlan(t *testing.T) {
+	const next = "oe project upgrade acme-chat --plan relay_starter_v1 --wait"
+	callers := append(slices.Clone(upgradeCallers), struct {
+		name  string
+		env   map[string]string
+		extra []string
+	}{"dry run", nil, []string{"--json", "--dry-run"}})
+	for _, caller := range callers {
+		t.Run(caller.name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			console.plans = []control.ProjectPlans{console.openPurchaseOf(upgradeTarget)}
+			exit, stdout, stderr := console.upgrade(t, caller.env, caller.extra...)
+			result := decodeEvent(t, []byte(stdout))
+			if exit != exitTemporary || result.Code != "PURCHASE_PENDING" || result.Next != next || result.Data["purchaseId"] != purchaseIDFor("person") ||
+				!strings.Contains(result.Error, "a purchase of plan relay_starter_v1 for project acme-chat is open") {
+				t.Fatalf("the open purchase became exit=%d %s %s", exit, stdout, stderr)
+			}
+			if console.quotes != 0 || console.purchases != 0 || console.planReads != 1 || console.statusReads != 0 {
+				t.Fatalf("the run made %d quotes, %d purchases, %d plan reads, and %d status reads",
+					console.quotes, console.purchases, console.planReads, console.statusReads)
+			}
+			noTokenIn(t, stdout, stderr)
+		})
+	}
+}
+
+// TestProjectUpgradeMatchesTheOpenPurchaseByThePlanMeaning proves that the
+// relay_ and signal_relay_ spellings of the plan of an open purchase name the
+// requested plan.
+func TestProjectUpgradeMatchesTheOpenPurchaseByThePlanMeaning(t *testing.T) {
+	for _, test := range []struct {
+		name, plan, target string
+		// offered is true when the control API offers the signal_relay_
+		// spelling. It offers the relay_ spelling otherwise.
+		offered bool
+	}{
+		{"open purchase in the new spelling", "relay_starter_v1", "signal_relay_starter_v1", false},
+		{"open purchase in the old spelling", "signal_relay_starter_v1", "relay_starter_v1", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			if test.offered {
+				console.plans[0].Plans = []control.PlanOffer{signalRelaySpelling(hobbyPlan), signalRelaySpelling(starterPlan)}
+			}
+			console.plans = []control.ProjectPlans{console.openPurchaseOf(test.target)}
+			exit, stdout, _ := run(t, console.dependencies(nil), "--json", "project", "upgrade", upgradeSlug, "--plan", test.plan, "--confirm-charge", "53.90")
+			result := decodeEvent(t, []byte(stdout))
+			if exit != exitTemporary || result.Code != "PURCHASE_PENDING" || result.Data["purchaseId"] != purchaseIDFor("person") ||
+				console.quotes != 0 || console.purchases != 0 {
+				t.Fatalf("--plan %s with an open purchase of %s became exit=%d quotes=%d %s", test.plan, test.target, exit, console.quotes, stdout)
+			}
+		})
+	}
+}
+
+func TestProjectUpgradeQuotesWhenTheOpenPurchaseIsNotOfThePlan(t *testing.T) {
+	const retry = "oe project upgrade acme-chat --plan relay_starter_v1 --confirm-charge 53.90"
+	for _, test := range []struct {
+		name, target string
+		env          map[string]string
+		extra        []string
+		next         string
+	}{
+		{"another plan", hobbyPlan.ID, nil, []string{"--json", "--confirm-charge", "53.90"}, retry},
+		{"another plan with wait", hobbyPlan.ID, nil, []string{"--json", "--confirm-charge", "53.90", "--wait", "--timeout", "2s"}, retry + " --wait --timeout 2s"},
+		{"another plan under an agent", hobbyPlan.ID, map[string]string{"CLAUDECODE": "1"}, []string{"--wait", "--timeout", "2s"}, "oe project upgrade acme-chat --plan relay_starter_v1 --wait --timeout 2s"},
+		{"another plan in a dry run", hobbyPlan.ID, nil, []string{"--json", "--dry-run"}, "oe project upgrade acme-chat --plan relay_starter_v1 --dry-run"},
+		// An older control API names no plan of the open purchase.
+		{"no plan", "", nil, []string{"--json", "--confirm-charge", "53.90"}, retry},
+		{"no plan with wait", "", nil, []string{"--json", "--confirm-charge", "53.90", "--wait", "--timeout", "2s"}, retry + " --wait --timeout 2s"},
+		{"no plan in a dry run", "", nil, []string{"--json", "--dry-run"}, "oe project upgrade acme-chat --plan relay_starter_v1 --dry-run"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			console.plans = []control.ProjectPlans{console.openPurchaseOf(test.target)}
+			// The Console refuses a quote while a purchase of the project is open.
+			console.refusals["quote"] = upgradeRefusal{status: 409, body: map[string]any{"code": "PURCHASE_OPEN", "message": "Another purchase is open.", "purchaseId": purchaseIDFor("person")}}
+			exit, stdout, stderr := console.upgrade(t, test.env, test.extra...)
+			result := decodeEvent(t, []byte(stdout))
+			if exit != exitTemporary || result.Code != "PURCHASE_OPEN" || result.Next != test.next || result.Data["purchaseId"] != purchaseIDFor("person") {
+				t.Fatalf("the open purchase of plan %q became exit=%d %s %s", test.target, exit, stdout, stderr)
+			}
+			if console.purchases != 0 || console.planReads != 1 || console.statusReads != 0 {
+				t.Fatalf("the run made %d purchases, %d plan reads, and %d status reads", console.purchases, console.planReads, console.statusReads)
+			}
+		})
+	}
+}
+
+func TestProjectUpgradeStopsWhenTheOpenPurchaseEndsWithNoPlanChange(t *testing.T) {
+	const billing = "https://console.open-e2ee.dev/billing"
+	failed := control.PlanPurchase{
+		Status:  control.PurchaseFailed,
+		Failure: &control.PlanPurchaseFailure{Code: "PAYMENT_FAILED", Message: "The card was declined.", BillingSetupURL: billing},
+	}
+	needsReview := control.PlanPurchase{Status: control.PurchaseNeedsReview, Message: "Support reviews the purchase."}
+	for _, test := range []struct {
+		name string
+		// ended is true when the plan reads after the first name no open
+		// purchase, as for a purchase that ended.
+		ended                     bool
+		statuses                  []control.PlanPurchase
+		code, reason, url         string
+		wantPlanReads, wantStatus int
+	}{
+		{"failed", true, []control.PlanPurchase{{Status: control.PurchaseInProgress}, failed}, "PAYMENT_FAILED", "billing", billing, 3, 2},
+		{"needs review", false, []control.PlanPurchase{needsReview}, "SUPPORT_REQUIRED", "support", upgradePlanPage, 2, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			console := newUpgradeConsole(t)
+			open := console.openPurchaseOf(upgradeTarget)
+			later := open
+			if test.ended {
+				later.OpenPurchase = nil
+			}
+			console.plans = []control.ProjectPlans{open, later}
+			console.statuses = test.statuses
+			exit, stdout, stderr := console.upgrade(t, map[string]string{"CLAUDECODE": "1"}, "--wait", "--timeout", "2s")
+			result := decodeEvent(t, []byte(stdout))
+			if exit != exitPersonAction || result.Code != test.code || result.Action.Reason != test.reason || result.Action.URL != test.url ||
+				result.Data["purchaseId"] != purchaseIDFor("person") {
+				t.Fatalf("the %s open purchase became exit=%d %s %s", test.name, exit, stdout, stderr)
+			}
+			if console.quotes != 0 || console.purchases != 0 || console.planReads != test.wantPlanReads || console.statusReads != test.wantStatus {
+				t.Fatalf("the wait made %d quotes, %d purchases, %d plan reads, and %d status reads",
+					console.quotes, console.purchases, console.planReads, console.statusReads)
+			}
+		})
+	}
+}
+
+// TestProjectUpgradeReportsAnOpenPurchaseThatWaitsForAPerson proves that an
+// open purchase of the plan that waits for a person ends each run at once with
+// the page where the person acts, with or without --wait, and in a dry run.
+func TestProjectUpgradeReportsAnOpenPurchaseThatWaitsForAPerson(t *testing.T) {
+	action := upgradePlanPage + "/acme-chat/plan?purchase=" + purchaseIDFor("person")
+	for _, state := range []struct {
+		status            control.PlanPurchase
+		code, reason, url string
+	}{
+		{control.PlanPurchase{Status: control.PurchaseRequiresAction, RequiresActionURL: action, Message: "The bank asks the person to authenticate the payment."},
+			"PAYMENT_ACTION_REQUIRED", "payment", action},
+		{control.PlanPurchase{Status: control.PurchaseNeedsReview, Message: "Support reviews the purchase."}, "SUPPORT_REQUIRED", "support", upgradePlanPage},
+	} {
+		callers := []struct {
+			name  string
+			env   map[string]string
+			extra []string
+		}{{"dry run", nil, []string{"--json", "--dry-run"}}}
+		for _, caller := range upgradeCallers {
+			callers = append(callers, caller)
+			caller.name += " with wait"
+			caller.extra = append(slices.Clone(caller.extra), "--wait", "--timeout", "2s")
+			callers = append(callers, caller)
+		}
+		for _, caller := range callers {
+			t.Run(state.status.Status+"/"+caller.name, func(t *testing.T) {
+				console := newUpgradeConsole(t)
+				open := console.openPurchaseOf(upgradeTarget)
+				open.OpenPurchase.State = state.status.Status
+				console.plans = []control.ProjectPlans{open}
+				console.statuses = []control.PlanPurchase{state.status}
+				exit, stdout, stderr := console.upgrade(t, caller.env, caller.extra...)
+				events := decodeEvents(t, stdout)
+				result := events[len(events)-1]
+				if exit != exitPersonAction || len(events) != 1 || result.Code != state.code || result.Action.Reason != state.reason ||
+					result.Action.URL != state.url || result.Next != "" || result.Data["purchaseId"] != purchaseIDFor("person") {
+					t.Fatalf("the %s open purchase became exit=%d %s %s", state.status.Status, exit, stdout, stderr)
+				}
+				if console.quotes != 0 || console.purchases != 0 || console.planReads != 1 || console.statusReads != 1 {
+					t.Fatalf("the run made %d quotes, %d purchases, %d plan reads, and %d status reads",
+						console.quotes, console.purchases, console.planReads, console.statusReads)
+				}
+			})
+		}
+	}
+}
+
+// TestProjectUpgradeStopsTheWaitWhenTheOpenPurchaseRequiresAction proves that
+// the wait for an open purchase of the plan ends when the purchase starts to
+// wait for the person to authenticate the payment.
+func TestProjectUpgradeStopsTheWaitWhenTheOpenPurchaseRequiresAction(t *testing.T) {
+	action := upgradePlanPage + "/acme-chat/plan?purchase=" + purchaseIDFor("person")
+	console := newUpgradeConsole(t)
+	console.plans = []control.ProjectPlans{console.openPurchaseOf(upgradeTarget)}
+	console.statuses = []control.PlanPurchase{{Status: control.PurchaseInProgress}, {Status: control.PurchaseRequiresAction, RequiresActionURL: action}}
+	exit, stdout, stderr := console.upgrade(t, nil, "--json", "--confirm-charge", "53.90", "--wait", "--timeout", "2s")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != exitPersonAction || result.Code != "PAYMENT_ACTION_REQUIRED" || result.Action.URL != action || result.Data["purchaseId"] != purchaseIDFor("person") {
+		t.Fatalf("requires_action during the wait became exit=%d %s %s", exit, stdout, stderr)
+	}
+	if console.quotes != 0 || console.purchases != 0 || console.planReads != 3 || console.statusReads != 2 {
+		t.Fatalf("the wait made %d quotes, %d purchases, %d plan reads, and %d status reads",
+			console.quotes, console.purchases, console.planReads, console.statusReads)
+	}
+}
+
+// TestProjectUpgradeWaitsPastAFulfilledOpenPurchaseForThePlanChange proves
+// that a fulfilled purchase does not end the wait while a plans read still
+// names the old plan.
+func TestProjectUpgradeWaitsPastAFulfilledOpenPurchaseForThePlanChange(t *testing.T) {
+	console := newUpgradeConsole(t)
+	open := console.openPurchaseOf(upgradeTarget)
+	lagging := open
+	lagging.OpenPurchase = nil
+	changed := control.ProjectPlans{Project: upgradeSlug, CurrentPlan: &starterPlan, Plans: []control.PlanOffer{}}
+	console.plans = []control.ProjectPlans{open, lagging, changed}
+	console.statuses = []control.PlanPurchase{{Status: control.PurchaseFulfilled}}
+	exit, stdout, stderr := console.upgrade(t, map[string]string{"CLAUDECODE": "1"}, "--wait", "--timeout", "2s")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != 0 || result.Status != "ok" || result.Data["changed"] != true {
+		t.Fatalf("the wait past a fulfilled purchase became exit=%d %s %s", exit, stdout, stderr)
+	}
+	if console.quotes != 0 || console.purchases != 0 || console.planReads != 3 || console.statusReads != 2 {
+		t.Fatalf("the wait made %d quotes, %d purchases, %d plan reads, and %d status reads",
+			console.quotes, console.purchases, console.planReads, console.statusReads)
+	}
+}
+
+func TestProjectUpgradeTimesOutWhileTheOpenPurchaseIsPending(t *testing.T) {
+	console := newUpgradeConsole(t)
+	console.plans = []control.ProjectPlans{console.openPurchaseOf(upgradeTarget)}
+	console.statuses = []control.PlanPurchase{{Status: control.PurchaseInProgress}}
+	dependencies := console.dependencies(nil)
+	dependencies.Sleep = func(ctx context.Context, _ time.Duration) error { <-ctx.Done(); return ctx.Err() }
+	exit, stdout, _ := run(t, dependencies, "--json", "project", "upgrade", upgradeSlug, "--plan", upgradeTarget, "--wait", "--timeout", "10ms")
+	result := decodeEvent(t, []byte(stdout))
+	if exit != exitTemporary || result.Code != "PURCHASE_PENDING" || result.Next != "oe project show acme-chat" ||
+		result.Data["purchaseId"] != purchaseIDFor("person") || console.quotes != 0 || console.purchases != 0 {
+		t.Fatalf("a pending open purchase became exit=%d %s", exit, stdout)
+	}
+}
+
 func TestProjectUpgradeWithAnEnvironmentCredentialBuysNothing(t *testing.T) {
 	console := newUpgradeConsole(t)
 	exit, stdout, stderr := console.upgrade(t, environmentCredential, "--json", "--confirm-charge", "53.90", "--yes")
