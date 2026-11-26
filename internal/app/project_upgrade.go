@@ -199,8 +199,8 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 	// offer, which can be the other spelling of options.plan.
 	target := plans.Plans[index]
 	page = r.planPage(plans, target.ID)
-	if purchaseID := openPurchaseOf(plans, target); purchaseID != "" {
-		return r.upgradeOpenPurchase(ctx, access, options, target, page, purchaseID)
+	if open := openPurchaseOf(plans, target); open != nil {
+		return r.upgradeOpenPurchase(ctx, request, access, options, target, page, *open)
 	}
 	if options.dryRun {
 		return r.upgradeDryRun(ctx, request, options, plans, target, page)
@@ -219,25 +219,37 @@ func (r *runner) projectUpgrade(ctx context.Context, args []string) error {
 	return r.upgradePurchase(ctx, request, access, options, target, page)
 }
 
-// openPurchaseOf is the ID of the open purchase of the project when that
-// purchase buys target. It is empty when no purchase is open, when the open
-// purchase buys another plan, and when the control API does not name the plan
-// of the open purchase. The control API refuses a quote while a purchase is
-// open, so then the quote answers PURCHASE_OPEN.
-func openPurchaseOf(plans control.ProjectPlans, target control.PlanOffer) string {
+// openPurchaseOf is the open purchase of the project when that purchase buys
+// target. It is nil when no purchase is open, when the open purchase buys
+// another plan, and when the control API does not name the plan of the open
+// purchase. The control API refuses a quote while a purchase is open, so then
+// the quote answers PURCHASE_OPEN.
+func openPurchaseOf(plans control.ProjectPlans, target control.PlanOffer) *control.OpenPurchase {
 	open := plans.OpenPurchase
 	if open == nil || open.TargetPlanID == "" || !purchaseIDPattern.MatchString(open.ID) ||
 		planMeaning(open.TargetPlanID) != planMeaning(target.ID) {
-		return ""
+		return nil
 	}
-	return open.ID
+	return open
 }
 
 // upgradeOpenPurchase follows an open purchase of the plan. It sends no quote
-// and no purchase, for any caller and any credential. With --wait, it waits
-// until the project is on the plan. A run without --wait, and a dry run, end
-// at once.
-func (r *runner) upgradeOpenPurchase(ctx context.Context, access credential.Credential, options upgradeOptions, target control.PlanOffer, page, purchaseID string) error {
+// and no purchase, for any caller and any credential. An open purchase that
+// waits for a person ends the run at once with the code of its status, as the
+// wait for a purchase of this run does. The status read names the page where
+// the person acts. Otherwise, with --wait, the run waits until the project is
+// on the plan. A run without --wait, and a dry run, end at once.
+func (r *runner) upgradeOpenPurchase(ctx context.Context, request control.CredentialRequest, access credential.Credential, options upgradeOptions, target control.PlanOffer, page string, open control.OpenPurchase) error {
+	purchaseID := open.ID
+	if open.State == control.PurchaseRequiresAction || open.State == control.PurchaseNeedsReview {
+		purchase, err := r.api.PurchaseStatus(ctx, request, options.project, purchaseID)
+		if err != nil {
+			return r.upgradeFailure(err, options, page)
+		}
+		if purchaseNeedsPerson(purchase, true) {
+			return r.upgradeFailure(purchaseRefusal(purchase), options, page)
+		}
+	}
 	if !options.wait {
 		next := options.command("--wait")
 		return &problem{
@@ -461,10 +473,24 @@ func (r *runner) waitForPlan(ctx context.Context, access credential.Credential, 
 				fmt.Sprintf("Project %s is on plan %s.", options.project, planLabel(target)),
 				map[string]any{"project": options.project, "plan": planData(&target), "changed": true})
 		}
-		if purchase != nil && (purchase.Status == control.PurchaseNeedsReview || purchase.Status == control.PurchaseFailed) {
+		if purchase != nil && purchaseNeedsPerson(*purchase, purchaseID != "") {
 			return r.upgradeFailure(purchaseRefusal(*purchase), options, page)
 		}
 	}
+}
+
+// purchaseNeedsPerson is true when the purchase ended with no plan change or
+// waits for support. With requiresAction, a purchase that waits for the person
+// to authenticate the payment is true too. The wait after a handoff keeps
+// going in that state, because the person is on the page of the handoff.
+func purchaseNeedsPerson(purchase control.PlanPurchase, requiresAction bool) bool {
+	switch purchase.Status {
+	case control.PurchaseNeedsReview, control.PurchaseFailed:
+		return true
+	case control.PurchaseRequiresAction:
+		return requiresAction
+	}
+	return false
 }
 
 // readPlanChange reads the plans of the project and the status of one

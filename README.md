@@ -718,14 +718,21 @@ for the purchase of the person, for at most `--timeout`. With a credential from
 
 When the project has an open purchase of the plan, `oe project upgrade` sends
 no quote and no purchase. This rule applies to each caller and each
-credential, before the rules above. Without `--wait`, and with `--dry-run`, the
-run exits 6 at once with `PURCHASE_PENDING`. `data.purchaseId` names the open
-purchase, and `next` adds `--wait`.
+credential, before the rules above. When the open purchase waits for the
+person to authenticate the payment, the run exits 5 at once with
+`PAYMENT_ACTION_REQUIRED`. When it waits for support, the run exits 5 at once
+with `SUPPORT_REQUIRED`. `action.url` is the page where the person acts. These
+codes apply with and without `--wait`, and with `--dry-run`.
 
-With `--wait`, the run waits for the plan change for at most `--timeout`. When
-that purchase fails or needs support, the wait ends with the code of that
-purchase. When the open purchase is for another plan, the run exits 6 with
-`PURCHASE_OPEN` from the quote.
+In each other state, a run without `--wait`, and a run with `--dry-run`, exits
+6 at once with `PURCHASE_PENDING`. `data.purchaseId` names the open purchase,
+and `next` adds `--wait`. With `--wait`, the run waits for the plan change for
+at most `--timeout`. When the purchase fails, waits for the person, or needs
+support during the wait, the wait ends with the code of that state.
+
+When the open purchase is for another plan, or the control API does not name
+the plan of the open purchase, the rules above apply. A run that then sends a
+quote exits 6 with `PURCHASE_OPEN`.
 
 | `code`                                                                                                                                                    | Exit | What to do                                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | --------------------------------------------------------------------------------- |
